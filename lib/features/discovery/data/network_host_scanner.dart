@@ -48,7 +48,10 @@ class NetworkHostScanner {
       'candidates=${candidates.length}, parallelism=$_defaultParallelism',
     );
 
-    final arpHosts = await _scanUsingNeighborTable(candidates);
+    final arpHosts = await _scanUsingNeighborTable(
+      candidates,
+      preferredSourceIp: preferredSourceIp,
+    );
     if (arpHosts.isNotEmpty) {
       _log('Neighbor-table scan complete. reachable=${arpHosts.length}');
       return arpHosts;
@@ -68,9 +71,12 @@ class NetworkHostScanner {
     return foundHosts;
   }
 
-  Future<Set<String>> _scanUsingNeighborTable(Set<String> candidates) async {
+  Future<Set<String>> _scanUsingNeighborTable(
+    Set<String> candidates, {
+    String? preferredSourceIp,
+  }) async {
     await _primeNeighborCache(candidates);
-    final arpByIp = await _loadArpEntries();
+    final arpByIp = await _loadArpEntries(preferredSourceIp: preferredSourceIp);
     if (arpByIp.isEmpty) {
       _log('ARP table is empty or unreadable.');
       return <String>{};
@@ -158,9 +164,13 @@ class NetworkHostScanner {
     return filtered;
   }
 
-  Future<Map<String, String>> _loadArpEntries() async {
+  Future<Map<String, String>> _loadArpEntries({
+    String? preferredSourceIp,
+  }) async {
     if (Platform.isLinux || Platform.isAndroid) {
-      final fromProc = await _loadArpFromProc();
+      final fromProc = await _loadArpFromProc(
+        preferredSourceIp: preferredSourceIp,
+      );
       if (fromProc.isNotEmpty) {
         _log('Loaded ARP entries from /proc/net/arp: ${fromProc.length}');
         return fromProc;
@@ -185,13 +195,26 @@ class NetworkHostScanner {
         }
 
         final output = result.stdout.toString();
-        final parsed = _parseArpOutput(output);
+        final parsed = _parseArpOutput(
+          output,
+          preferredSourceIp: preferredSourceIp,
+        );
         if (parsed.isNotEmpty) {
           _log(
             'Loaded ARP entries using "$executable ${args.join(" ")}": '
             '${parsed.length}',
           );
           return parsed;
+        }
+        if (Platform.isWindows) {
+          final preview = output
+              .replaceAll('\r', '')
+              .split('\n')
+              .take(12)
+              .join(' | ');
+          _log(
+            'Windows ARP parse produced 0 entries. Output preview: $preview',
+          );
         }
       } catch (error) {
         _log('$executable ${args.join(" ")} unavailable: $error');
@@ -201,7 +224,9 @@ class NetworkHostScanner {
     return <String, String>{};
   }
 
-  Future<Map<String, String>> _loadArpFromProc() async {
+  Future<Map<String, String>> _loadArpFromProc({
+    String? preferredSourceIp,
+  }) async {
     try {
       final file = File('/proc/net/arp');
       if (!await file.exists()) {
@@ -229,6 +254,13 @@ class NetworkHostScanner {
         if (!valid) {
           continue;
         }
+        if (!_isUsableHostIpv4(ip)) {
+          continue;
+        }
+        if (preferredSourceIp != null &&
+            !_isSame24Subnet(ip, preferredSourceIp)) {
+          continue;
+        }
         map[ip] = mac;
       }
       return map;
@@ -237,10 +269,21 @@ class NetworkHostScanner {
     }
   }
 
-  Map<String, String> _parseArpOutput(String output) {
+  Map<String, String> _parseArpOutput(
+    String output, {
+    String? preferredSourceIp,
+  }) {
+    if (Platform.isWindows) {
+      return _parseWindowsArpOutput(
+        output,
+        preferredSourceIp: preferredSourceIp,
+      );
+    }
+
     final entries = <String, String>{};
     final lines = output.split(RegExp(r'\r?\n'));
 
+    final interfaceLine = RegExp(r'(\d+\.\d+\.\d+\.\d+)\s+---');
     final windowsLike = RegExp(
       r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:-]{11,17})\s+(\w+)',
     );
@@ -248,9 +291,22 @@ class NetworkHostScanner {
       r'(\d+\.\d+\.\d+\.\d+).{0,32}([0-9a-fA-F:-]{11,17})',
     );
 
+    String? currentInterfaceIp;
     for (final line in lines) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) {
+        continue;
+      }
+
+      final interfaceMatch = interfaceLine.firstMatch(trimmed);
+      if (interfaceMatch != null) {
+        currentInterfaceIp = interfaceMatch.group(1);
+        continue;
+      }
+
+      final acceptCurrentSection =
+          preferredSourceIp == null || currentInterfaceIp == preferredSourceIp;
+      if (!acceptCurrentSection) {
         continue;
       }
 
@@ -261,6 +317,13 @@ class NetworkHostScanner {
         final type = windowsMatch.group(3)?.toLowerCase() ?? '';
         if (mac != null &&
             (type.contains('dynamic') || type.contains('static'))) {
+          if (!_isUsableHostIpv4(ip)) {
+            continue;
+          }
+          if (preferredSourceIp != null &&
+              !_isSame24Subnet(ip, preferredSourceIp)) {
+            continue;
+          }
           entries[ip] = mac;
           continue;
         }
@@ -271,9 +334,46 @@ class NetworkHostScanner {
         final ip = genericMatch.group(1)!;
         final mac = _normalizeMac(genericMatch.group(2)!);
         if (mac != null) {
+          if (!_isUsableHostIpv4(ip)) {
+            continue;
+          }
+          if (preferredSourceIp != null &&
+              !_isSame24Subnet(ip, preferredSourceIp)) {
+            continue;
+          }
           entries[ip] = mac;
         }
       }
+    }
+
+    return entries;
+  }
+
+  Map<String, String> _parseWindowsArpOutput(
+    String output, {
+    String? preferredSourceIp,
+  }) {
+    final entries = <String, String>{};
+    final lines = output.split(RegExp(r'\r?\n'));
+    final entry = RegExp(
+      r'^\s*(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F]{2}(?:-[0-9a-fA-F]{2}){5}|[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b',
+    );
+
+    for (final line in lines) {
+      final match = entry.firstMatch(line);
+      if (match == null) {
+        continue;
+      }
+      final ip = match.group(1)!;
+      final mac = _normalizeMac(match.group(2)!);
+      if (mac == null || !_isUsableHostIpv4(ip)) {
+        continue;
+      }
+      if (preferredSourceIp != null &&
+          !_isSame24Subnet(ip, preferredSourceIp)) {
+        continue;
+      }
+      entries[ip] = mac;
     }
 
     return entries;
@@ -408,6 +508,33 @@ class NetworkHostScanner {
       }
     }
     return true;
+  }
+
+  bool _isUsableHostIpv4(String ip) {
+    if (!_isValidIpv4(ip)) {
+      return false;
+    }
+
+    final parts = ip.split('.');
+    final first = int.parse(parts[0]);
+    final last = int.parse(parts[3]);
+    if (first == 0 || first >= 224 || first == 255) {
+      return false;
+    }
+    if (last == 255) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _isSame24Subnet(String ip, String sourceIp) {
+    if (!_isValidIpv4(ip) || !_isValidIpv4(sourceIp)) {
+      return false;
+    }
+
+    final a = ip.split('.');
+    final b = sourceIp.split('.');
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
   }
 
   void _log(String message) {

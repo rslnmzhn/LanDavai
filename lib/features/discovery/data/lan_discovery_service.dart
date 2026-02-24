@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
+
+import 'package:flutter/services.dart';
 
 class AppPresenceEvent {
   AppPresenceEvent({
@@ -17,13 +20,19 @@ class AppPresenceEvent {
 
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
-  static const String _discoverPrefix = 'IP_TRANSFERER_DISCOVER_V1';
-  static const String _responsePrefix = 'IP_TRANSFERER_HERE_V1';
+  static const String _discoverPrefix = 'LANDA_DISCOVER_V1';
+  static const String _responsePrefix = 'LANDA_HERE_V1';
+  static const MethodChannel _androidNetworkChannel = MethodChannel(
+    'landa/network',
+  );
 
   RawDatagramSocket? _socket;
   Timer? _beaconTimer;
   Set<String> _localIps = <String>{};
   bool _started = false;
+  String? _preferredSourceIp;
+  final String _instanceId =
+      '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
   static const List<String> _virtualInterfaceHints = <String>[
     'loopback',
     'docker',
@@ -52,10 +61,16 @@ class LanDiscoveryService {
     }
     _started = true;
 
+    _preferredSourceIp = preferredSourceIp;
     _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
     _log('Starting UDP discovery on $discoveryPort. localIps=$_localIps');
+    await _acquireAndroidMulticastLock();
+
+    // anyIPv4 is more reliable for receiving broadcast discovery packets
+    // on Android devices; subnet filtering is applied in code.
+    final bindAddress = InternetAddress.anyIPv4;
     _socket = await RawDatagramSocket.bind(
-      InternetAddress.anyIPv4,
+      bindAddress,
       discoveryPort,
       reuseAddress: true,
       reusePort: false,
@@ -74,15 +89,31 @@ class LanDiscoveryService {
           datagram = _socket?.receive();
           continue;
         }
+        if (_preferredSourceIp != null &&
+            !_isSame24Subnet(senderIp, _preferredSourceIp!)) {
+          _log('Ignoring packet from foreign subnet: $senderIp');
+          datagram = _socket?.receive();
+          continue;
+        }
 
         final message = utf8.decode(datagram.data, allowMalformed: true);
-        if (message.startsWith(_discoverPrefix)) {
+        final packet = _parsePacket(message);
+        if (packet == null) {
+          datagram = _socket?.receive();
+          continue;
+        }
+        if (packet.instanceId == _instanceId) {
+          datagram = _socket?.receive();
+          continue;
+        }
+
+        if (packet.prefix == _discoverPrefix) {
           _log('Discover request from $senderIp');
-          final response = '$_responsePrefix|$deviceName';
+          final response = '$_responsePrefix|$_instanceId|$deviceName';
           _socket?.send(utf8.encode(response), datagram.address, discoveryPort);
           _log('Discover response sent to $senderIp');
-        } else if (message.startsWith(_responsePrefix)) {
-          final remoteName = _parseDeviceName(message);
+        } else if (packet.prefix == _responsePrefix) {
+          final remoteName = packet.deviceName;
           _log('Discover response received from $senderIp ($remoteName)');
           onAppDetected(
             AppPresenceEvent(
@@ -110,10 +141,11 @@ class LanDiscoveryService {
     _socket?.close();
     _socket = null;
     _started = false;
+    await _releaseAndroidMulticastLock();
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
-    final request = '$_discoverPrefix|$deviceName';
+    final request = '$_discoverPrefix|$_instanceId|$deviceName';
     final bytes = utf8.encode(request);
 
     _log('Broadcasting discover packet');
@@ -127,12 +159,38 @@ class LanDiscoveryService {
     }
   }
 
-  String _parseDeviceName(String message) {
+  _DiscoveryPacket? _parsePacket(String message) {
     final parts = message.split('|');
-    if (parts.length < 2 || parts[1].trim().isEmpty) {
-      return 'Unknown device';
+    if (parts.isEmpty) {
+      return null;
     }
-    return parts[1].trim();
+
+    final prefix = parts[0].trim();
+    if (prefix != _discoverPrefix && prefix != _responsePrefix) {
+      return null;
+    }
+
+    // Backward compatibility with old payload format: PREFIX|deviceName
+    if (parts.length == 2) {
+      final legacyName = parts[1].trim();
+      return _DiscoveryPacket(
+        prefix: prefix,
+        instanceId: 'legacy',
+        deviceName: legacyName.isEmpty ? 'Unknown device' : legacyName,
+      );
+    }
+
+    if (parts.length >= 3) {
+      final instanceId = parts[1].trim();
+      final deviceName = parts.sublist(2).join('|').trim();
+      return _DiscoveryPacket(
+        prefix: prefix,
+        instanceId: instanceId,
+        deviceName: deviceName.isEmpty ? 'Unknown device' : deviceName,
+      );
+    }
+
+    return null;
   }
 
   InternetAddress? _toBroadcastAddress(String ip) {
@@ -184,7 +242,52 @@ class LanDiscoveryService {
     return true;
   }
 
+  bool _isSame24Subnet(String ip, String baseIp) {
+    if (!_isValidIpv4(ip) || !_isValidIpv4(baseIp)) {
+      return false;
+    }
+    final a = ip.split('.');
+    final b = baseIp.split('.');
+    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
+  }
+
   void _log(String message) {
     developer.log(message, name: 'LanDiscoveryService');
   }
+
+  Future<void> _acquireAndroidMulticastLock() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      await _androidNetworkChannel.invokeMethod<void>('acquireMulticastLock');
+      _log('Android multicast lock acquired');
+    } catch (error) {
+      _log('Failed to acquire Android multicast lock: $error');
+    }
+  }
+
+  Future<void> _releaseAndroidMulticastLock() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      await _androidNetworkChannel.invokeMethod<void>('releaseMulticastLock');
+      _log('Android multicast lock released');
+    } catch (error) {
+      _log('Failed to release Android multicast lock: $error');
+    }
+  }
+}
+
+class _DiscoveryPacket {
+  const _DiscoveryPacket({
+    required this.prefix,
+    required this.instanceId,
+    required this.deviceName,
+  });
+
+  final String prefix;
+  final String instanceId;
+  final String deviceName;
 }

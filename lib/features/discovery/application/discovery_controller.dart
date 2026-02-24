@@ -17,6 +17,8 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner;
 
+  static const Duration _autoRefreshInterval = Duration(seconds: 30);
+
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
 
@@ -24,6 +26,8 @@ class DiscoveryController extends ChangeNotifier {
       <String, DiscoveredDevice>{};
   Timer? _scanTimer;
   bool _started = false;
+  bool _isRefreshInProgress = false;
+  bool _isManualRefreshInProgress = false;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
@@ -31,6 +35,7 @@ class DiscoveryController extends ChangeNotifier {
   String? _errorMessage;
 
   DiscoveryFlowState get state => _state;
+  bool get isManualRefreshInProgress => _isManualRefreshInProgress;
   String? get localIp => _localIp;
   String get localName => _localName;
   String? get errorMessage => _errorMessage;
@@ -56,8 +61,6 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     _started = true;
-    _state = DiscoveryFlowState.discovering;
-    notifyListeners();
 
     await _resolveLocalAddress();
 
@@ -69,31 +72,41 @@ class DiscoveryController extends ChangeNotifier {
         preferredSourceIp: _localIp,
       );
 
-      await refresh();
+      await _refresh(isManual: false);
       _scanTimer = Timer.periodic(
-        const Duration(seconds: 12),
-        (_) => refresh(),
+        _autoRefreshInterval,
+        (_) => unawaited(_refresh(isManual: false)),
       );
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
       _log(_errorMessage!);
-    } finally {
-      _state = DiscoveryFlowState.idle;
-      notifyListeners();
     }
   }
 
-  Future<void> refresh() async {
-    _state = DiscoveryFlowState.discovering;
-    notifyListeners();
+  Future<void> refresh() => _refresh(isManual: true);
+
+  Future<void> _refresh({required bool isManual}) async {
+    if (_isRefreshInProgress) {
+      _log('Refresh skipped. Another refresh is already running.');
+      return;
+    }
+
+    _isRefreshInProgress = true;
+    if (isManual) {
+      _isManualRefreshInProgress = true;
+      _state = DiscoveryFlowState.discovering;
+      notifyListeners();
+    }
 
     try {
-      _log('Refresh scan started');
+      _log('${isManual ? "Manual" : "Auto"} refresh scan started');
       final hosts = await _networkHostScanner.scanActiveHosts(
         preferredSourceIp: _localIp,
       );
       final now = DateTime.now();
-      _log('Refresh scan finished. hosts=${hosts.length}');
+      _log(
+        '${isManual ? "Manual" : "Auto"} refresh scan finished. hosts=${hosts.length}',
+      );
 
       for (final ip in hosts) {
         _devicesByIp[ip] =
@@ -127,7 +140,11 @@ class DiscoveryController extends ChangeNotifier {
       _errorMessage = 'Host scan failed: $error';
       _log(_errorMessage!);
     } finally {
-      _state = DiscoveryFlowState.idle;
+      _isRefreshInProgress = false;
+      if (isManual) {
+        _isManualRefreshInProgress = false;
+        _state = DiscoveryFlowState.idle;
+      }
       notifyListeners();
     }
   }

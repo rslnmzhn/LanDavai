@@ -4,5 +4,5 @@ import 'app/app.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const IpTransfererApp());
+  runApp(const LanDaApp());
 }

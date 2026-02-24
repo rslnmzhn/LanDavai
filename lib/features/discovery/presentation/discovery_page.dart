@@ -45,7 +45,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             actions: [
               IconButton(
                 tooltip: 'Refresh',
-                onPressed: _controller.state == DiscoveryFlowState.discovering
+                onPressed: _controller.isManualRefreshInProgress
                     ? null
                     : _controller.refresh,
                 icon: const Icon(Icons.refresh),
@@ -65,7 +65,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                   _ErrorBanner(message: _controller.errorMessage!),
                   const SizedBox(height: AppSpacing.sm),
                 ],
-                if (_controller.state == DiscoveryFlowState.discovering) ...[
+                if (_controller.isManualRefreshInProgress) ...[
                   const LinearProgressIndicator(
                     minHeight: 3,
                     color: AppColors.brandPrimary,
