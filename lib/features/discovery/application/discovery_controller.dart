@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -50,6 +51,7 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> start() async {
     if (_started) {
+      _log('start() ignored: controller already started');
       return;
     }
 
@@ -60,9 +62,11 @@ class DiscoveryController extends ChangeNotifier {
     await _resolveLocalAddress();
 
     try {
+      _log('Starting discovery. localName=$_localName localIp=$_localIp');
       await _lanDiscoveryService.start(
         deviceName: _localName,
         onAppDetected: _onAppDetected,
+        preferredSourceIp: _localIp,
       );
 
       await refresh();
@@ -72,6 +76,7 @@ class DiscoveryController extends ChangeNotifier {
       );
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
+      _log(_errorMessage!);
     } finally {
       _state = DiscoveryFlowState.idle;
       notifyListeners();
@@ -83,8 +88,12 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final hosts = await _networkHostScanner.scanActiveHosts();
+      _log('Refresh scan started');
+      final hosts = await _networkHostScanner.scanActiveHosts(
+        preferredSourceIp: _localIp,
+      );
       final now = DateTime.now();
+      _log('Refresh scan finished. hosts=${hosts.length}');
 
       for (final ip in hosts) {
         _devicesByIp[ip] =
@@ -98,10 +107,7 @@ class DiscoveryController extends ChangeNotifier {
           return;
         }
 
-        final age = now.difference(device.lastSeen);
-        final stale = age > const Duration(minutes: 2);
-        final keep = device.isAppDetected || !stale;
-        if (!keep) {
+        if (!device.isAppDetected) {
           staleIps.add(ip);
           return;
         }
@@ -111,10 +117,15 @@ class DiscoveryController extends ChangeNotifier {
       for (final staleIp in staleIps) {
         _devicesByIp.remove(staleIp);
       }
+      _log(
+        'Device list updated. total=${_devicesByIp.length} '
+        'appDetected=$appDetectedCount removed=${staleIps.length}',
+      );
 
       _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Host scan failed: $error';
+      _log(_errorMessage!);
     } finally {
       _state = DiscoveryFlowState.idle;
       notifyListeners();
@@ -122,6 +133,7 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onAppDetected(AppPresenceEvent event) {
+    _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
@@ -141,15 +153,36 @@ class DiscoveryController extends ChangeNotifier {
       includeLinkLocal: false,
     );
 
+    InternetAddress? bestAddress;
+    String? bestInterfaceName;
+    var bestScore = -100000;
+
     for (final interface in interfaces) {
-      if (interface.addresses.isEmpty) {
-        continue;
+      for (final address in interface.addresses) {
+        final score = _scoreAddress(interface.name, address.address);
+        _log(
+          'Interface candidate: ${interface.name} -> ${address.address} '
+          '(score=$score)',
+        );
+        if (score > bestScore) {
+          bestScore = score;
+          bestAddress = address;
+          bestInterfaceName = interface.name;
+        }
       }
-      final address = interface.addresses.first.address;
-      _localIp = address;
+    }
+
+    if (bestAddress != null) {
+      _localIp = bestAddress.address;
+      _log(
+        'Selected local interface: $bestInterfaceName '
+        '(${bestAddress.address})',
+      );
       notifyListeners();
       return;
     }
+
+    _log('No suitable IPv4 local interface found');
   }
 
   int _compareIp(String a, String b) {
@@ -169,5 +202,94 @@ class DiscoveryController extends ChangeNotifier {
     _scanTimer?.cancel();
     _lanDiscoveryService.stop();
     super.dispose();
+  }
+
+  void _log(String message) {
+    developer.log(message, name: 'DiscoveryController');
+  }
+
+  int _scoreAddress(String interfaceName, String ip) {
+    final lower = interfaceName.toLowerCase();
+    var score = 0;
+
+    if (_isLikelyVirtualInterface(lower)) {
+      score -= 400;
+    } else {
+      score += 100;
+    }
+
+    if (_isInSubnet(ip, 192, 168)) {
+      score += 220;
+    } else if (_isInSubnet(ip, 10, null)) {
+      score += 170;
+    } else if (_isInRange172Private(ip)) {
+      score += 120;
+    } else if (_isInSubnet(ip, 100, null)) {
+      score += 60;
+    } else {
+      score += 20;
+    }
+
+    if (lower.contains('wi-fi') ||
+        lower.contains('wifi') ||
+        lower.contains('wlan') ||
+        lower.contains('ethernet') ||
+        lower.contains('eth')) {
+      score += 50;
+    }
+
+    return score;
+  }
+
+  bool _isLikelyVirtualInterface(String lowerName) {
+    const hints = <String>[
+      'loopback',
+      'docker',
+      'vmware',
+      'virtual',
+      'vethernet',
+      'hyper-v',
+      'vbox',
+      'wsl',
+      'tailscale',
+      'zerotier',
+      'hamachi',
+      'tun',
+      'tap',
+      'bridge',
+    ];
+    return hints.any(lowerName.contains);
+  }
+
+  bool _isInSubnet(String ip, int first, int? second) {
+    final parts = ip.split('.');
+    if (parts.length != 4) {
+      return false;
+    }
+    final firstOctet = int.tryParse(parts[0]);
+    final secondOctet = int.tryParse(parts[1]);
+    if (firstOctet == null || secondOctet == null) {
+      return false;
+    }
+    if (firstOctet != first) {
+      return false;
+    }
+    if (second != null && secondOctet != second) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _isInRange172Private(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) {
+      return false;
+    }
+    final first = int.tryParse(parts[0]);
+    final second = int.tryParse(parts[1]);
+    if (first == null || second == null) {
+      return false;
+    }
+    return first == 172 && second >= 16 && second <= 31;
   }
 }
