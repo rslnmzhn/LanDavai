@@ -5,18 +5,24 @@ class SharedFolderIndexEntry {
     required this.relativePath,
     required this.sizeBytes,
     required this.modifiedAtMs,
+    this.absolutePath,
   });
 
   final String relativePath;
   final int sizeBytes;
   final int modifiedAtMs;
+  final String? absolutePath;
 
-  Map<String, Object> toCompactJson() {
-    return <String, Object>{
+  Map<String, Object?> toCompactJson() {
+    final json = <String, Object?>{
       'p': relativePath,
       's': sizeBytes,
       'm': modifiedAtMs,
     };
+    if (absolutePath != null) {
+      json['a'] = absolutePath;
+    }
+    return json;
   }
 
   static SharedFolderIndexEntry fromCompactJson(Map<String, dynamic> json) {
@@ -24,6 +30,7 @@ class SharedFolderIndexEntry {
       relativePath: json['p'] as String,
       sizeBytes: (json['s'] as num).toInt(),
       modifiedAtMs: (json['m'] as num).toInt(),
+      absolutePath: json['a'] as String?,
     );
   }
 }
