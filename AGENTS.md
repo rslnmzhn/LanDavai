@@ -1,24 +1,29 @@
 # AGENTS.md
 
 ## Purpose
-This file defines a single implementation and design contract for all agents working on this repository.
-Goal: keep one consistent app identity across chats, sessions, and agents.
+Single source of truth for implementation and design decisions across chats/agents.
+Goal: keep LanDa behavior, visuals, and data model consistent.
 
 ## Product
-- App type: peer-to-peer LAN file transfer (no central transfer server).
-- Targets: Windows, Linux, Android, iOS.
-- Core promise: fast local transfer, simple pairing, predictable UX.
+- App name: LanDa
+- Type: peer-to-peer LAN file transfer (no central transfer server for file payloads)
+- Platforms: Windows, Linux, Android, iOS
+- Promise: fast local transfer, explicit trust, predictable UX
 
-## Stack Contract
-- Framework: Flutter (stable channel).
-- Language: Dart.
-- State management: Riverpod (prefer `Notifier`/`AsyncNotifier`).
-- Navigation: `go_router`.
-- Lints: `flutter_lints` + strict analyzer warnings.
-- Architecture style: feature-first + clean boundaries.
+## Core Stack
+- Framework: Flutter (stable)
+- Language: Dart
+- UI state (current baseline): `ChangeNotifier` controllers
+- Navigation (when introduced): `go_router`
+- Persistence:
+  - `sqflite` (mobile)
+  - `sqflite_common_ffi` (Windows/Linux)
+  - `path_provider` for app storage paths
+- Hashing for stable cache IDs: `crypto` (`sha256`)
+- Lints: `flutter_lints`, no new analyzer warnings in touched files
 
 ## Source Layout Contract
-Use this structure unless there is a strong reason not to:
+Use this structure unless there is a strong architectural reason to deviate:
 
 ```text
 lib/
@@ -33,6 +38,7 @@ lib/
       app_typography.dart
   core/
     errors/
+    storage/
     utils/
     widgets/
   features/
@@ -43,80 +49,140 @@ lib/
 ```
 
 Rules:
-- No UI code in data layer.
+- No UI code in data repositories.
 - No direct networking calls from widgets.
-- Shared design tokens must live only in `lib/app/theme/*`.
+- Shared design tokens only in `lib/app/theme/*`.
 
 ## Visual Identity Contract (Do Not Drift)
-Agents must keep the same style direction.
+Tone: calm, modern, soft-technical, trustworthy.
 
-### Design direction
-- Tone: clean, technical, confident.
-- Density: medium, not cramped.
-- Corner style: rounded, not fully pill everywhere.
-- Motion: subtle and purposeful.
-
-### Color tokens (single source of truth)
-- `brandPrimary`: `#0B6E4F`
-- `brandAccent`: `#F4A259`
-- `bgBase`: `#F7F9FB`
+### Color Tokens (Single Source of Truth)
+- `brandPrimary`: `#8B7CF6`
+- `brandPrimaryDark`: `#6D5CE7`
+- `brandAccent`: `#C4B5FD`
+- `bgBase`: `#F6F5FF`
 - `surface`: `#FFFFFF`
-- `textPrimary`: `#111827`
-- `textSecondary`: `#4B5563`
-- `success`: `#15803D`
-- `warning`: `#B45309`
-- `error`: `#B91C1C`
+- `surfaceSoft`: `#F1F0FF`
+- `textPrimary`: `#1F1F2E`
+- `textSecondary`: `#5B5B73`
+- `textMuted`: `#8C8CA1`
+- `success`: `#4CAF93`
+- `warning`: `#D4A373`
+- `error`: `#C06C84`
 
-Do not introduce one-off hex colors in widgets.
+Rules:
+- No one-off hex colors in widgets.
+- Use only tokens from `app_colors.dart`.
 
 ### Typography
-- Primary font: Manrope.
-- Monospace/supporting numeric font: JetBrains Mono.
-- Use semantic styles from theme only; no ad-hoc `TextStyle` unless unavoidable.
+- Primary: Manrope
+- Mono/numeric: JetBrains Mono
+- Prefer semantic text styles from theme; avoid ad-hoc `TextStyle`.
 
-### Spacing and shape
-- Spacing scale: `4, 8, 12, 16, 20, 24, 32`.
-- Radius scale: `8, 12, 16, 24`.
-- Default card radius: `16`.
-- Default button height: `44` mobile, `40` desktop.
-
-### Components
-- Buttons: max 2 emphasis levels on one screen (`primary`, `secondary`).
-- Cards: soft elevation, no heavy shadows.
-- Lists: clear row separators or card grouping, not mixed randomly.
-- Progress UI: always show percent + speed + ETA when data exists.
+### Spacing / Shape
+- Spacing: `4, 8, 12, 16, 20, 24, 32`
+- Radius: `8, 12, 16, 24`
+- Default card radius: `16`
+- Button height: `44` mobile, `40` desktop
 
 ## UX Contract
-- Every transfer-related flow must expose state clearly:
-  - `idle`, `discovering`, `pairing`, `transferring`, `paused`, `completed`, `failed`.
-- Critical actions (accept/decline overwrite/cancel transfer) require explicit confirmation.
-- Errors must be actionable and human readable.
-- Empty states must include next action.
+Transfer-related flows must expose states:
+- `idle`
+- `discovering`
+- `pairing`
+- `transferring`
+- `paused`
+- `completed`
+- `failed`
 
-## Networking Contract
-- Discovery first: mDNS on LAN.
-- Fallback: manual IP connect.
-- Transport: reliable stream (TCP/QUIC abstraction allowed).
-- Transfers must support resume with chunk-based progress tracking.
-- Pairing must use explicit trust confirmation (code or QR).
+Rules:
+- Critical actions require explicit confirmation.
+- Errors must be actionable and human-readable.
+- Empty states must contain a next step.
+
+## Networking Contract (Current Implementation Baseline)
+- App presence discovery: UDP broadcast handshake in LAN.
+- Handshake payload identifiers: `LANDA_DISCOVER_V1` / `LANDA_HERE_V1`.
+- Packets include per-instance ID to avoid self-detection loops.
+- Discovery input is filtered to active subnet (`preferredSourceIp`).
+- LAN host visibility uses ARP/neighbor table first.
+- TCP probing is fallback-only and disabled by default.
+- Keep manual IP connect as fallback path for edge networks.
+
+## Device Identity Contract
+- IP is transient; MAC is identity key when available.
+- User device alias is bound to normalized MAC (`aa:bb:cc:dd:ee:ff`).
+- If IP changes but MAC is the same, alias must remain.
+
+## Persistence Contract (SQLite)
+Database file:
+- `<app_support>/LanDa/landa.sqlite`
+
+Tables:
+1. `known_devices`
+   - `mac_address` (PK)
+   - `alias_name`
+   - `last_known_ip`
+   - `last_seen_at`
+   - `updated_at`
+2. `shared_folder_caches`
+   - `cache_id` (PK)
+   - `role` (`owner` / `receiver`)
+   - `owner_mac_address`
+   - `peer_mac_address` (nullable)
+   - `root_path`
+   - `display_name`
+   - `index_file_path`
+   - `item_count`
+   - `total_bytes`
+   - `updated_at`
+
+Rules:
+- MAC values must be normalized before write/read.
+- Use transactions for multi-row updates.
+- Never hardcode absolute user paths in code.
+
+## Shared Folder Cache Contract
+Directory:
+- `<app_support>/LanDa/shared_folder_caches/`
+
+Format:
+- Lightweight JSON index with compact entry fields (`p`, `s`, `m`).
+- Store on both sides:
+  - owner device
+  - receiver device
+
+Naming:
+- File name format: `<role>_<sanitized_display_name>_<cache_id>.landa-cache.json`
+- `cache_id` is deterministic hash of:
+  - schema version
+  - role
+  - owner MAC
+  - peer MAC (or `-`)
+  - normalized root identity/path
+
+Goals:
+- Stable identity across sessions
+- Low collision risk
+- Human-readable enough for debugging
 
 ## Code Quality Contract
-- Keep files focused; split widgets >200 lines.
-- Prefer pure functions for mapping/parsing logic.
-- Add tests for business logic and protocol framing.
-- Do not add dependencies without clear need.
-- Preserve backward compatibility of public models when possible.
+- Keep files focused; split widgets over ~200 lines.
+- Prefer pure functions for parsing/mapping/indexing.
+- Add tests for storage logic and protocol framing when touched.
+- Add dependencies only with direct product need.
+- Preserve backward compatibility for persisted data when feasible.
 
 ## Agent Response Contract
-When implementing changes, agents should:
+When implementing changes:
 1. State assumptions briefly.
-2. Implement code, not only propose.
+2. Implement code, not only proposals.
 3. Report exact files changed.
-4. Include verification steps run (analyze/test/manual).
-5. List remaining risks or TODOs.
+4. Include verification (`analyze`, `test`, manual checks run).
+5. List remaining risks / TODOs.
 
-## Prompt Template For Consistent Results
-Use this template when asking any agent:
+## Prompt Template
+Use this structure in future requests:
 
 ```text
 Task:
@@ -127,7 +193,7 @@ Definition of done:
 Out of scope:
 ```
 
-Optional style lock line:
+Optional lock:
 `Follow AGENTS.md visual identity and do not introduce new design tokens.`
 
 ## Definition of Done (Default)
@@ -135,4 +201,4 @@ Optional style lock line:
 - No new analyzer warnings in touched files.
 - Theme/token contract respected.
 - UX states handled for loading/success/error.
-- Changes summarized with file list and validation notes.
+- Changes summarized with file list and verification notes.

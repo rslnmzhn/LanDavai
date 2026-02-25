@@ -1,12 +1,37 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
+import '../../transfer/data/file_hash_service.dart';
+import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/domain/shared_folder_cache.dart';
+import '../../transfer/domain/transfer_request.dart';
+import '../data/device_alias_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
+
+class RemoteShareOption {
+  RemoteShareOption({
+    required this.requestId,
+    required this.ownerIp,
+    required this.ownerName,
+    required this.ownerMacAddress,
+    required this.entry,
+  });
+
+  final String requestId;
+  final String ownerIp;
+  final String ownerName;
+  final String ownerMacAddress;
+  final SharedCatalogEntryItem entry;
+}
 
 enum DiscoveryFlowState { idle, discovering }
 
@@ -14,31 +39,65 @@ class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
+    required DeviceAliasRepository deviceAliasRepository,
+    required SharedFolderCacheRepository sharedFolderCacheRepository,
+    required FileHashService fileHashService,
   }) : _lanDiscoveryService = lanDiscoveryService,
-       _networkHostScanner = networkHostScanner;
+       _networkHostScanner = networkHostScanner,
+       _deviceAliasRepository = deviceAliasRepository,
+       _sharedFolderCacheRepository = sharedFolderCacheRepository,
+       _fileHashService = fileHashService;
 
   static const Duration _autoRefreshInterval = Duration(seconds: 30);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
+  final DeviceAliasRepository _deviceAliasRepository;
+  final SharedFolderCacheRepository _sharedFolderCacheRepository;
+  final FileHashService _fileHashService;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
       <String, DiscoveredDevice>{};
+  final Map<String, String> _aliasByMac = <String, String>{};
+  final List<IncomingTransferRequest> _incomingRequests =
+      <IncomingTransferRequest>[];
+  final List<SharedFolderCacheRecord> _ownerSharedCaches =
+      <SharedFolderCacheRecord>[];
+  final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
+  final Set<String> _trustedDeviceMacs = <String>{};
   Timer? _scanTimer;
   bool _started = false;
   bool _isRefreshInProgress = false;
   bool _isManualRefreshInProgress = false;
+  bool _isAddingShare = false;
+  bool _isSendingTransfer = false;
+  bool _isLoadingRemoteShares = false;
+  String? _activeShareQueryRequestId;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
   final String _localName = Platform.localHostname;
+  String _localDeviceMac = '02:00:00:00:00:01';
+  String? _selectedDeviceIp;
   String? _errorMessage;
+  String? _infoMessage;
 
   DiscoveryFlowState get state => _state;
   bool get isManualRefreshInProgress => _isManualRefreshInProgress;
+  bool get isAddingShare => _isAddingShare;
+  bool get isSendingTransfer => _isSendingTransfer;
+  bool get isLoadingRemoteShares => _isLoadingRemoteShares;
   String? get localIp => _localIp;
   String get localName => _localName;
+  String get localDeviceMac => _localDeviceMac;
   String? get errorMessage => _errorMessage;
+  String? get infoMessage => _infoMessage;
+  List<IncomingTransferRequest> get incomingRequests =>
+      List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
+  List<SharedFolderCacheRecord> get ownerSharedCaches =>
+      List<SharedFolderCacheRecord>.unmodifiable(_ownerSharedCaches);
+  List<RemoteShareOption> get remoteShareOptions =>
+      List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
 
   List<DiscoveredDevice> get devices {
     final values = _devicesByIp.values.toList(growable: false);
@@ -49,6 +108,14 @@ class DiscoveryController extends ChangeNotifier {
       return _compareIp(a.ip, b.ip);
     });
     return values;
+  }
+
+  DiscoveredDevice? get selectedDevice {
+    final ip = _selectedDeviceIp;
+    if (ip == null) {
+      return null;
+    }
+    return _devicesByIp[ip];
   }
 
   int get appDetectedCount =>
@@ -63,12 +130,21 @@ class DiscoveryController extends ChangeNotifier {
     _started = true;
 
     await _resolveLocalAddress();
+    _resolveLocalDeviceMac();
+    await _loadAliases();
+    await _loadTrustedDevices();
+    await _loadOwnerCaches();
 
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
       await _lanDiscoveryService.start(
         deviceName: _localName,
         onAppDetected: _onAppDetected,
+        onTransferRequest: _onTransferRequest,
+        onTransferDecision: _onTransferDecision,
+        onShareQuery: _onShareQuery,
+        onShareCatalog: _onShareCatalog,
+        onDownloadRequest: _onDownloadRequest,
         preferredSourceIp: _localIp,
       );
 
@@ -80,10 +156,403 @@ class DiscoveryController extends ChangeNotifier {
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
       _log(_errorMessage!);
+      notifyListeners();
     }
   }
 
   Future<void> refresh() => _refresh(isManual: true);
+
+  void clearInfoMessage() {
+    _infoMessage = null;
+    notifyListeners();
+  }
+
+  void selectDeviceByIp(String ip) {
+    if (_selectedDeviceIp == ip) {
+      _selectedDeviceIp = null;
+    } else {
+      _selectedDeviceIp = ip;
+    }
+    notifyListeners();
+  }
+
+  Future<void> toggleTrustedDevice(DiscoveredDevice device) async {
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null) {
+      _errorMessage = 'Cannot mark favorite until MAC address is known.';
+      notifyListeners();
+      return;
+    }
+
+    final currentlyTrusted = _trustedDeviceMacs.contains(mac);
+    try {
+      await _deviceAliasRepository.setTrusted(
+        macAddress: mac,
+        isTrusted: !currentlyTrusted,
+      );
+      if (currentlyTrusted) {
+        _trustedDeviceMacs.remove(mac);
+      } else {
+        _trustedDeviceMacs.add(mac);
+      }
+
+      _devicesByIp.updateAll((_, value) {
+        final candidateMac = DeviceAliasRepository.normalizeMac(
+          value.macAddress,
+        );
+        if (candidateMac != mac) {
+          return value;
+        }
+        return value.copyWith(isTrusted: !currentlyTrusted);
+      });
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to update favorite device: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadRemoteShareOptions() async {
+    final targets = devices.where((device) => device.isAppDetected).toList();
+    if (targets.isEmpty) {
+      _remoteShareOptions.clear();
+      _infoMessage = 'No LanDa devices available for shared content.';
+      notifyListeners();
+      return;
+    }
+
+    _isLoadingRemoteShares = true;
+    _remoteShareOptions.clear();
+    notifyListeners();
+
+    final requestId = _fileHashService.buildStableId(
+      'share-query|${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
+    );
+    _activeShareQueryRequestId = requestId;
+    try {
+      for (final target in targets) {
+        await _lanDiscoveryService.sendShareQuery(
+          targetIp: target.ip,
+          requestId: requestId,
+          requesterName: _localName,
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (_remoteShareOptions.isEmpty) {
+        _infoMessage = 'No shared folders/files found on LAN devices.';
+      }
+      _errorMessage = null;
+    } catch (error) {
+      _errorMessage = 'Failed to request remote shares: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isLoadingRemoteShares = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> requestDownloadFromRemoteShare(RemoteShareOption option) async {
+    await requestDownloadFromRemoteFiles(
+      ownerIp: option.ownerIp,
+      ownerName: option.ownerName,
+      selectedRelativePathsByCache: <String, Set<String>>{
+        option.entry.cacheId: <String>{},
+      },
+    );
+  }
+
+  Future<void> requestDownloadFromRemoteFiles({
+    required String ownerIp,
+    required String ownerName,
+    required Map<String, Set<String>> selectedRelativePathsByCache,
+  }) async {
+    if (selectedRelativePathsByCache.isEmpty) {
+      _errorMessage = 'Select at least one file before requesting download.';
+      notifyListeners();
+      return;
+    }
+
+    final normalizedSelection = <String, List<String>>{};
+    var selectedFilesCount = 0;
+    for (final entry in selectedRelativePathsByCache.entries) {
+      final cacheId = entry.key.trim();
+      if (cacheId.isEmpty) {
+        continue;
+      }
+      final paths =
+          entry.value
+              .map((path) => path.trim())
+              .where((path) => path.isNotEmpty)
+              .toSet()
+              .toList(growable: false)
+            ..sort();
+      normalizedSelection[cacheId] = paths;
+      selectedFilesCount += paths.length;
+    }
+
+    if (normalizedSelection.isEmpty) {
+      _errorMessage = 'Selected file list is empty.';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      for (final entry in normalizedSelection.entries) {
+        final requestId = _fileHashService.buildStableId(
+          'download|$ownerIp|${entry.key}|$stamp|'
+          '${entry.value.join(",")}|$_localDeviceMac',
+        );
+        await _lanDiscoveryService.sendDownloadRequest(
+          targetIp: ownerIp,
+          requestId: requestId,
+          requesterName: _localName,
+          requesterMacAddress: _localDeviceMac,
+          cacheId: entry.key,
+          selectedRelativePaths: entry.value,
+        );
+      }
+
+      _infoMessage = selectedFilesCount > 0
+          ? 'Requested $selectedFilesCount file(s) from $ownerName.'
+          : 'Download request sent to $ownerName.';
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to request remote download: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> renameDeviceAlias({
+    required DiscoveredDevice device,
+    required String alias,
+  }) async {
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null) {
+      _errorMessage = 'Cannot rename device until MAC address is known.';
+      notifyListeners();
+      return;
+    }
+
+    final normalizedAlias = alias.trim();
+    try {
+      await _deviceAliasRepository.setAlias(
+        macAddress: mac,
+        alias: normalizedAlias,
+      );
+      final aliasOrNull = normalizedAlias.isEmpty ? null : normalizedAlias;
+      if (normalizedAlias.isEmpty) {
+        _aliasByMac.remove(mac);
+      } else {
+        _aliasByMac[mac] = normalizedAlias;
+      }
+
+      _devicesByIp.updateAll((_, value) {
+        if (DeviceAliasRepository.normalizeMac(value.macAddress) != mac) {
+          return value;
+        }
+        return value.copyWith(aliasName: aliasOrNull);
+      });
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to save alias: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> addSharedFolder() async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      final folderPath = await FilePicker.platform.getDirectoryPath();
+      if (folderPath == null || folderPath.trim().isEmpty) {
+        return;
+      }
+
+      await _sharedFolderCacheRepository.buildOwnerCache(
+        ownerMacAddress: _localDeviceMac,
+        folderPath: folderPath,
+      );
+      await _loadOwnerCaches();
+      _infoMessage = 'Shared folder added.';
+      _errorMessage = null;
+    } catch (error) {
+      _errorMessage = 'Failed to add shared folder: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> addSharedFiles() async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: false,
+      );
+      final paths =
+          result?.paths.whereType<String>().toList(growable: false) ??
+          <String>[];
+      if (paths.isEmpty) {
+        return;
+      }
+
+      await _sharedFolderCacheRepository.buildOwnerSelectionCache(
+        ownerMacAddress: _localDeviceMac,
+        filePaths: paths,
+        displayName: 'Selected files',
+      );
+      await _loadOwnerCaches();
+      _infoMessage = 'Shared files added.';
+      _errorMessage = null;
+    } catch (error) {
+      _errorMessage = 'Failed to add shared files: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> sendFilesToSelectedDevice() async {
+    final target = selectedDevice;
+    if (target == null) {
+      _errorMessage = 'Select a target device first.';
+      notifyListeners();
+      return;
+    }
+
+    _isSendingTransfer = true;
+    notifyListeners();
+    try {
+      final pick = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withData: false,
+      );
+      final selectedPaths =
+          pick?.paths.whereType<String>().toList(growable: false) ?? <String>[];
+      if (selectedPaths.isEmpty) {
+        return;
+      }
+
+      final cache = await _sharedFolderCacheRepository.buildOwnerSelectionCache(
+        ownerMacAddress: _localDeviceMac,
+        filePaths: selectedPaths,
+        displayName: 'Transfer to ${target.displayName}',
+      );
+      await _loadOwnerCaches();
+
+      final items = <TransferAnnouncementItem>[];
+      for (final filePath in selectedPaths) {
+        final file = File(filePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+
+        final sha = await _fileHashService.computeSha256ForPath(filePath);
+        items.add(
+          TransferAnnouncementItem(
+            fileName: p.basename(filePath),
+            sizeBytes: stat.size,
+            sha256: sha,
+          ),
+        );
+      }
+
+      if (items.isEmpty) {
+        _errorMessage = 'No readable files selected.';
+        notifyListeners();
+        return;
+      }
+
+      final requestId = _fileHashService.buildStableId(
+        '${DateTime.now().microsecondsSinceEpoch}|${target.ip}|${cache.cacheId}',
+      );
+      await _lanDiscoveryService.sendTransferRequest(
+        targetIp: target.ip,
+        requestId: requestId,
+        senderName: _localName,
+        senderMacAddress: _localDeviceMac,
+        sharedCacheId: cache.cacheId,
+        sharedLabel: cache.displayName,
+        items: items,
+      );
+
+      _infoMessage =
+          'Transfer request sent to ${target.displayName}. Waiting for accept.';
+      _errorMessage = null;
+    } catch (error) {
+      _errorMessage = 'Failed to send transfer request: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isSendingTransfer = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> respondToTransferRequest({
+    required String requestId,
+    required bool approved,
+  }) async {
+    final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
+    if (index < 0) {
+      return;
+    }
+
+    final request = _incomingRequests[index];
+    try {
+      await _lanDiscoveryService.sendTransferDecision(
+        targetIp: request.senderIp,
+        requestId: request.requestId,
+        approved: approved,
+        receiverName: _localName,
+      );
+
+      if (approved) {
+        final entries = request.items
+            .map(
+              (item) => SharedFolderIndexEntry(
+                relativePath: item.fileName,
+                sizeBytes: item.sizeBytes,
+                modifiedAtMs: request.createdAt.millisecondsSinceEpoch,
+              ),
+            )
+            .toList(growable: false);
+
+        await _sharedFolderCacheRepository.saveReceiverCache(
+          ownerMacAddress: request.senderMacAddress,
+          receiverMacAddress: _localDeviceMac,
+          remoteFolderIdentity: request.sharedCacheId,
+          remoteDisplayName: request.sharedLabel,
+          entries: entries,
+        );
+      }
+
+      _incomingRequests.removeAt(index);
+      _infoMessage = approved
+          ? 'Transfer accepted. Hash manifest cached.'
+          : 'Transfer declined.';
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to respond to transfer request: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
 
   Future<void> _refresh({required bool isManual}) async {
     if (_isRefreshInProgress) {
@@ -108,15 +577,37 @@ class DiscoveryController extends ChangeNotifier {
         '${isManual ? "Manual" : "Auto"} refresh scan finished. hosts=${hosts.length}',
       );
 
-      for (final ip in hosts) {
-        _devicesByIp[ip] =
-            (_devicesByIp[ip] ?? DiscoveredDevice(ip: ip, lastSeen: now))
-                .copyWith(isReachable: true, lastSeen: now);
+      final seenMacToIp = <String, String>{};
+      for (final host in hosts.entries) {
+        final ip = host.key;
+        final normalizedMac = DeviceAliasRepository.normalizeMac(host.value);
+        final existing =
+            _devicesByIp[ip] ?? DiscoveredDevice(ip: ip, lastSeen: now);
+        final aliasName = normalizedMac == null
+            ? existing.aliasName
+            : _aliasByMac[normalizedMac];
+        final isTrusted =
+            normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+
+        _devicesByIp[ip] = existing.copyWith(
+          macAddress: normalizedMac ?? existing.macAddress,
+          aliasName: aliasName ?? existing.aliasName,
+          isTrusted: isTrusted,
+          isReachable: true,
+          lastSeen: now,
+        );
+        if (normalizedMac != null) {
+          seenMacToIp[normalizedMac] = ip;
+        }
+      }
+
+      if (seenMacToIp.isNotEmpty) {
+        await _deviceAliasRepository.recordSeenDevices(seenMacToIp);
       }
 
       final staleIps = <String>[];
       _devicesByIp.forEach((ip, device) {
-        if (hosts.contains(ip)) {
+        if (hosts.containsKey(ip)) {
           return;
         }
 
@@ -129,6 +620,10 @@ class DiscoveryController extends ChangeNotifier {
       });
       for (final staleIp in staleIps) {
         _devicesByIp.remove(staleIp);
+      }
+      if (_selectedDeviceIp != null &&
+          !_devicesByIp.containsKey(_selectedDeviceIp)) {
+        _selectedDeviceIp = null;
       }
       _log(
         'Device list updated. total=${_devicesByIp.length} '
@@ -152,15 +647,222 @@ class DiscoveryController extends ChangeNotifier {
   void _onAppDetected(AppPresenceEvent event) {
     _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
+    final normalizedMac = DeviceAliasRepository.normalizeMac(
+      existing?.macAddress,
+    );
+    final aliasName = normalizedMac == null ? null : _aliasByMac[normalizedMac];
+    final isTrusted =
+        normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
+              aliasName: aliasName ?? existing?.aliasName,
               deviceName: event.deviceName,
+              isTrusted: isTrusted,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
             );
     notifyListeners();
+  }
+
+  void _onTransferRequest(TransferRequestEvent event) {
+    final mappedItems = event.items
+        .map(
+          (item) => TransferFileManifestItem(
+            fileName: item.fileName,
+            sizeBytes: item.sizeBytes,
+            sha256: item.sha256,
+          ),
+        )
+        .toList(growable: false);
+
+    _incomingRequests.removeWhere((req) => req.requestId == event.requestId);
+    _incomingRequests.insert(
+      0,
+      IncomingTransferRequest(
+        requestId: event.requestId,
+        senderIp: event.senderIp,
+        senderName: event.senderName,
+        senderMacAddress: event.senderMacAddress,
+        sharedCacheId: event.sharedCacheId,
+        sharedLabel: event.sharedLabel,
+        items: mappedItems,
+        createdAt: event.observedAt,
+      ),
+    );
+    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
+      event.senderMacAddress,
+    );
+    final isTrustedSender =
+        normalizedSenderMac != null &&
+        _trustedDeviceMacs.contains(normalizedSenderMac);
+
+    if (isTrustedSender) {
+      _infoMessage =
+          'Auto-accepting transfer from trusted device ${event.senderName}.';
+      notifyListeners();
+      unawaited(
+        respondToTransferRequest(requestId: event.requestId, approved: true),
+      );
+      return;
+    }
+
+    _infoMessage = 'Incoming transfer request from ${event.senderName}.';
+    notifyListeners();
+  }
+
+  void _onTransferDecision(TransferDecisionEvent event) {
+    _infoMessage = event.approved
+        ? '${event.receiverName} accepted your transfer request.'
+        : '${event.receiverName} declined your transfer request.';
+    notifyListeners();
+  }
+
+  void _onShareQuery(ShareQueryEvent event) {
+    unawaited(_handleShareQuery(event));
+  }
+
+  Future<void> _handleShareQuery(ShareQueryEvent event) async {
+    await _loadOwnerCaches();
+    if (_ownerSharedCaches.isEmpty) {
+      _log('Share query from ${event.requesterIp} returned 0 owner caches');
+      return;
+    }
+
+    final catalog = <SharedCatalogEntryItem>[];
+    for (final cache in _ownerSharedCaches) {
+      final entries = await _sharedFolderCacheRepository.readIndexEntries(
+        cache.cacheId,
+      );
+      final files = entries
+          .map(
+            (entry) => SharedCatalogFileItem(
+              relativePath: entry.relativePath,
+              sizeBytes: entry.sizeBytes,
+            ),
+          )
+          .toList(growable: false);
+      catalog.add(
+        SharedCatalogEntryItem(
+          cacheId: cache.cacheId,
+          displayName: cache.displayName,
+          itemCount: cache.itemCount,
+          totalBytes: cache.totalBytes,
+          files: files,
+        ),
+      );
+    }
+
+    await _lanDiscoveryService.sendShareCatalog(
+      targetIp: event.requesterIp,
+      requestId: event.requestId,
+      ownerName: _localName,
+      ownerMacAddress: _localDeviceMac,
+      entries: catalog,
+    );
+    _log(
+      'Share catalog sent to ${event.requesterIp}. entries=${catalog.length}',
+    );
+  }
+
+  void _onShareCatalog(ShareCatalogEvent event) {
+    if (_activeShareQueryRequestId != null &&
+        event.requestId != _activeShareQueryRequestId) {
+      return;
+    }
+
+    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
+    final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
+    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
+    final existing = _devicesByIp[event.ownerIp];
+    _devicesByIp[event.ownerIp] =
+        (existing ??
+                DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
+            .copyWith(
+              macAddress: ownerMac ?? existing?.macAddress,
+              aliasName: aliasName ?? existing?.aliasName,
+              deviceName: event.ownerName,
+              isTrusted: trusted,
+              isAppDetected: true,
+              isReachable: true,
+              lastSeen: event.observedAt,
+            );
+
+    _remoteShareOptions.removeWhere(
+      (option) => option.ownerIp == event.ownerIp,
+    );
+    for (final entry in event.entries) {
+      _remoteShareOptions.add(
+        RemoteShareOption(
+          requestId: event.requestId,
+          ownerIp: event.ownerIp,
+          ownerName: aliasName ?? event.ownerName,
+          ownerMacAddress: ownerMac ?? event.ownerMacAddress,
+          entry: entry,
+        ),
+      );
+    }
+    _remoteShareOptions.sort((a, b) {
+      final ownerCmp = a.ownerName.toLowerCase().compareTo(
+        b.ownerName.toLowerCase(),
+      );
+      if (ownerCmp != 0) {
+        return ownerCmp;
+      }
+      return a.entry.displayName.toLowerCase().compareTo(
+        b.entry.displayName.toLowerCase(),
+      );
+    });
+    notifyListeners();
+  }
+
+  void _onDownloadRequest(DownloadRequestEvent event) {
+    unawaited(_handleDownloadRequest(event));
+  }
+
+  Future<void> _handleDownloadRequest(DownloadRequestEvent event) async {
+    await _loadOwnerCaches();
+    final cache = _findOwnerCacheById(event.cacheId);
+    if (cache == null) {
+      _log(
+        'Download request from ${event.requesterIp} ignored. '
+        'Unknown cacheId=${event.cacheId}',
+      );
+      return;
+    }
+
+    final relativePathFilter = event.selectedRelativePaths.isEmpty
+        ? null
+        : event.selectedRelativePaths.toSet();
+    final items = await _buildTransferItemsForCache(
+      cache,
+      relativePathFilter: relativePathFilter,
+    );
+    if (items.isEmpty) {
+      _log(
+        'Download request from ${event.requesterIp} ignored. '
+        'No readable files in cacheId=${event.cacheId}',
+      );
+      return;
+    }
+
+    final requestId = _fileHashService.buildStableId(
+      'download-share|${event.requestId}|${event.requesterIp}|${cache.cacheId}',
+    );
+    await _lanDiscoveryService.sendTransferRequest(
+      targetIp: event.requesterIp,
+      requestId: requestId,
+      senderName: _localName,
+      senderMacAddress: _localDeviceMac,
+      sharedCacheId: cache.cacheId,
+      sharedLabel: cache.displayName,
+      items: items,
+    );
+    _log(
+      'Transfer request sent for cache ${cache.cacheId} to ${event.requesterIp}. '
+      'items=${items.length}',
+    );
   }
 
   Future<void> _resolveLocalAddress() async {
@@ -202,6 +904,114 @@ class DiscoveryController extends ChangeNotifier {
     _log('No suitable IPv4 local interface found');
   }
 
+  void _resolveLocalDeviceMac() {
+    final seed = '${_localIp ?? "0.0.0.0"}|$_localName';
+    final digest = sha256.convert(utf8.encode(seed)).bytes;
+    final bytes = digest.take(6).toList(growable: false);
+    bytes[0] = (bytes[0] & 0xfe) | 0x02;
+    _localDeviceMac = bytes
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(':');
+  }
+
+  Future<void> _loadOwnerCaches() async {
+    try {
+      final caches = await _sharedFolderCacheRepository.listCaches(
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: _localDeviceMac,
+      );
+      _ownerSharedCaches
+        ..clear()
+        ..addAll(caches);
+    } catch (error) {
+      _log('Failed to load owner cache list: $error');
+    }
+  }
+
+  Future<void> _loadTrustedDevices() async {
+    try {
+      final trustedMacs = await _deviceAliasRepository.loadTrustedMacs();
+      _trustedDeviceMacs
+        ..clear()
+        ..addAll(trustedMacs);
+      _devicesByIp.updateAll((_, value) {
+        final normalizedMac = DeviceAliasRepository.normalizeMac(
+          value.macAddress,
+        );
+        final isTrusted =
+            normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+        return value.copyWith(isTrusted: isTrusted);
+      });
+      _log('Loaded trusted devices from DB. count=${trustedMacs.length}');
+    } catch (error) {
+      _log('Failed to load trusted devices from DB: $error');
+    }
+  }
+
+  Future<List<TransferAnnouncementItem>> _buildTransferItemsForCache(
+    SharedFolderCacheRecord cache, {
+    Set<String>? relativePathFilter,
+  }) async {
+    final indexEntries = await _sharedFolderCacheRepository.readIndexEntries(
+      cache.cacheId,
+    );
+    final items = <TransferAnnouncementItem>[];
+    for (final entry in indexEntries) {
+      if (relativePathFilter != null &&
+          !relativePathFilter.contains(entry.relativePath)) {
+        continue;
+      }
+      final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
+      String sha256Hash;
+      if (filePath != null) {
+        final file = File(filePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+        sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
+      } else {
+        // Selection caches may not map to absolute file paths.
+        sha256Hash = _fileHashService.buildStableId(
+          'virtual|${cache.cacheId}|${entry.relativePath}|${entry.sizeBytes}|'
+          '${entry.modifiedAtMs}',
+        );
+      }
+
+      items.add(
+        TransferAnnouncementItem(
+          fileName: entry.relativePath,
+          sizeBytes: entry.sizeBytes,
+          sha256: sha256Hash,
+        ),
+      );
+    }
+    return items;
+  }
+
+  SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {
+    for (final cache in _ownerSharedCaches) {
+      if (cache.cacheId == cacheId) {
+        return cache;
+      }
+    }
+    return null;
+  }
+
+  String? _resolveCacheFilePath({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+  }) {
+    if (cache.rootPath.startsWith('selection://')) {
+      return null;
+    }
+    final localRelative = entry.relativePath.replaceAll('/', p.separator);
+    return p.join(cache.rootPath, localRelative);
+  }
+
   int _compareIp(String a, String b) {
     final aParts = a.split('.').map(int.parse).toList(growable: false);
     final bParts = b.split('.').map(int.parse).toList(growable: false);
@@ -223,6 +1033,18 @@ class DiscoveryController extends ChangeNotifier {
 
   void _log(String message) {
     developer.log(message, name: 'DiscoveryController');
+  }
+
+  Future<void> _loadAliases() async {
+    try {
+      final aliases = await _deviceAliasRepository.loadAliasMap();
+      _aliasByMac
+        ..clear()
+        ..addAll(aliases);
+      _log('Loaded aliases from DB. count=${aliases.length}');
+    } catch (error) {
+      _log('Failed to load aliases from DB: $error');
+    }
   }
 
   int _scoreAddress(String interfaceName, String ip) {

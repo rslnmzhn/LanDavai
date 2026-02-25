@@ -27,7 +27,9 @@ class NetworkHostScanner {
 
   final bool allowTcpFallback;
 
-  Future<Set<String>> scanActiveHosts({String? preferredSourceIp}) async {
+  Future<Map<String, String?>> scanActiveHosts({
+    String? preferredSourceIp,
+  }) async {
     final localIps = await _getLocalIpv4Addresses(
       preferredSourceIp: preferredSourceIp,
     );
@@ -40,7 +42,7 @@ class NetworkHostScanner {
     candidates.removeAll(localIps);
     if (candidates.isEmpty) {
       _log('No scan candidates. localIps=$localIps');
-      return <String>{};
+      return <String, String?>{};
     }
 
     _log(
@@ -59,7 +61,7 @@ class NetworkHostScanner {
 
     if (!allowTcpFallback) {
       _log('Neighbor-table scan returned 0 hosts. TCP fallback disabled.');
-      return <String>{};
+      return <String, String?>{};
     }
 
     _log('Neighbor-table scan returned 0 hosts. Fallback to TCP probing.');
@@ -68,10 +70,10 @@ class NetworkHostScanner {
       parallelism: _defaultParallelism,
     );
     _log('TCP fallback complete. reachable=${foundHosts.length}');
-    return foundHosts;
+    return <String, String?>{for (final ip in foundHosts) ip: null};
   }
 
-  Future<Set<String>> _scanUsingNeighborTable(
+  Future<Map<String, String>> _scanUsingNeighborTable(
     Set<String> candidates, {
     String? preferredSourceIp,
   }) async {
@@ -79,7 +81,7 @@ class NetworkHostScanner {
     final arpByIp = await _loadArpEntries(preferredSourceIp: preferredSourceIp);
     if (arpByIp.isEmpty) {
       _log('ARP table is empty or unreadable.');
-      return <String>{};
+      return <String, String>{};
     }
 
     final rawHosts = <String>{};
@@ -94,11 +96,18 @@ class NetworkHostScanner {
     }
 
     if (rawHosts.isEmpty) {
-      return <String>{};
+      return <String, String>{};
     }
 
-    final filtered = _filterProxyArpNoise(rawHosts, hostMacs);
-    return filtered;
+    final filteredHosts = _filterProxyArpNoise(rawHosts, hostMacs);
+    final result = <String, String>{};
+    for (final ip in filteredHosts) {
+      final mac = hostMacs[ip];
+      if (mac != null) {
+        result[ip] = mac;
+      }
+    }
+    return result;
   }
 
   Future<void> _primeNeighborCache(Set<String> candidates) async {
