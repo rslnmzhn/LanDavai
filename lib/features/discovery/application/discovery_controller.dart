@@ -8,8 +8,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/utils/path_opener.dart';
+import '../../history/data/transfer_history_repository.dart';
+import '../../history/domain/transfer_history_record.dart';
 import '../../transfer/data/file_hash_service.dart';
+import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../data/device_alias_repository.dart';
@@ -35,26 +40,52 @@ class RemoteShareOption {
 
 enum DiscoveryFlowState { idle, discovering }
 
+class _OutgoingTransferSession {
+  _OutgoingTransferSession({required this.receiverName, required this.files});
+
+  final String receiverName;
+  final List<TransferSourceFile> files;
+}
+
+class _PreparedTransferFile {
+  _PreparedTransferFile({required this.sourcePath, required this.announcement});
+
+  final String sourcePath;
+  final TransferAnnouncementItem announcement;
+}
+
 class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceAliasRepository deviceAliasRepository,
+    required TransferHistoryRepository transferHistoryRepository,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
+    required FileTransferService fileTransferService,
+    required TransferStorageService transferStorageService,
+    required PathOpener pathOpener,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceAliasRepository = deviceAliasRepository,
+       _transferHistoryRepository = transferHistoryRepository,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
-       _fileHashService = fileHashService;
+       _fileHashService = fileHashService,
+       _fileTransferService = fileTransferService,
+       _transferStorageService = transferStorageService,
+       _pathOpener = pathOpener;
 
   static const Duration _autoRefreshInterval = Duration(seconds: 30);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceAliasRepository _deviceAliasRepository;
+  final TransferHistoryRepository _transferHistoryRepository;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
+  final FileTransferService _fileTransferService;
+  final TransferStorageService _transferStorageService;
+  final PathOpener _pathOpener;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
       <String, DiscoveredDevice>{};
@@ -65,6 +96,12 @@ class DiscoveryController extends ChangeNotifier {
       <SharedFolderCacheRecord>[];
   final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
   final Set<String> _trustedDeviceMacs = <String>{};
+  final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
+      <String, _OutgoingTransferSession>{};
+  final Map<String, TransferReceiveSession> _activeReceiveSessions =
+      <String, TransferReceiveSession>{};
+  final List<TransferHistoryRecord> _downloadHistory =
+      <TransferHistoryRecord>[];
   Timer? _scanTimer;
   bool _started = false;
   bool _isRefreshInProgress = false;
@@ -73,6 +110,10 @@ class DiscoveryController extends ChangeNotifier {
   bool _isSendingTransfer = false;
   bool _isLoadingRemoteShares = false;
   String? _activeShareQueryRequestId;
+  int _uploadSentBytes = 0;
+  int _uploadTotalBytes = 0;
+  int _downloadReceivedBytes = 0;
+  int _downloadTotalBytes = 0;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
@@ -87,6 +128,19 @@ class DiscoveryController extends ChangeNotifier {
   bool get isAddingShare => _isAddingShare;
   bool get isSendingTransfer => _isSendingTransfer;
   bool get isLoadingRemoteShares => _isLoadingRemoteShares;
+  bool get isUploading =>
+      _uploadTotalBytes > 0 && _uploadSentBytes < _uploadTotalBytes;
+  bool get isDownloading =>
+      _downloadTotalBytes > 0 && _downloadReceivedBytes < _downloadTotalBytes;
+  double get uploadProgress =>
+      _uploadTotalBytes == 0 ? 0 : _uploadSentBytes / _uploadTotalBytes;
+  double get downloadProgress => _downloadTotalBytes == 0
+      ? 0
+      : _downloadReceivedBytes / _downloadTotalBytes;
+  int get uploadSentBytes => _uploadSentBytes;
+  int get uploadTotalBytes => _uploadTotalBytes;
+  int get downloadReceivedBytes => _downloadReceivedBytes;
+  int get downloadTotalBytes => _downloadTotalBytes;
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
@@ -98,6 +152,8 @@ class DiscoveryController extends ChangeNotifier {
       List<SharedFolderCacheRecord>.unmodifiable(_ownerSharedCaches);
   List<RemoteShareOption> get remoteShareOptions =>
       List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
+  List<TransferHistoryRecord> get downloadHistory =>
+      List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
 
   List<DiscoveredDevice> get devices {
     final values = _devicesByIp.values.toList(growable: false);
@@ -134,6 +190,7 @@ class DiscoveryController extends ChangeNotifier {
     await _loadAliases();
     await _loadTrustedDevices();
     await _loadOwnerCaches();
+    await _loadDownloadHistory();
 
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
@@ -432,6 +489,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     _isSendingTransfer = true;
+    String? pendingRequestId;
     notifyListeners();
     try {
       final pick = await FilePicker.platform.pickFiles(
@@ -452,6 +510,7 @@ class DiscoveryController extends ChangeNotifier {
       await _loadOwnerCaches();
 
       final items = <TransferAnnouncementItem>[];
+      final transferFiles = <TransferSourceFile>[];
       for (final filePath in selectedPaths) {
         final file = File(filePath);
         if (!await file.exists()) {
@@ -463,11 +522,18 @@ class DiscoveryController extends ChangeNotifier {
         }
 
         final sha = await _fileHashService.computeSha256ForPath(filePath);
-        items.add(
-          TransferAnnouncementItem(
-            fileName: p.basename(filePath),
-            sizeBytes: stat.size,
-            sha256: sha,
+        final announcement = TransferAnnouncementItem(
+          fileName: p.basename(filePath),
+          sizeBytes: stat.size,
+          sha256: sha,
+        );
+        items.add(announcement);
+        transferFiles.add(
+          TransferSourceFile(
+            sourcePath: filePath,
+            fileName: announcement.fileName,
+            sizeBytes: announcement.sizeBytes,
+            sha256: announcement.sha256,
           ),
         );
       }
@@ -480,6 +546,11 @@ class DiscoveryController extends ChangeNotifier {
 
       final requestId = _fileHashService.buildStableId(
         '${DateTime.now().microsecondsSinceEpoch}|${target.ip}|${cache.cacheId}',
+      );
+      pendingRequestId = requestId;
+      _pendingOutgoingTransfers[requestId] = _OutgoingTransferSession(
+        receiverName: target.displayName,
+        files: transferFiles,
       );
       await _lanDiscoveryService.sendTransferRequest(
         targetIp: target.ip,
@@ -495,6 +566,9 @@ class DiscoveryController extends ChangeNotifier {
           'Transfer request sent to ${target.displayName}. Waiting for accept.';
       _errorMessage = null;
     } catch (error) {
+      if (pendingRequestId != null) {
+        _pendingOutgoingTransfers.remove(pendingRequestId);
+      }
       _errorMessage = 'Failed to send transfer request: $error';
       _log(_errorMessage!);
     } finally {
@@ -513,12 +587,40 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final request = _incomingRequests[index];
+    TransferReceiveSession? receiveSession;
     try {
+      if (approved) {
+        _downloadReceivedBytes = 0;
+        _downloadTotalBytes = request.totalBytes;
+        notifyListeners();
+
+        final destinationDirectory = await _transferStorageService
+            .resolveReceiveDirectory(appFolderName: 'LanDa');
+        receiveSession = await _fileTransferService.startReceiver(
+          requestId: request.requestId,
+          expectedItems: request.items,
+          destinationDirectory: destinationDirectory,
+          onProgress: (received, total) {
+            _downloadReceivedBytes = received;
+            _downloadTotalBytes = total;
+            notifyListeners();
+          },
+        );
+        _activeReceiveSessions[request.requestId] = receiveSession;
+        unawaited(
+          _waitForIncomingTransferResult(
+            request: request,
+            session: receiveSession,
+          ),
+        );
+      }
+
       await _lanDiscoveryService.sendTransferDecision(
         targetIp: request.senderIp,
         requestId: request.requestId,
         approved: approved,
         receiverName: _localName,
+        transferPort: receiveSession?.port,
       );
 
       if (approved) {
@@ -543,11 +645,15 @@ class DiscoveryController extends ChangeNotifier {
 
       _incomingRequests.removeAt(index);
       _infoMessage = approved
-          ? 'Transfer accepted. Hash manifest cached.'
+          ? 'Transfer accepted. Waiting for file stream...'
           : 'Transfer declined.';
       _errorMessage = null;
       notifyListeners();
     } catch (error) {
+      if (receiveSession != null) {
+        await receiveSession.close();
+        _activeReceiveSessions.remove(request.requestId);
+      }
       _errorMessage = 'Failed to respond to transfer request: $error';
       _log(_errorMessage!);
       notifyListeners();
@@ -713,10 +819,146 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
-    _infoMessage = event.approved
-        ? '${event.receiverName} accepted your transfer request.'
-        : '${event.receiverName} declined your transfer request.';
+    if (!event.approved) {
+      _pendingOutgoingTransfers.remove(event.requestId);
+      _infoMessage = '${event.receiverName} declined your transfer request.';
+      notifyListeners();
+      return;
+    }
+
+    final session = _pendingOutgoingTransfers[event.requestId];
+    if (session == null) {
+      _infoMessage = '${event.receiverName} accepted your transfer request.';
+      notifyListeners();
+      return;
+    }
+    if (event.transferPort == null) {
+      _errorMessage =
+          '${event.receiverName} accepted request but did not provide transfer port.';
+      notifyListeners();
+      return;
+    }
+
+    _infoMessage =
+        '${event.receiverName} accepted request. Starting transfer...';
     notifyListeners();
+    unawaited(_sendApprovedTransfer(event: event, session: session));
+  }
+
+  Future<void> _sendApprovedTransfer({
+    required TransferDecisionEvent event,
+    required _OutgoingTransferSession session,
+  }) async {
+    _uploadSentBytes = 0;
+    _uploadTotalBytes = session.files.fold<int>(
+      0,
+      (sum, file) => sum + file.sizeBytes,
+    );
+    notifyListeners();
+
+    try {
+      await _fileTransferService.sendFiles(
+        host: event.receiverIp,
+        port: event.transferPort!,
+        requestId: event.requestId,
+        files: session.files,
+        onProgress: (sent, total) {
+          _uploadSentBytes = sent;
+          _uploadTotalBytes = total;
+          notifyListeners();
+        },
+      );
+      _infoMessage =
+          'Transferred ${session.files.length} file(s) to ${session.receiverName}.';
+      _errorMessage = null;
+      _uploadSentBytes = _uploadTotalBytes;
+    } catch (error) {
+      _errorMessage = 'File transfer failed: $error';
+      _log(_errorMessage!);
+    } finally {
+      _pendingOutgoingTransfers.remove(event.requestId);
+      Future<void>.delayed(const Duration(seconds: 1), () {
+        _uploadSentBytes = 0;
+        _uploadTotalBytes = 0;
+        notifyListeners();
+      });
+      notifyListeners();
+    }
+  }
+
+  Future<void> _waitForIncomingTransferResult({
+    required IncomingTransferRequest request,
+    required TransferReceiveSession session,
+  }) async {
+    final result = await session.result;
+    _activeReceiveSessions.remove(request.requestId);
+
+    if (result.success) {
+      var savedPaths = result.savedPaths;
+      try {
+        savedPaths = await _transferStorageService.publishToUserDownloads(
+          sourcePaths: result.savedPaths,
+          relativePaths: request.items
+              .map((item) => item.fileName)
+              .toList(growable: false),
+          appFolderName: 'LanDa',
+        );
+      } catch (error) {
+        _log('Failed to publish files into user downloads: $error');
+      }
+
+      try {
+        await _transferHistoryRepository.addRecord(
+          id: _fileHashService.buildStableId(
+            'download-history|${request.requestId}|'
+            '${DateTime.now().microsecondsSinceEpoch}',
+          ),
+          requestId: request.requestId,
+          direction: TransferHistoryDirection.download,
+          peerName: request.senderName,
+          peerIp: request.senderIp,
+          rootPath: savedPaths.isEmpty
+              ? result.destinationDirectory
+              : File(savedPaths.first).parent.path,
+          savedPaths: savedPaths,
+          fileCount: savedPaths.length,
+          totalBytes: result.totalBytes,
+          status: TransferHistoryStatus.completed,
+          createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        );
+        await _loadDownloadHistory();
+      } catch (error) {
+        _log('Failed to persist transfer history: $error');
+      }
+
+      _infoMessage =
+          'Received ${savedPaths.length} file(s) from ${request.senderName}. '
+          'Saved to ${savedPaths.isEmpty ? result.destinationDirectory : File(savedPaths.first).parent.path}.';
+      _errorMessage = null;
+      _downloadReceivedBytes = _downloadTotalBytes;
+    } else {
+      _errorMessage =
+          'Transfer from ${request.senderName} failed: ${result.message}';
+      _log(_errorMessage!);
+    }
+    Future<void>.delayed(const Duration(seconds: 1), () {
+      _downloadReceivedBytes = 0;
+      _downloadTotalBytes = 0;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  Future<void> openHistoryPath(String path) async {
+    try {
+      await _pathOpener.openContainingFolder(path);
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to open folder: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
   }
 
   void _onShareQuery(ShareQueryEvent event) {
@@ -835,30 +1077,52 @@ class DiscoveryController extends ChangeNotifier {
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
         : event.selectedRelativePaths.toSet();
-    final items = await _buildTransferItemsForCache(
+    final preparedFiles = await _buildTransferFilesForCache(
       cache,
       relativePathFilter: relativePathFilter,
     );
-    if (items.isEmpty) {
+    if (preparedFiles.isEmpty) {
       _log(
         'Download request from ${event.requesterIp} ignored. '
         'No readable files in cacheId=${event.cacheId}',
       );
       return;
     }
+    final items = preparedFiles
+        .map((prepared) => prepared.announcement)
+        .toList(growable: false);
 
     final requestId = _fileHashService.buildStableId(
       'download-share|${event.requestId}|${event.requesterIp}|${cache.cacheId}',
     );
-    await _lanDiscoveryService.sendTransferRequest(
-      targetIp: event.requesterIp,
-      requestId: requestId,
-      senderName: _localName,
-      senderMacAddress: _localDeviceMac,
-      sharedCacheId: cache.cacheId,
-      sharedLabel: cache.displayName,
-      items: items,
-    );
+    try {
+      _pendingOutgoingTransfers[requestId] = _OutgoingTransferSession(
+        receiverName: event.requesterName,
+        files: preparedFiles
+            .map(
+              (prepared) => TransferSourceFile(
+                sourcePath: prepared.sourcePath,
+                fileName: prepared.announcement.fileName,
+                sizeBytes: prepared.announcement.sizeBytes,
+                sha256: prepared.announcement.sha256,
+              ),
+            )
+            .toList(growable: false),
+      );
+      await _lanDiscoveryService.sendTransferRequest(
+        targetIp: event.requesterIp,
+        requestId: requestId,
+        senderName: _localName,
+        senderMacAddress: _localDeviceMac,
+        sharedCacheId: cache.cacheId,
+        sharedLabel: cache.displayName,
+        items: items,
+      );
+    } catch (error) {
+      _pendingOutgoingTransfers.remove(requestId);
+      _log('Failed to prepare download-share transfer: $error');
+      return;
+    }
     _log(
       'Transfer request sent for cache ${cache.cacheId} to ${event.requesterIp}. '
       'items=${items.length}',
@@ -948,44 +1212,41 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<List<TransferAnnouncementItem>> _buildTransferItemsForCache(
+  Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
   }) async {
     final indexEntries = await _sharedFolderCacheRepository.readIndexEntries(
       cache.cacheId,
     );
-    final items = <TransferAnnouncementItem>[];
+    final items = <_PreparedTransferFile>[];
     for (final entry in indexEntries) {
       if (relativePathFilter != null &&
           !relativePathFilter.contains(entry.relativePath)) {
         continue;
       }
       final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
-      String sha256Hash;
-      if (filePath != null) {
-        final file = File(filePath);
-        if (!await file.exists()) {
-          continue;
-        }
-        final stat = await file.stat();
-        if (stat.type != FileSystemEntityType.file) {
-          continue;
-        }
-        sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
-      } else {
-        // Selection caches may not map to absolute file paths.
-        sha256Hash = _fileHashService.buildStableId(
-          'virtual|${cache.cacheId}|${entry.relativePath}|${entry.sizeBytes}|'
-          '${entry.modifiedAtMs}',
-        );
+      if (filePath == null) {
+        continue;
       }
+      final file = File(filePath);
+      if (!await file.exists()) {
+        continue;
+      }
+      final stat = await file.stat();
+      if (stat.type != FileSystemEntityType.file) {
+        continue;
+      }
+      final sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
 
       items.add(
-        TransferAnnouncementItem(
-          fileName: entry.relativePath,
-          sizeBytes: entry.sizeBytes,
-          sha256: sha256Hash,
+        _PreparedTransferFile(
+          sourcePath: filePath,
+          announcement: TransferAnnouncementItem(
+            fileName: entry.relativePath,
+            sizeBytes: entry.sizeBytes,
+            sha256: sha256Hash,
+          ),
         ),
       );
     }
@@ -1006,7 +1267,7 @@ class DiscoveryController extends ChangeNotifier {
     required SharedFolderIndexEntry entry,
   }) {
     if (cache.rootPath.startsWith('selection://')) {
-      return null;
+      return entry.absolutePath;
     }
     final localRelative = entry.relativePath.replaceAll('/', p.separator);
     return p.join(cache.rootPath, localRelative);
@@ -1027,6 +1288,10 @@ class DiscoveryController extends ChangeNotifier {
   @override
   void dispose() {
     _scanTimer?.cancel();
+    for (final session in _activeReceiveSessions.values) {
+      unawaited(session.close());
+    }
+    _activeReceiveSessions.clear();
     _lanDiscoveryService.stop();
     super.dispose();
   }
@@ -1044,6 +1309,20 @@ class DiscoveryController extends ChangeNotifier {
       _log('Loaded aliases from DB. count=${aliases.length}');
     } catch (error) {
       _log('Failed to load aliases from DB: $error');
+    }
+  }
+
+  Future<void> _loadDownloadHistory() async {
+    try {
+      final rows = await _transferHistoryRepository.listRecords(
+        direction: TransferHistoryDirection.download,
+        limit: 120,
+      );
+      _downloadHistory
+        ..clear()
+        ..addAll(rows);
+    } catch (error) {
+      _log('Failed to load transfer history: $error');
     }
   }
 

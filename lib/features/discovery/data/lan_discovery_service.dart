@@ -81,6 +81,7 @@ class TransferDecisionEvent {
     required this.approved,
     required this.receiverName,
     required this.receiverIp,
+    required this.transferPort,
     required this.observedAt,
   });
 
@@ -88,6 +89,7 @@ class TransferDecisionEvent {
   final bool approved;
   final String receiverName;
   final String receiverIp;
+  final int? transferPort;
   final DateTime observedAt;
 }
 
@@ -391,6 +393,7 @@ class LanDiscoveryService {
               approved: transferDecision.approved,
               receiverName: transferDecision.receiverName,
               receiverIp: senderIp,
+              transferPort: transferDecision.transferPort,
               observedAt: DateTime.now(),
             ),
           );
@@ -509,6 +512,7 @@ class LanDiscoveryService {
     required String requestId,
     required bool approved,
     required String receiverName,
+    int? transferPort,
   }) async {
     final payload = <String, Object?>{
       'instanceId': _instanceId,
@@ -517,6 +521,9 @@ class LanDiscoveryService {
       'receiverName': receiverName,
       'createdAtMs': DateTime.now().millisecondsSinceEpoch,
     };
+    if (transferPort != null) {
+      payload['transferPort'] = transferPort;
+    }
     await _sendEncodedPacket(
       prefix: _transferDecisionPrefix,
       payload: payload,
@@ -715,6 +722,11 @@ class LanDiscoveryService {
     final receiverName = decoded['receiverName'] as String?;
     final approved = decoded['approved'] as bool?;
     final instanceId = decoded['instanceId'] as String?;
+    final transferPortRaw = decoded['transferPort'];
+    int? transferPort;
+    if (transferPortRaw is num) {
+      transferPort = transferPortRaw.toInt();
+    }
     if (requestId == null ||
         receiverName == null ||
         approved == null ||
@@ -727,6 +739,7 @@ class LanDiscoveryService {
       requestId: requestId,
       receiverName: receiverName,
       approved: approved,
+      transferPort: transferPort,
     );
   }
 
@@ -994,12 +1007,14 @@ class _TransferDecisionPacket {
     required this.requestId,
     required this.receiverName,
     required this.approved,
+    required this.transferPort,
   });
 
   final String instanceId;
   final String requestId;
   final String receiverName;
   final bool approved;
+  final int? transferPort;
 }
 
 class _ShareQueryPacket {

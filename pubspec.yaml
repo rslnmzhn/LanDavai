@@ -38,6 +38,7 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.5
   file_picker: ^10.3.2
+  open_filex: ^4.7.0
   sqflite: ^2.4.2
   sqflite_common_ffi: ^2.3.6
 

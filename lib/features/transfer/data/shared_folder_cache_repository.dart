@@ -111,6 +111,7 @@ class SharedFolderCacheRepository {
           relativePath: p.basename(absolutePath),
           sizeBytes: stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+          absolutePath: absolutePath,
         ),
       );
     }

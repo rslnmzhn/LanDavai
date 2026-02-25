@@ -1,13 +1,18 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/storage/app_database.dart';
+import '../../../core/utils/path_opener.dart';
+import '../../history/data/transfer_history_repository.dart';
 import '../../transfer/data/file_hash_service.dart';
+import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../data/device_alias_repository.dart';
 import '../data/lan_discovery_service.dart';
@@ -32,10 +37,16 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       deviceAliasRepository: DeviceAliasRepository(
         database: AppDatabase.instance,
       ),
+      transferHistoryRepository: TransferHistoryRepository(
+        database: AppDatabase.instance,
+      ),
       sharedFolderCacheRepository: SharedFolderCacheRepository(
         database: AppDatabase.instance,
       ),
       fileHashService: FileHashService(),
+      fileTransferService: FileTransferService(),
+      transferStorageService: TransferStorageService(),
+      pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(),
     )..start();
@@ -70,6 +81,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             title: const Text('LanDa devices'),
             actions: [
               IconButton(
+                tooltip: 'Download history',
+                onPressed: _openHistorySheet,
+                icon: const Icon(Icons.history),
+              ),
+              IconButton(
                 tooltip: 'Refresh',
                 onPressed: _controller.isManualRefreshInProgress
                     ? null
@@ -89,6 +105,10 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 const SizedBox(height: AppSpacing.md),
                 if (_controller.errorMessage != null) ...[
                   _ErrorBanner(message: _controller.errorMessage!),
+                  const SizedBox(height: AppSpacing.sm),
+                ],
+                if (_controller.isUploading || _controller.isDownloading) ...[
+                  _TransferProgressCard(controller: _controller),
                   const SizedBox(height: AppSpacing.sm),
                 ],
                 if (_controller.isManualRefreshInProgress) ...[
@@ -214,6 +234,135 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
     );
   }
 
+  Future<void> _openHistorySheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.85,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final history = _controller.downloadHistory;
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'История загрузок',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Expanded(
+                        child: history.isEmpty
+                            ? const Center(
+                                child: Text('История загрузок пока пустая'),
+                              )
+                            : ListView.separated(
+                                itemCount: history.length,
+                                separatorBuilder: (_, index) =>
+                                    const SizedBox(height: AppSpacing.sm),
+                                itemBuilder: (_, index) {
+                                  final item = history[index];
+                                  return Card(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(
+                                        AppSpacing.md,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  item.peerName,
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleMedium,
+                                                ),
+                                              ),
+                                              Text(
+                                                _formatTime(item.createdAt),
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.bodySmall,
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(
+                                            height: AppSpacing.xxs,
+                                          ),
+                                          Text(
+                                            '${item.fileCount} files • ${_formatBytes(item.totalBytes)}',
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                          ),
+                                          const SizedBox(height: AppSpacing.xs),
+                                          Wrap(
+                                            spacing: AppSpacing.xs,
+                                            runSpacing: AppSpacing.xs,
+                                            children: item.savedPaths
+                                                .take(6)
+                                                .map(
+                                                  (path) => ActionChip(
+                                                    label: Text(
+                                                      p.basename(path),
+                                                    ),
+                                                    onPressed: () async {
+                                                      await _controller
+                                                          .openHistoryPath(
+                                                            path,
+                                                          );
+                                                    },
+                                                  ),
+                                                )
+                                                .toList(growable: false),
+                                          ),
+                                          if (item.savedPaths.length > 6) ...[
+                                            const SizedBox(
+                                              height: AppSpacing.xxs,
+                                            ),
+                                            Text(
+                                              '+${item.savedPaths.length - 6} more files',
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.bodySmall,
+                                            ),
+                                          ],
+                                          const SizedBox(height: AppSpacing.sm),
+                                          OutlinedButton.icon(
+                                            onPressed: () async {
+                                              await _controller.openHistoryPath(
+                                                item.rootPath,
+                                              );
+                                            },
+                                            icon: const Icon(Icons.folder_open),
+                                            label: const Text('Открыть папку'),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _openReceivePanel() async {
     unawaited(_controller.loadRemoteShareOptions());
     await showModalBottomSheet<void>(
@@ -226,6 +375,30 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         );
       },
     );
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(2)} GB';
+  }
+
+  String _formatTime(DateTime time) {
+    final date =
+        '${time.year}-${time.month.toString().padLeft(2, '0')}-${time.day.toString().padLeft(2, '0')}';
+    final hh = time.hour.toString().padLeft(2, '0');
+    final mm = time.minute.toString().padLeft(2, '0');
+    return '$date $hh:$mm';
   }
 }
 
@@ -308,6 +481,58 @@ class _ErrorBanner extends StatelessWidget {
         style: Theme.of(
           context,
         ).textTheme.bodySmall?.copyWith(color: AppColors.error),
+      ),
+    );
+  }
+}
+
+class _TransferProgressCard extends StatelessWidget {
+  const _TransferProgressCard({required this.controller});
+
+  final DiscoveryController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Transfer Progress',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            if (controller.isUploading) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Upload: ${(controller.uploadProgress * 100).toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              LinearProgressIndicator(
+                value: controller.uploadProgress,
+                minHeight: 6,
+                color: AppColors.brandPrimary,
+                backgroundColor: AppColors.mutedBorder,
+              ),
+            ],
+            if (controller.isDownloading) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Download: ${(controller.downloadProgress * 100).toStringAsFixed(0)}%',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              LinearProgressIndicator(
+                value: controller.downloadProgress,
+                minHeight: 6,
+                color: AppColors.success,
+                backgroundColor: AppColors.mutedBorder,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
