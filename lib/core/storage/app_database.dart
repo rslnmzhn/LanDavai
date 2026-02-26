@@ -75,7 +75,7 @@ class AppDatabase {
 
   Future<Directory> _resolveBaseDirectory() async {
     final supportDir = await getApplicationSupportDirectory();
-    final appDir = Directory(p.join(supportDir.path, 'LanDa'));
+    final appDir = Directory(p.join(supportDir.path, 'Landa'));
     if (!await appDir.exists()) {
       await appDir.create(recursive: true);
     }
@@ -157,3 +157,5 @@ class AppDatabase {
     ''');
   }
 }
+
+

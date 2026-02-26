@@ -275,7 +275,7 @@ class DiscoveryController extends ChangeNotifier {
     final targets = devices.where((device) => device.isAppDetected).toList();
     if (targets.isEmpty) {
       _remoteShareOptions.clear();
-      _infoMessage = 'No LanDa devices available for shared content.';
+      _infoMessage = 'No Landa devices available for shared content.';
       notifyListeners();
       return;
     }
@@ -595,7 +595,7 @@ class DiscoveryController extends ChangeNotifier {
         notifyListeners();
 
         final destinationDirectory = await _transferStorageService
-            .resolveReceiveDirectory(appFolderName: 'LanDa');
+            .resolveReceiveDirectory(appFolderName: 'Landa');
         receiveSession = await _fileTransferService.startReceiver(
           requestId: request.requestId,
           expectedItems: request.items,
@@ -901,7 +901,7 @@ class DiscoveryController extends ChangeNotifier {
           relativePaths: request.items
               .map((item) => item.fileName)
               .toList(growable: false),
-          appFolderName: 'LanDa',
+          appFolderName: 'Landa',
         );
       } catch (error) {
         _log('Failed to publish files into user downloads: $error');
@@ -1411,3 +1411,4 @@ class DiscoveryController extends ChangeNotifier {
     return first == 172 && second >= 16 && second <= 31;
   }
 }
+

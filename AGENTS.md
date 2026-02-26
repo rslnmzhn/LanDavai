@@ -2,10 +2,10 @@
 
 ## Purpose
 Single source of truth for implementation and design decisions across chats/agents.
-Goal: keep LanDa behavior, visuals, and data model consistent.
+Goal: keep Landa behavior, visuals, and data model consistent.
 
 ## Product
-- App name: LanDa
+- App name: Landa
 - Type: peer-to-peer LAN file transfer (no central transfer server for file payloads)
 - Platforms: Windows, Linux, Android, iOS
 - Promise: fast local transfer, explicit trust, predictable UX
@@ -116,7 +116,7 @@ Rules:
 
 ## Persistence Contract (SQLite)
 Database file:
-- `<app_support>/LanDa/landa.sqlite`
+- `<app_support>/Landa/landa.sqlite`
 
 Tables:
 1. `known_devices`
@@ -144,7 +144,7 @@ Rules:
 
 ## Shared Folder Cache Contract
 Directory:
-- `<app_support>/LanDa/shared_folder_caches/`
+- `<app_support>/Landa/shared_folder_caches/`
 
 Format:
 - Lightweight JSON index with compact entry fields (`p`, `s`, `m`).
@@ -202,3 +202,5 @@ Optional lock:
 - Theme/token contract respected.
 - UX states handled for loading/success/error.
 - Changes summarized with file list and verification notes.
+
+

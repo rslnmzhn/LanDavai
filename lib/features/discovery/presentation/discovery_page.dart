@@ -78,7 +78,7 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
         final devices = _controller.devices;
         return Scaffold(
           appBar: AppBar(
-            title: const Text('LanDa devices'),
+            title: const Text('Landa devices'),
             actions: [
               IconButton(
                 tooltip: 'Download history',
@@ -1239,3 +1239,4 @@ class _ActionBar extends StatelessWidget {
     );
   }
 }
+

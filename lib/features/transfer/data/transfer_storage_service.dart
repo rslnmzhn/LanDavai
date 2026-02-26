@@ -8,10 +8,10 @@ class TransferStorageService {
   static const MethodChannel _platformChannel = MethodChannel('landa/network');
 
   Future<Directory> resolveReceiveDirectory({
-    String appFolderName = 'LanDa',
+    String appFolderName = 'Landa',
   }) async {
     if (Platform.isAndroid) {
-      // Receive into app sandbox first, then publish to Downloads/LanDa.
+      // Receive into app sandbox first, then publish to Downloads/Landa.
       final support = await getApplicationSupportDirectory();
       final target = Directory(
         p.join(support.path, appFolderName, 'incoming_temp'),
@@ -36,7 +36,7 @@ class TransferStorageService {
   Future<List<String>> publishToUserDownloads({
     required List<String> sourcePaths,
     required List<String> relativePaths,
-    String appFolderName = 'LanDa',
+    String appFolderName = 'Landa',
   }) async {
     if (sourcePaths.length != relativePaths.length) {
       throw ArgumentError('sourcePaths and relativePaths length mismatch.');
@@ -85,3 +85,5 @@ class TransferStorageService {
     }
   }
 }
+
+

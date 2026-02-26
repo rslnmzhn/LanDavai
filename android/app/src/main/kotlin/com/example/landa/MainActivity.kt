@@ -40,7 +40,7 @@ class MainActivity : FlutterActivity() {
                 "copyFileToDownloads" -> {
                     val sourcePath = call.argument<String>("sourcePath")
                     val relativePath = call.argument<String>("relativePath")
-                    val appFolderName = call.argument<String>("appFolderName") ?: "LanDa"
+                    val appFolderName = call.argument<String>("appFolderName") ?: "Landa"
                     if (sourcePath.isNullOrBlank() || relativePath.isNullOrBlank()) {
                         result.error("invalid_args", "sourcePath/relativePath are required", null)
                         return@setMethodCallHandler
@@ -171,3 +171,5 @@ class MainActivity : FlutterActivity() {
         }
     }
 }
+
+
