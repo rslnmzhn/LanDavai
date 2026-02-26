@@ -51,6 +51,15 @@ class AppDatabase {
     return cacheDir;
   }
 
+  Future<Directory> resolveSharedThumbnailDirectory() async {
+    final cacheDir = await resolveSharedCacheDirectory();
+    final thumbnailDir = Directory(p.join(cacheDir.path, 'thumbnails'));
+    if (!await thumbnailDir.exists()) {
+      await thumbnailDir.create(recursive: true);
+    }
+    return thumbnailDir;
+  }
+
   Future<void> close() async {
     if (_database == null) {
       return;
@@ -157,5 +166,3 @@ class AppDatabase {
     ''');
   }
 }
-
-

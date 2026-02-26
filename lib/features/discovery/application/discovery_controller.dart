@@ -95,6 +95,7 @@ class DiscoveryController extends ChangeNotifier {
   final List<SharedFolderCacheRecord> _ownerSharedCaches =
       <SharedFolderCacheRecord>[];
   final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
+  final Map<String, String> _remoteThumbnailPathsByFileKey = <String, String>{};
   final Set<String> _trustedDeviceMacs = <String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
@@ -155,6 +156,19 @@ class DiscoveryController extends ChangeNotifier {
   List<TransferHistoryRecord> get downloadHistory =>
       List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
 
+  String? remoteThumbnailPath({
+    required String ownerIp,
+    required String cacheId,
+    required String relativePath,
+  }) {
+    final key = _remoteThumbnailKey(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+      relativePath: relativePath,
+    );
+    return _remoteThumbnailPathsByFileKey[key];
+  }
+
   List<DiscoveredDevice> get devices {
     final values = _devicesByIp.values.toList(growable: false);
     values.sort((a, b) {
@@ -202,6 +216,8 @@ class DiscoveryController extends ChangeNotifier {
         onShareQuery: _onShareQuery,
         onShareCatalog: _onShareCatalog,
         onDownloadRequest: _onDownloadRequest,
+        onThumbnailSyncRequest: _onThumbnailSyncRequest,
+        onThumbnailPacket: _onThumbnailPacket,
         preferredSourceIp: _localIp,
       );
 
@@ -275,6 +291,7 @@ class DiscoveryController extends ChangeNotifier {
     final targets = devices.where((device) => device.isAppDetected).toList();
     if (targets.isEmpty) {
       _remoteShareOptions.clear();
+      _remoteThumbnailPathsByFileKey.clear();
       _infoMessage = 'No Landa devices available for shared content.';
       notifyListeners();
       return;
@@ -282,6 +299,7 @@ class DiscoveryController extends ChangeNotifier {
 
     _isLoadingRemoteShares = true;
     _remoteShareOptions.clear();
+    _remoteThumbnailPathsByFileKey.clear();
     notifyListeners();
 
     final requestId = _fileHashService.buildStableId(
@@ -982,6 +1000,7 @@ class DiscoveryController extends ChangeNotifier {
             (entry) => SharedCatalogFileItem(
               relativePath: entry.relativePath,
               sizeBytes: entry.sizeBytes,
+              thumbnailId: entry.thumbnailId,
             ),
           )
           .toList(growable: false);
@@ -1034,6 +1053,9 @@ class DiscoveryController extends ChangeNotifier {
     _remoteShareOptions.removeWhere(
       (option) => option.ownerIp == event.ownerIp,
     );
+    _remoteThumbnailPathsByFileKey.removeWhere(
+      (key, _) => key.startsWith('${event.ownerIp}|'),
+    );
     for (final entry in event.entries) {
       _remoteShareOptions.add(
         RemoteShareOption(
@@ -1056,7 +1078,162 @@ class DiscoveryController extends ChangeNotifier {
         b.entry.displayName.toLowerCase(),
       );
     });
+    unawaited(_syncRemoteThumbnails(event));
     notifyListeners();
+  }
+
+  void _onThumbnailSyncRequest(ThumbnailSyncRequestEvent event) {
+    unawaited(_handleThumbnailSyncRequest(event));
+  }
+
+  Future<void> _handleThumbnailSyncRequest(
+    ThumbnailSyncRequestEvent event,
+  ) async {
+    await _loadOwnerCaches();
+    final entriesByCache = <String, Map<String, SharedFolderIndexEntry>>{};
+    for (final item in event.items) {
+      final cache = _findOwnerCacheById(item.cacheId);
+      if (cache == null) {
+        continue;
+      }
+      final byRelative = entriesByCache.putIfAbsent(
+        item.cacheId,
+        () => <String, SharedFolderIndexEntry>{},
+      );
+      if (!byRelative.containsKey(item.relativePath)) {
+        final entries = await _sharedFolderCacheRepository.readIndexEntries(
+          item.cacheId,
+        );
+        for (final entry in entries) {
+          byRelative[entry.relativePath] = entry;
+        }
+      }
+
+      final entry = byRelative[item.relativePath];
+      if (entry == null ||
+          entry.thumbnailId == null ||
+          entry.thumbnailId != item.thumbnailId) {
+        continue;
+      }
+
+      final bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
+        cacheId: item.cacheId,
+        thumbnailId: item.thumbnailId,
+      );
+      if (bytes == null || bytes.isEmpty) {
+        continue;
+      }
+
+      await _lanDiscoveryService.sendThumbnailPacket(
+        targetIp: event.requesterIp,
+        requestId: event.requestId,
+        ownerMacAddress: _localDeviceMac,
+        cacheId: item.cacheId,
+        relativePath: item.relativePath,
+        thumbnailId: item.thumbnailId,
+        bytes: bytes,
+      );
+    }
+  }
+
+  void _onThumbnailPacket(ThumbnailPacketEvent event) {
+    unawaited(_handleThumbnailPacket(event));
+  }
+
+  Future<void> _handleThumbnailPacket(ThumbnailPacketEvent event) async {
+    if (event.bytes.isEmpty) {
+      return;
+    }
+    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
+    if (ownerMac == null) {
+      return;
+    }
+    final savedPath = await _sharedFolderCacheRepository
+        .saveReceiverThumbnailBytes(
+          ownerMacAddress: ownerMac,
+          cacheId: event.cacheId,
+          thumbnailId: event.thumbnailId,
+          bytes: event.bytes,
+        );
+    final key = _remoteThumbnailKey(
+      ownerIp: event.ownerIp,
+      cacheId: event.cacheId,
+      relativePath: event.relativePath,
+    );
+    _remoteThumbnailPathsByFileKey[key] = savedPath;
+    notifyListeners();
+  }
+
+  Future<void> _syncRemoteThumbnails(ShareCatalogEvent event) async {
+    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
+    if (ownerMac == null) {
+      return;
+    }
+
+    final requested = <ThumbnailSyncItem>[];
+    for (final entry in event.entries) {
+      for (final file in entry.files) {
+        final thumbId = file.thumbnailId;
+        if (thumbId == null || thumbId.isEmpty) {
+          continue;
+        }
+
+        final key = _remoteThumbnailKey(
+          ownerIp: event.ownerIp,
+          cacheId: entry.cacheId,
+          relativePath: file.relativePath,
+        );
+        final existing = _remoteThumbnailPathsByFileKey[key];
+        if (existing != null && await File(existing).exists()) {
+          continue;
+        }
+
+        final localPath = await _sharedFolderCacheRepository
+            .resolveReceiverThumbnailPath(
+              ownerMacAddress: ownerMac,
+              cacheId: entry.cacheId,
+              thumbnailId: thumbId,
+            );
+        if (localPath != null) {
+          _remoteThumbnailPathsByFileKey[key] = localPath;
+          continue;
+        }
+
+        requested.add(
+          ThumbnailSyncItem(
+            cacheId: entry.cacheId,
+            relativePath: file.relativePath,
+            thumbnailId: thumbId,
+          ),
+        );
+      }
+    }
+
+    if (requested.isEmpty) {
+      return;
+    }
+
+    final requestId = _fileHashService.buildStableId(
+      'thumb-sync|${event.ownerIp}|${DateTime.now().microsecondsSinceEpoch}',
+    );
+    try {
+      await _lanDiscoveryService.sendThumbnailSyncRequest(
+        targetIp: event.ownerIp,
+        requestId: requestId,
+        requesterName: _localName,
+        items: requested,
+      );
+    } catch (error) {
+      _log('Failed to request remote thumbnails: $error');
+    }
+  }
+
+  String _remoteThumbnailKey({
+    required String ownerIp,
+    required String cacheId,
+    required String relativePath,
+  }) {
+    return '$ownerIp|$cacheId|${relativePath.replaceAll('\\', '/').toLowerCase()}';
   }
 
   void _onDownloadRequest(DownloadRequestEvent event) {
@@ -1411,4 +1588,3 @@ class DiscoveryController extends ChangeNotifier {
     return first == 172 && second >= 16 && second <= 31;
   }
 }
-

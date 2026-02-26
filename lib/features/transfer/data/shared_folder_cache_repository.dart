@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -8,13 +9,27 @@ import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 import '../../../core/storage/app_database.dart';
 import '../../discovery/data/device_alias_repository.dart';
 import '../domain/shared_folder_cache.dart';
+import 'thumbnail_cache_service.dart';
 
 class SharedFolderCacheRepository {
-  SharedFolderCacheRepository({required AppDatabase database})
-    : _database = database;
+  SharedFolderCacheRepository({
+    required AppDatabase database,
+    ThumbnailCacheService? thumbnailCacheService,
+  }) : _database = database,
+       _thumbnailCacheService =
+           thumbnailCacheService ?? ThumbnailCacheService(database: database);
 
   final AppDatabase _database;
+  final ThumbnailCacheService _thumbnailCacheService;
   static const int _schemaVersion = 1;
+
+  bool supportsPreviewForPath(String relativePath) {
+    return _thumbnailCacheService.supportsThumbnailForPath(relativePath);
+  }
+
+  bool isVideoPath(String relativePath) {
+    return _thumbnailCacheService.isVideoPath(relativePath);
+  }
 
   Future<SharedFolderCacheRecord> buildOwnerCache({
     required String ownerMacAddress,
@@ -35,19 +50,19 @@ class SharedFolderCacheRepository {
       providedName: displayName,
       fallbackPath: normalizedRoot,
     );
-
-    final entries = await _indexFolder(normalizedRoot);
-    final totalBytes = entries.fold<int>(
-      0,
-      (sum, entry) => sum + entry.sizeBytes,
-    );
-    final now = DateTime.now().millisecondsSinceEpoch;
     final cacheId = _createCacheId(
       role: SharedFolderCacheRole.owner,
       ownerMacAddress: ownerMac,
       peerMacAddress: null,
       rootIdentity: normalizedRoot,
     );
+
+    final entries = await _indexFolder(normalizedRoot, cacheId: cacheId);
+    final totalBytes = entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
+    );
+    final now = DateTime.now().millisecondsSinceEpoch;
 
     final cacheDir = await _database.resolveSharedCacheDirectory();
     final fileName = _createCacheFileName(
@@ -95,6 +110,15 @@ class SharedFolderCacheRepository {
       throw ArgumentError('filePaths must not be empty.');
     }
 
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final rootIdentity = normalizedPaths.join('|');
+    final cacheId = _createCacheId(
+      role: SharedFolderCacheRole.owner,
+      ownerMacAddress: ownerMac,
+      peerMacAddress: null,
+      rootIdentity: rootIdentity,
+    );
+
     final entries = <SharedFolderIndexEntry>[];
     for (final absolutePath in normalizedPaths) {
       final file = File(absolutePath);
@@ -106,12 +130,21 @@ class SharedFolderCacheRepository {
         continue;
       }
 
+      final relativePath = p.basename(absolutePath);
+      final thumbnail = await _thumbnailCacheService.ensureOwnerThumbnail(
+        cacheId: cacheId,
+        relativePath: relativePath,
+        sourcePath: absolutePath,
+        sizeBytes: stat.size,
+        modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+      );
       entries.add(
         SharedFolderIndexEntry(
-          relativePath: p.basename(absolutePath),
+          relativePath: relativePath,
           sizeBytes: stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
           absolutePath: absolutePath,
+          thumbnailId: thumbnail?.thumbnailId,
         ),
       );
     }
@@ -123,14 +156,6 @@ class SharedFolderCacheRepository {
     final totalBytes = entries.fold<int>(
       0,
       (sum, entry) => sum + entry.sizeBytes,
-    );
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final rootIdentity = normalizedPaths.join('|');
-    final cacheId = _createCacheId(
-      role: SharedFolderCacheRole.owner,
-      ownerMacAddress: ownerMac,
-      peerMacAddress: null,
-      rootIdentity: rootIdentity,
     );
 
     final resolvedDisplayName = _resolveDisplayName(
@@ -293,6 +318,42 @@ class SharedFolderCacheRepository {
         .toList(growable: false);
   }
 
+  Future<Uint8List?> readOwnerThumbnailBytes({
+    required String cacheId,
+    required String thumbnailId,
+  }) {
+    return _thumbnailCacheService.readOwnerThumbnailBytes(
+      cacheId: cacheId,
+      thumbnailId: thumbnailId,
+    );
+  }
+
+  Future<String?> resolveReceiverThumbnailPath({
+    required String ownerMacAddress,
+    required String cacheId,
+    required String thumbnailId,
+  }) {
+    return _thumbnailCacheService.resolveReceiverThumbnailPath(
+      ownerMacAddress: ownerMacAddress,
+      cacheId: cacheId,
+      thumbnailId: thumbnailId,
+    );
+  }
+
+  Future<String> saveReceiverThumbnailBytes({
+    required String ownerMacAddress,
+    required String cacheId,
+    required String thumbnailId,
+    required Uint8List bytes,
+  }) {
+    return _thumbnailCacheService.saveReceiverThumbnailBytes(
+      ownerMacAddress: ownerMacAddress,
+      cacheId: cacheId,
+      thumbnailId: thumbnailId,
+      bytes: bytes,
+    );
+  }
+
   Future<void> deleteCache(String cacheId) async {
     final db = await _database.database;
     final rows = await db.query(
@@ -353,7 +414,10 @@ class SharedFolderCacheRepository {
     await file.writeAsString(jsonEncode(payload), flush: true);
   }
 
-  Future<List<SharedFolderIndexEntry>> _indexFolder(String rootPath) async {
+  Future<List<SharedFolderIndexEntry>> _indexFolder(
+    String rootPath, {
+    required String cacheId,
+  }) async {
     final root = Directory(rootPath);
     final entries = <SharedFolderIndexEntry>[];
     await for (final entity in root.list(recursive: true, followLinks: false)) {
@@ -369,11 +433,20 @@ class SharedFolderCacheRepository {
       final relative = p
           .relative(entity.path, from: rootPath)
           .replaceAll('\\', '/');
+      final thumbnail = await _thumbnailCacheService.ensureOwnerThumbnail(
+        cacheId: cacheId,
+        relativePath: relative,
+        sourcePath: entity.path,
+        sizeBytes: stat.size,
+        modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+      );
+
       entries.add(
         SharedFolderIndexEntry(
           relativePath: relative,
           sizeBytes: stat.size,
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+          thumbnailId: thumbnail?.thumbnailId,
         ),
       );
     }
