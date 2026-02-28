@@ -122,6 +122,18 @@ class MainActivity : FlutterActivity() {
                     )
                     result.success(null)
                 }
+                "showDownloadAttemptNotification" -> {
+                    val requesterName = call.argument<String>("requesterName") ?: "Unknown device"
+                    val shareLabel = call.argument<String>("shareLabel") ?: "Shared files"
+                    val requestedFilesCount =
+                        call.argument<Number>("requestedFilesCount")?.toInt() ?: 0
+                    showDownloadAttemptNotification(
+                        requesterName = requesterName,
+                        shareLabel = shareLabel,
+                        requestedFilesCount = requestedFilesCount,
+                    )
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -389,6 +401,36 @@ class MainActivity : FlutterActivity() {
             .build()
 
         NotificationManagerCompat.from(this).notify(notificationId, notification)
+    }
+
+    private fun showDownloadAttemptNotification(
+        requesterName: String,
+        shareLabel: String,
+        requestedFilesCount: Int,
+    ) {
+        if (!canPostNotifications()) {
+            return
+        }
+
+        val text = if (requestedFilesCount > 0) {
+            "$requesterName requests $requestedFilesCount file(s) from \"$shareLabel\"."
+        } else {
+            "$requesterName requests all files from \"$shareLabel\"."
+        }
+
+        val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
+            .setContentTitle("Download attempt detected")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(
+            abs(("attempt|$requesterName|$shareLabel|${System.currentTimeMillis()}").hashCode()),
+            notification,
+        )
     }
 
     private fun notificationIdForRequest(requestId: String): Int {

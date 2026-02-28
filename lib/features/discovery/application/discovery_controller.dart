@@ -8,9 +8,12 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/data/transfer_history_repository.dart';
 import '../../history/domain/transfer_history_record.dart';
+import '../../settings/data/app_settings_repository.dart';
+import '../../settings/domain/app_settings.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
@@ -73,6 +76,8 @@ class DiscoveryController extends ChangeNotifier {
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceAliasRepository deviceAliasRepository,
+    required AppSettingsRepository appSettingsRepository,
+    required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
@@ -82,6 +87,8 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceAliasRepository = deviceAliasRepository,
+       _appSettingsRepository = appSettingsRepository,
+       _appNotificationService = appNotificationService,
        _transferHistoryRepository = transferHistoryRepository,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
@@ -89,12 +96,13 @@ class DiscoveryController extends ChangeNotifier {
        _transferStorageService = transferStorageService,
        _pathOpener = pathOpener;
 
-  static const Duration _autoRefreshInterval = Duration(seconds: 30);
   static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceAliasRepository _deviceAliasRepository;
+  final AppSettingsRepository _appSettingsRepository;
+  final AppNotificationService _appNotificationService;
   final TransferHistoryRepository _transferHistoryRepository;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
@@ -121,7 +129,9 @@ class DiscoveryController extends ChangeNotifier {
   final List<TransferHistoryRecord> _downloadHistory =
       <TransferHistoryRecord>[];
   Timer? _scanTimer;
+  AppSettings _settings = AppSettings.defaults;
   bool _started = false;
+  bool _isAppInForeground = true;
   bool _isRefreshInProgress = false;
   bool _isManualRefreshInProgress = false;
   bool _isAddingShare = false;
@@ -162,6 +172,9 @@ class DiscoveryController extends ChangeNotifier {
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
+  AppSettings get settings => _settings;
+  bool get isAppInForeground => _isAppInForeground;
+  Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
   String? get errorMessage => _errorMessage;
   String? get infoMessage => _infoMessage;
   List<IncomingTransferRequest> get incomingRequests =>
@@ -220,6 +233,7 @@ class DiscoveryController extends ChangeNotifier {
     _resolveLocalDeviceMac();
     await _loadAliases();
     await _loadTrustedDevices();
+    await _loadSettings();
     await _loadOwnerCaches();
     await _loadDownloadHistory();
 
@@ -239,10 +253,7 @@ class DiscoveryController extends ChangeNotifier {
       );
 
       await _refresh(isManual: false);
-      _scanTimer = Timer.periodic(
-        _autoRefreshInterval,
-        (_) => unawaited(_refresh(isManual: false)),
-      );
+      _restartAutoRefreshTimer();
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
       _log(_errorMessage!);
@@ -259,6 +270,39 @@ class DiscoveryController extends ChangeNotifier {
 
   void clearInfoMessage() {
     _infoMessage = null;
+    notifyListeners();
+  }
+
+  Future<void> updateBackgroundScanInterval(
+    BackgroundScanIntervalOption interval,
+  ) async {
+    if (_settings.backgroundScanInterval == interval) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(backgroundScanInterval: interval));
+  }
+
+  Future<void> setDownloadAttemptNotificationsEnabled(bool enabled) async {
+    if (_settings.downloadAttemptNotificationsEnabled == enabled) {
+      return;
+    }
+    await _saveSettings(
+      _settings.copyWith(downloadAttemptNotificationsEnabled: enabled),
+    );
+  }
+
+  Future<void> setMinimizeToTrayOnClose(bool enabled) async {
+    if (_settings.minimizeToTrayOnClose == enabled) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(minimizeToTrayOnClose: enabled));
+  }
+
+  void setAppForegroundState(bool isForeground) {
+    if (_isAppInForeground == isForeground) {
+      return;
+    }
+    _isAppInForeground = isForeground;
     notifyListeners();
   }
 
@@ -1464,6 +1508,19 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    if (_settings.downloadAttemptNotificationsEnabled) {
+      unawaited(
+        _appNotificationService.showDownloadAttemptNotification(
+          requesterName: event.requesterName,
+          shareLabel: cache.displayName,
+          requestedFilesCount: event.selectedRelativePaths.length,
+        ),
+      );
+    }
+    _infoMessage =
+        'Download request from ${event.requesterName} for "${cache.displayName}".';
+    notifyListeners();
+
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
         : event.selectedRelativePaths.toSet();
@@ -1600,6 +1657,51 @@ class DiscoveryController extends ChangeNotifier {
     } catch (error) {
       _log('Failed to load trusted devices from DB: $error');
     }
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      _settings = await _appSettingsRepository.load();
+      _log(
+        'Loaded settings. background=${_settings.backgroundScanInterval.label}, '
+        'notifyDownloadAttempts=${_settings.downloadAttemptNotificationsEnabled}, '
+        'trayOnClose=${_settings.minimizeToTrayOnClose}',
+      );
+    } catch (error) {
+      _log('Failed to load app settings: $error');
+      _settings = AppSettings.defaults;
+    }
+  }
+
+  Future<void> _saveSettings(AppSettings settings) async {
+    try {
+      await _appSettingsRepository.save(settings);
+      _settings = settings;
+      _errorMessage = null;
+      _restartAutoRefreshTimer();
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to save app settings: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  void _restartAutoRefreshTimer() {
+    _scanTimer?.cancel();
+    _scanTimer = Timer.periodic(
+      _activeAutoRefreshInterval,
+      (_) => unawaited(_refresh(isManual: false)),
+    );
+    _log(
+      'Auto-refresh timer restarted. '
+      'foreground=$_isAppInForeground '
+      'interval=${_activeAutoRefreshInterval.inSeconds}s',
+    );
+  }
+
+  Duration get _activeAutoRefreshInterval {
+    return _settings.backgroundScanInterval.duration;
   }
 
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
