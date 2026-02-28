@@ -218,6 +218,17 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.refresh_rounded),
+                title: const Text('Re-cache shared folders'),
+                subtitle: const Text(
+                  'Refresh index and generate missing previews',
+                ),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _controller.recacheSharedFolders();
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.note_add_outlined),
                 title: const Text('Add shared files'),
                 subtitle: const Text(

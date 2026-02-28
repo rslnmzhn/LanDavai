@@ -482,15 +482,87 @@ class DiscoveryController extends ChangeNotifier {
         return;
       }
 
-      await _sharedFolderCacheRepository.buildOwnerCache(
+      final result = await _sharedFolderCacheRepository.upsertOwnerFolderCache(
         ownerMacAddress: _localDeviceMac,
         folderPath: folderPath,
       );
       await _loadOwnerCaches();
-      _infoMessage = 'Shared folder added.';
+      final delta = result.record.itemCount - result.previousItemCount;
+      if (result.created) {
+        _infoMessage =
+            'Shared folder added. Indexed ${result.record.itemCount} file(s).';
+      } else if (delta > 0) {
+        _infoMessage =
+            'Shared folder updated. Found $delta new file(s), '
+            'total ${result.record.itemCount}.';
+      } else {
+        _infoMessage =
+            'Shared folder re-cached. No new files, '
+            'total ${result.record.itemCount}.';
+      }
       _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Failed to add shared folder: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> recacheSharedFolders() async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      await _loadOwnerCaches();
+      final folderCaches = _ownerSharedCaches
+          .where((cache) => !cache.rootPath.startsWith('selection://'))
+          .toList(growable: false);
+      if (folderCaches.isEmpty) {
+        _infoMessage = 'No shared folders to re-cache.';
+        _errorMessage = null;
+        return;
+      }
+
+      var updatedCount = 0;
+      var failedCount = 0;
+      var indexedTotal = 0;
+      var discoveredNewFiles = 0;
+
+      for (final cache in folderCaches) {
+        try {
+          final result = await _sharedFolderCacheRepository
+              .upsertOwnerFolderCache(
+                ownerMacAddress: _localDeviceMac,
+                folderPath: cache.rootPath,
+                displayName: cache.displayName,
+              );
+          updatedCount += 1;
+          indexedTotal += result.record.itemCount;
+          final delta = result.record.itemCount - result.previousItemCount;
+          if (delta > 0) {
+            discoveredNewFiles += delta;
+          }
+        } catch (error) {
+          failedCount += 1;
+          _log('Failed to re-cache folder ${cache.rootPath}: $error');
+        }
+      }
+
+      await _loadOwnerCaches();
+      if (updatedCount == 0) {
+        _errorMessage = 'Failed to re-cache shared folders.';
+        _infoMessage = null;
+      } else {
+        _errorMessage = null;
+        final suffix = failedCount > 0 ? ' ($failedCount failed)' : '';
+        _infoMessage =
+            'Re-cached $updatedCount shared folder(s). '
+            'Indexed $indexedTotal file(s), '
+            'new: $discoveredNewFiles$suffix.';
+      }
+    } catch (error) {
+      _errorMessage = 'Failed to re-cache shared folders: $error';
       _log(_errorMessage!);
     } finally {
       _isAddingShare = false;

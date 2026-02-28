@@ -11,6 +11,18 @@ import '../../discovery/data/device_alias_repository.dart';
 import '../domain/shared_folder_cache.dart';
 import 'thumbnail_cache_service.dart';
 
+class OwnerFolderCacheUpsertResult {
+  const OwnerFolderCacheUpsertResult({
+    required this.record,
+    required this.created,
+    required this.previousItemCount,
+  });
+
+  final SharedFolderCacheRecord record;
+  final bool created;
+  final int previousItemCount;
+}
+
 class SharedFolderCacheRepository {
   SharedFolderCacheRepository({
     required AppDatabase database,
@@ -36,6 +48,19 @@ class SharedFolderCacheRepository {
     required String folderPath,
     String? displayName,
   }) async {
+    final result = await upsertOwnerFolderCache(
+      ownerMacAddress: ownerMacAddress,
+      folderPath: folderPath,
+      displayName: displayName,
+    );
+    return result.record;
+  }
+
+  Future<OwnerFolderCacheUpsertResult> upsertOwnerFolderCache({
+    required String ownerMacAddress,
+    required String folderPath,
+    String? displayName,
+  }) async {
     final ownerMac = _normalizeOrThrow(
       ownerMacAddress,
       field: 'ownerMacAddress',
@@ -45,17 +70,23 @@ class SharedFolderCacheRepository {
       throw ArgumentError('Directory does not exist: $folderPath');
     }
 
-    final normalizedRoot = p.normalize(rootDirectory.absolute.path);
+    final normalizedRoot = await _normalizeExistingDirectoryPath(rootDirectory);
+    final existing = await _findOwnerCacheByRootPath(
+      ownerMacAddress: ownerMac,
+      rootPath: normalizedRoot,
+    );
     final resolvedDisplayName = _resolveDisplayName(
-      providedName: displayName,
+      providedName: displayName ?? existing?.displayName,
       fallbackPath: normalizedRoot,
     );
-    final cacheId = _createCacheId(
-      role: SharedFolderCacheRole.owner,
-      ownerMacAddress: ownerMac,
-      peerMacAddress: null,
-      rootIdentity: normalizedRoot,
-    );
+    final cacheId =
+        existing?.cacheId ??
+        _createCacheId(
+          role: SharedFolderCacheRole.owner,
+          ownerMacAddress: ownerMac,
+          peerMacAddress: null,
+          rootIdentity: normalizedRoot,
+        );
 
     final entries = await _indexFolder(normalizedRoot, cacheId: cacheId);
     final totalBytes = entries.fold<int>(
@@ -65,12 +96,16 @@ class SharedFolderCacheRepository {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     final cacheDir = await _database.resolveSharedCacheDirectory();
-    final fileName = _createCacheFileName(
-      role: SharedFolderCacheRole.owner,
-      displayName: resolvedDisplayName,
-      cacheId: cacheId,
-    );
-    final indexPath = p.join(cacheDir.path, fileName);
+    final indexPath =
+        existing?.indexFilePath ??
+        p.join(
+          cacheDir.path,
+          _createCacheFileName(
+            role: SharedFolderCacheRole.owner,
+            displayName: resolvedDisplayName,
+            cacheId: cacheId,
+          ),
+        );
 
     final record = SharedFolderCacheRecord(
       cacheId: cacheId,
@@ -87,7 +122,11 @@ class SharedFolderCacheRepository {
 
     await _writeIndexFile(record, entries);
     await _upsertRecord(record);
-    return record;
+    return OwnerFolderCacheUpsertResult(
+      record: record,
+      created: existing == null,
+      previousItemCount: existing?.itemCount ?? 0,
+    );
   }
 
   Future<SharedFolderCacheRecord> buildOwnerSelectionCache({
@@ -468,6 +507,50 @@ class SharedFolderCacheRepository {
     return baseName.isEmpty ? 'Shared folder' : baseName;
   }
 
+  Future<SharedFolderCacheRecord?> _findOwnerCacheByRootPath({
+    required String ownerMacAddress,
+    required String rootPath,
+  }) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      AppDatabase.sharedFolderCachesTable,
+      where: 'role = ? AND owner_mac_address = ?',
+      whereArgs: <Object?>[SharedFolderCacheRole.owner.name, ownerMacAddress],
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+
+    final target = _normalizeComparablePath(rootPath);
+    for (final row in rows) {
+      final record = SharedFolderCacheRecord.fromDbMap(row);
+      if (record.rootPath.startsWith('selection://')) {
+        continue;
+      }
+      if (_normalizeComparablePath(record.rootPath) == target) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  Future<String> _normalizeExistingDirectoryPath(Directory directory) async {
+    try {
+      final resolved = await directory.resolveSymbolicLinks();
+      return p.normalize(resolved);
+    } catch (_) {
+      return p.normalize(directory.absolute.path);
+    }
+  }
+
+  String _normalizeComparablePath(String rawPath) {
+    final normalized = p.normalize(rawPath).replaceAll('\\', '/');
+    if (Platform.isWindows) {
+      return normalized.toLowerCase();
+    }
+    return normalized;
+  }
+
   String _createCacheId({
     required SharedFolderCacheRole role,
     required String ownerMacAddress,
@@ -514,4 +597,3 @@ class SharedFolderCacheRepository {
     return normalized;
   }
 }
-
