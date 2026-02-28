@@ -514,3 +514,4 @@ class SharedFolderCacheRepository {
     return normalized;
   }
 }
+
