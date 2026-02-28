@@ -1,3 +1,4 @@
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -84,6 +85,79 @@ class TransferStorageService {
       return null;
     }
   }
+
+  Future<void> showAndroidDownloadProgressNotification({
+    required String requestId,
+    required String senderName,
+    required int receivedBytes,
+    required int totalBytes,
+  }) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+
+    try {
+      await _platformChannel.invokeMethod<void>(
+        'showDownloadProgressNotification',
+        <String, Object?>{
+          'requestId': requestId,
+          'senderName': senderName,
+          'receivedBytes': receivedBytes,
+          'totalBytes': totalBytes,
+        },
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to show Android progress notification: $error',
+        name: 'TransferStorageService',
+      );
+    }
+  }
+
+  Future<void> showAndroidDownloadCompletedNotification({
+    required String requestId,
+    required List<String> savedPaths,
+    required String directoryPath,
+  }) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+
+    try {
+      await _platformChannel.invokeMethod<void>(
+        'showDownloadCompletedNotification',
+        <String, Object?>{
+          'requestId': requestId,
+          'savedPaths': savedPaths,
+          'directoryPath': directoryPath,
+        },
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to show Android completion notification: $error',
+        name: 'TransferStorageService',
+      );
+    }
+  }
+
+  Future<void> showAndroidDownloadFailedNotification({
+    required String requestId,
+    required String message,
+  }) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+
+    try {
+      await _platformChannel.invokeMethod<void>(
+        'showDownloadFailedNotification',
+        <String, Object?>{'requestId': requestId, 'message': message},
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to show Android failure notification: $error',
+        name: 'TransferStorageService',
+      );
+    }
+  }
 }
-
-
