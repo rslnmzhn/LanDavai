@@ -8,8 +8,13 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/storage/app_database.dart';
+import '../../../core/utils/app_notification_service.dart';
+import '../../../core/utils/desktop_window_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/data/transfer_history_repository.dart';
+import '../../settings/data/app_settings_repository.dart';
+import '../../settings/domain/app_settings.dart';
+import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
@@ -27,17 +32,25 @@ class DiscoveryPage extends StatefulWidget {
   State<DiscoveryPage> createState() => _DiscoveryPageState();
 }
 
-class _DiscoveryPageState extends State<DiscoveryPage> {
+class _DiscoveryPageState extends State<DiscoveryPage>
+    with WidgetsBindingObserver {
   late final DiscoveryController _controller;
+  final DesktopWindowService _desktopWindowService = DesktopWindowService();
   String? _lastInfoMessage;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final settingsRepository = AppSettingsRepository(
+      database: AppDatabase.instance,
+    );
     _controller = DiscoveryController(
       deviceAliasRepository: DeviceAliasRepository(
         database: AppDatabase.instance,
       ),
+      appSettingsRepository: settingsRepository,
+      appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(
         database: AppDatabase.instance,
       ),
@@ -50,15 +63,33 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
       pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(),
-    )..start();
+    );
     _controller.addListener(_handleInfoMessages);
+    unawaited(_initializeController());
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_handleInfoMessages);
     _controller.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isForeground = state == AppLifecycleState.resumed;
+    _controller.setAppForegroundState(isForeground);
+  }
+
+  Future<void> _initializeController() async {
+    await _controller.start();
+    if (!mounted) {
+      return;
+    }
+    await _desktopWindowService.setMinimizeToTrayEnabled(
+      _controller.settings.minimizeToTrayOnClose,
+    );
   }
 
   void _handleInfoMessages() {
@@ -81,6 +112,11 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
           appBar: AppBar(
             title: const Text('Landa devices'),
             actions: [
+              IconButton(
+                tooltip: 'Settings',
+                onPressed: _openSettingsSheet,
+                icon: const Icon(Icons.tune_rounded),
+              ),
               IconButton(
                 tooltip: 'Download history',
                 onPressed: _openHistorySheet,
@@ -147,6 +183,37 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
             onAdd: _openAddShareMenu,
             onSend: _controller.sendFilesToSelectedDevice,
           ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openSettingsSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            return AppSettingsSheet(
+              settings: _controller.settings,
+              onBackgroundIntervalChanged: (interval) {
+                unawaited(_controller.updateBackgroundScanInterval(interval));
+              },
+              onDownloadAttemptNotificationsChanged: (enabled) {
+                unawaited(
+                  _controller.setDownloadAttemptNotificationsEnabled(enabled),
+                );
+              },
+              onMinimizeToTrayChanged: (enabled) {
+                unawaited(_controller.setMinimizeToTrayOnClose(enabled));
+                unawaited(
+                  _desktopWindowService.setMinimizeToTrayEnabled(enabled),
+                );
+              },
+            );
+          },
         );
       },
     );
@@ -604,6 +671,13 @@ class _NetworkSummaryCard extends StatelessWidget {
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
                     'Devices: $total • App detected: ${controller.appDetectedCount}',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.xxs),
+                  Text(
+                    controller.isAppInForeground
+                        ? 'Auto scan interval: ${controller.settings.backgroundScanInterval.label}'
+                        : 'Background mode: ${controller.settings.backgroundScanInterval.label}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),

@@ -13,7 +13,8 @@ class AppDatabase {
   static const String knownDevicesTable = 'known_devices';
   static const String sharedFolderCachesTable = 'shared_folder_caches';
   static const String transferHistoryTable = 'transfer_history';
-  static const int schemaVersion = 3;
+  static const String appSettingsTable = 'app_settings';
+  static const int schemaVersion = 4;
 
   Database? _database;
 
@@ -125,6 +126,7 @@ class AppDatabase {
       ON $sharedFolderCachesTable(owner_mac_address, peer_mac_address)
     ''');
     await _createTransferHistoryTable(db);
+    await _createAppSettingsTable(db);
   }
 
   Future<void> _runMigrations(
@@ -141,6 +143,10 @@ class AppDatabase {
 
     if (oldVersion < 3 && newVersion >= 3) {
       await _createTransferHistoryTable(db);
+    }
+
+    if (oldVersion < 4 && newVersion >= 4) {
+      await _createAppSettingsTable(db);
     }
   }
 
@@ -163,6 +169,16 @@ class AppDatabase {
     await db.execute('''
       CREATE INDEX IF NOT EXISTS idx_transfer_history_created
       ON $transferHistoryTable(created_at DESC)
+    ''');
+  }
+
+  Future<void> _createAppSettingsTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $appSettingsTable (
+        setting_key TEXT PRIMARY KEY,
+        setting_value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
     ''');
   }
 }
