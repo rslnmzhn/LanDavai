@@ -252,6 +252,11 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> refresh() => _refresh(isManual: true);
 
+  Future<void> reloadOwnerSharedCaches() async {
+    await _loadOwnerCaches();
+    notifyListeners();
+  }
+
   void clearInfoMessage() {
     _infoMessage = null;
     notifyListeners();
@@ -1154,47 +1159,55 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
-    await _loadOwnerCaches();
-    if (_ownerSharedCaches.isEmpty) {
-      _log('Share query from ${event.requesterIp} returned 0 owner caches');
-      return;
-    }
+    try {
+      final removedCacheIds = await _sharedFolderCacheRepository
+          .pruneUnavailableOwnerCaches(ownerMacAddress: _localDeviceMac);
+      await _loadOwnerCaches();
 
-    final catalog = <SharedCatalogEntryItem>[];
-    for (final cache in _ownerSharedCaches) {
-      final entries = await _sharedFolderCacheRepository.readIndexEntries(
-        cache.cacheId,
-      );
-      final files = entries
-          .map(
-            (entry) => SharedCatalogFileItem(
-              relativePath: entry.relativePath,
-              sizeBytes: entry.sizeBytes,
-              thumbnailId: entry.thumbnailId,
-            ),
-          )
-          .toList(growable: false);
-      catalog.add(
-        SharedCatalogEntryItem(
-          cacheId: cache.cacheId,
-          displayName: cache.displayName,
-          itemCount: cache.itemCount,
-          totalBytes: cache.totalBytes,
-          files: files,
-        ),
-      );
-    }
+      final catalog = <SharedCatalogEntryItem>[];
+      for (final cache in _ownerSharedCaches) {
+        final entries = await _sharedFolderCacheRepository.readIndexEntries(
+          cache.cacheId,
+        );
+        final files = entries
+            .map(
+              (entry) => SharedCatalogFileItem(
+                relativePath: entry.relativePath,
+                sizeBytes: entry.sizeBytes,
+                thumbnailId: entry.thumbnailId,
+              ),
+            )
+            .toList(growable: false);
+        final totalBytes = entries.fold<int>(
+          0,
+          (sum, entry) => sum + entry.sizeBytes,
+        );
+        catalog.add(
+          SharedCatalogEntryItem(
+            cacheId: cache.cacheId,
+            displayName: cache.displayName,
+            itemCount: entries.length,
+            totalBytes: totalBytes,
+            files: files,
+          ),
+        );
+      }
 
-    await _lanDiscoveryService.sendShareCatalog(
-      targetIp: event.requesterIp,
-      requestId: event.requestId,
-      ownerName: _localName,
-      ownerMacAddress: _localDeviceMac,
-      entries: catalog,
-    );
-    _log(
-      'Share catalog sent to ${event.requesterIp}. entries=${catalog.length}',
-    );
+      await _lanDiscoveryService.sendShareCatalog(
+        targetIp: event.requesterIp,
+        requestId: event.requestId,
+        ownerName: _localName,
+        ownerMacAddress: _localDeviceMac,
+        entries: catalog,
+        removedCacheIds: removedCacheIds,
+      );
+      _log(
+        'Share catalog sent to ${event.requesterIp}. '
+        'entries=${catalog.length} removed=${removedCacheIds.length}',
+      );
+    } catch (error) {
+      _log('Failed to answer share query from ${event.requesterIp}: $error');
+    }
   }
 
   void _onShareCatalog(ShareCatalogEvent event) {
@@ -1203,6 +1216,10 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    unawaited(_handleShareCatalog(event));
+  }
+
+  Future<void> _handleShareCatalog(ShareCatalogEvent event) async {
     final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
     final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
     final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
@@ -1219,6 +1236,32 @@ class DiscoveryController extends ChangeNotifier {
               isReachable: true,
               lastSeen: event.observedAt,
             );
+
+    if (ownerMac != null) {
+      final activeCacheIds = event.entries
+          .map((entry) => entry.cacheId)
+          .where((id) => id.trim().isNotEmpty)
+          .toSet();
+      final removedLocal = await _sharedFolderCacheRepository
+          .pruneReceiverCachesForOwner(
+            ownerMacAddress: ownerMac,
+            receiverMacAddress: _localDeviceMac,
+            activeCacheIds: activeCacheIds,
+          );
+      if (removedLocal.isNotEmpty) {
+        _log(
+          'Pruned ${removedLocal.length} stale receiver cache(s) '
+          'for owner ${event.ownerIp}',
+        );
+        _infoMessage =
+            'Remote shares updated: removed ${removedLocal.length} stale cache(s).';
+      } else if (event.removedCacheIds.isNotEmpty) {
+        _log(
+          'Owner ${event.ownerIp} reported '
+          '${event.removedCacheIds.length} removed cache(s).',
+        );
+      }
+    }
 
     _remoteShareOptions.removeWhere(
       (option) => option.ownerIp == event.ownerIp,

@@ -195,6 +195,28 @@ class ThumbnailCacheService {
     return target.path;
   }
 
+  Future<void> deleteOwnerCacheThumbnails(String cacheId) async {
+    final root = await _resolveThumbnailRootDirectory();
+    final directory = Directory(p.join(root.path, 'owner', cacheId));
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+
+  Future<void> deleteReceiverCacheThumbnails({
+    required String ownerMacAddress,
+    required String cacheId,
+  }) async {
+    final root = await _resolveThumbnailRootDirectory();
+    final normalizedOwner = _normalizeOwnerMacForPath(ownerMacAddress);
+    final directory = Directory(
+      p.join(root.path, 'receiver', normalizedOwner, cacheId),
+    );
+    if (await directory.exists()) {
+      await directory.delete(recursive: true);
+    }
+  }
+
   Future<File> _resolveOwnerThumbnailFile({
     required String cacheId,
     required String thumbnailId,
@@ -219,6 +241,10 @@ class ThumbnailCacheService {
         '$thumbnailId.jpg',
       ),
     );
+  }
+
+  String _normalizeOwnerMacForPath(String ownerMacAddress) {
+    return ownerMacAddress.toLowerCase().replaceAll(':', '-');
   }
 
   Future<Directory> _resolveThumbnailRootDirectory() async {
