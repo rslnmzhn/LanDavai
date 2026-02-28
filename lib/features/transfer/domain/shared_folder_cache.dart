@@ -6,12 +6,34 @@ class SharedFolderIndexEntry {
     required this.sizeBytes,
     required this.modifiedAtMs,
     this.absolutePath,
+    this.thumbnailId,
   });
 
   final String relativePath;
   final int sizeBytes;
   final int modifiedAtMs;
   final String? absolutePath;
+  final String? thumbnailId;
+
+  SharedFolderIndexEntry copyWith({
+    String? relativePath,
+    int? sizeBytes,
+    int? modifiedAtMs,
+    String? absolutePath,
+    bool clearAbsolutePath = false,
+    String? thumbnailId,
+    bool clearThumbnailId = false,
+  }) {
+    return SharedFolderIndexEntry(
+      relativePath: relativePath ?? this.relativePath,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      modifiedAtMs: modifiedAtMs ?? this.modifiedAtMs,
+      absolutePath: clearAbsolutePath
+          ? null
+          : (absolutePath ?? this.absolutePath),
+      thumbnailId: clearThumbnailId ? null : (thumbnailId ?? this.thumbnailId),
+    );
+  }
 
   Map<String, Object?> toCompactJson() {
     final json = <String, Object?>{
@@ -22,6 +44,9 @@ class SharedFolderIndexEntry {
     if (absolutePath != null) {
       json['a'] = absolutePath;
     }
+    if (thumbnailId != null && thumbnailId!.isNotEmpty) {
+      json['t'] = thumbnailId;
+    }
     return json;
   }
 
@@ -31,6 +56,7 @@ class SharedFolderIndexEntry {
       sizeBytes: (json['s'] as num).toInt(),
       modifiedAtMs: (json['m'] as num).toInt(),
       absolutePath: json['a'] as String?,
+      thumbnailId: json['t'] as String?,
     );
   }
 }

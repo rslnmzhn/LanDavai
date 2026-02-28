@@ -108,15 +108,21 @@ class ShareQueryEvent {
 }
 
 class SharedCatalogFileItem {
-  SharedCatalogFileItem({required this.relativePath, required this.sizeBytes});
+  SharedCatalogFileItem({
+    required this.relativePath,
+    required this.sizeBytes,
+    this.thumbnailId,
+  });
 
   final String relativePath;
   final int sizeBytes;
+  final String? thumbnailId;
 
-  Map<String, Object> toJson() {
-    return <String, Object>{
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
       'relativePath': relativePath,
       'sizeBytes': sizeBytes,
+      'thumbnailId': thumbnailId,
     };
   }
 
@@ -129,6 +135,7 @@ class SharedCatalogFileItem {
     return SharedCatalogFileItem(
       relativePath: relativePath,
       sizeBytes: sizeRaw.toInt(),
+      thumbnailId: json['thumbnailId'] as String?,
     );
   }
 }
@@ -230,6 +237,78 @@ class DownloadRequestEvent {
   final DateTime observedAt;
 }
 
+class ThumbnailSyncItem {
+  const ThumbnailSyncItem({
+    required this.cacheId,
+    required this.relativePath,
+    required this.thumbnailId,
+  });
+
+  final String cacheId;
+  final String relativePath;
+  final String thumbnailId;
+
+  Map<String, Object> toJson() {
+    return <String, Object>{
+      'cacheId': cacheId,
+      'relativePath': relativePath,
+      'thumbnailId': thumbnailId,
+    };
+  }
+
+  static ThumbnailSyncItem? fromJson(Map<String, dynamic> json) {
+    final cacheId = json['cacheId'] as String?;
+    final relativePath = json['relativePath'] as String?;
+    final thumbnailId = json['thumbnailId'] as String?;
+    if (cacheId == null || relativePath == null || thumbnailId == null) {
+      return null;
+    }
+    return ThumbnailSyncItem(
+      cacheId: cacheId,
+      relativePath: relativePath,
+      thumbnailId: thumbnailId,
+    );
+  }
+}
+
+class ThumbnailSyncRequestEvent {
+  const ThumbnailSyncRequestEvent({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.items,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final List<ThumbnailSyncItem> items;
+  final DateTime observedAt;
+}
+
+class ThumbnailPacketEvent {
+  const ThumbnailPacketEvent({
+    required this.requestId,
+    required this.ownerIp,
+    required this.ownerMacAddress,
+    required this.cacheId,
+    required this.relativePath,
+    required this.thumbnailId,
+    required this.bytes,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String ownerIp;
+  final String ownerMacAddress;
+  final String cacheId;
+  final String relativePath;
+  final String thumbnailId;
+  final Uint8List bytes;
+  final DateTime observedAt;
+}
+
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
   static const String _discoverPrefix = 'LANDA_DISCOVER_V1';
@@ -239,6 +318,9 @@ class LanDiscoveryService {
   static const String _shareQueryPrefix = 'LANDA_SHARE_QUERY_V1';
   static const String _shareCatalogPrefix = 'LANDA_SHARE_CATALOG_V1';
   static const String _downloadRequestPrefix = 'LANDA_DOWNLOAD_REQUEST_V1';
+  static const String _thumbnailSyncRequestPrefix =
+      'LANDA_THUMBNAIL_SYNC_REQUEST_V1';
+  static const String _thumbnailPacketPrefix = 'LANDA_THUMBNAIL_PACKET_V1';
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
@@ -275,6 +357,8 @@ class LanDiscoveryService {
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
+    void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     String? preferredSourceIp,
   }) async {
     if (_started) {
@@ -460,6 +544,46 @@ class LanDiscoveryService {
           continue;
         }
 
+        final thumbnailSync = _parseThumbnailSyncRequestPacket(message);
+        if (thumbnailSync != null) {
+          if (thumbnailSync.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          onThumbnailSyncRequest?.call(
+            ThumbnailSyncRequestEvent(
+              requestId: thumbnailSync.requestId,
+              requesterIp: senderIp,
+              requesterName: thumbnailSync.requesterName,
+              items: thumbnailSync.items,
+              observedAt: DateTime.now(),
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
+
+        final thumbnailPacket = _parseThumbnailPacket(message);
+        if (thumbnailPacket != null) {
+          if (thumbnailPacket.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          onThumbnailPacket?.call(
+            ThumbnailPacketEvent(
+              requestId: thumbnailPacket.requestId,
+              ownerIp: senderIp,
+              ownerMacAddress: thumbnailPacket.ownerMacAddress,
+              cacheId: thumbnailPacket.cacheId,
+              relativePath: thumbnailPacket.relativePath,
+              thumbnailId: thumbnailPacket.thumbnailId,
+              bytes: thumbnailPacket.bytes,
+              observedAt: DateTime.now(),
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
         datagram = _socket?.receive();
       }
     });
@@ -590,6 +714,58 @@ class LanDiscoveryService {
     };
     await _sendEncodedPacket(
       prefix: _downloadRequestPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendThumbnailSyncRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required List<ThumbnailSyncItem> items,
+  }) async {
+    if (items.isEmpty) {
+      return;
+    }
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'requesterName': requesterName,
+      'items': items.map((item) => item.toJson()).toList(growable: false),
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _thumbnailSyncRequestPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendThumbnailPacket({
+    required String targetIp,
+    required String requestId,
+    required String ownerMacAddress,
+    required String cacheId,
+    required String relativePath,
+    required String thumbnailId,
+    required Uint8List bytes,
+  }) async {
+    if (bytes.isEmpty) {
+      return;
+    }
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'ownerMacAddress': ownerMacAddress,
+      'cacheId': cacheId,
+      'relativePath': relativePath,
+      'thumbnailId': thumbnailId,
+      'bytesBase64': base64Encode(bytes),
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _thumbnailPacketPrefix,
       payload: payload,
       targetIp: targetIp,
     );
@@ -855,6 +1031,95 @@ class LanDiscoveryService {
     );
   }
 
+  _ThumbnailSyncRequestPacket? _parseThumbnailSyncRequestPacket(
+    String message,
+  ) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _thumbnailSyncRequestPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final requesterName = decoded['requesterName'] as String?;
+    final itemsRaw = decoded['items'];
+    if (instanceId == null ||
+        requestId == null ||
+        requesterName == null ||
+        itemsRaw is! List<dynamic>) {
+      return null;
+    }
+
+    final items = <ThumbnailSyncItem>[];
+    for (final raw in itemsRaw) {
+      if (raw is! Map<String, dynamic>) {
+        continue;
+      }
+      final parsed = ThumbnailSyncItem.fromJson(raw);
+      if (parsed != null) {
+        items.add(parsed);
+      }
+    }
+    if (items.isEmpty) {
+      return null;
+    }
+
+    return _ThumbnailSyncRequestPacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      items: items,
+    );
+  }
+
+  _ThumbnailPacket? _parseThumbnailPacket(String message) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _thumbnailPacketPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final ownerMacAddress = decoded['ownerMacAddress'] as String?;
+    final cacheId = decoded['cacheId'] as String?;
+    final relativePath = decoded['relativePath'] as String?;
+    final thumbnailId = decoded['thumbnailId'] as String?;
+    final bytesBase64 = decoded['bytesBase64'] as String?;
+    if (instanceId == null ||
+        requestId == null ||
+        ownerMacAddress == null ||
+        cacheId == null ||
+        relativePath == null ||
+        thumbnailId == null ||
+        bytesBase64 == null) {
+      return null;
+    }
+
+    try {
+      final bytes = base64Decode(bytesBase64);
+      if (bytes.isEmpty) {
+        return null;
+      }
+      return _ThumbnailPacket(
+        instanceId: instanceId,
+        requestId: requestId,
+        ownerMacAddress: ownerMacAddress,
+        cacheId: cacheId,
+        relativePath: relativePath,
+        thumbnailId: thumbnailId,
+        bytes: Uint8List.fromList(bytes),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Map<String, dynamic>? _decodeTransferEnvelope({
     required String message,
     required String expectedPrefix,
@@ -1061,4 +1326,38 @@ class _DownloadRequestPacket {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+}
+
+class _ThumbnailSyncRequestPacket {
+  const _ThumbnailSyncRequestPacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.requesterName,
+    required this.items,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String requesterName;
+  final List<ThumbnailSyncItem> items;
+}
+
+class _ThumbnailPacket {
+  const _ThumbnailPacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.ownerMacAddress,
+    required this.cacheId,
+    required this.relativePath,
+    required this.thumbnailId,
+    required this.bytes,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String ownerMacAddress;
+  final String cacheId;
+  final String relativePath;
+  final String thumbnailId;
+  final Uint8List bytes;
 }

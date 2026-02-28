@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
@@ -897,6 +898,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     ),
                                     controlAffinity:
                                         ListTileControlAffinity.leading,
+                                    secondary: _RemoteFilePreview(file: file),
                                   );
                                 },
                               ),
@@ -1102,6 +1104,12 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
             cacheDisplayName: option.entry.displayName,
             relativePath: file.relativePath,
             sizeBytes: file.sizeBytes,
+            thumbnailId: file.thumbnailId,
+            previewPath: widget.controller.remoteThumbnailPath(
+              ownerIp: option.ownerIp,
+              cacheId: option.entry.cacheId,
+              relativePath: file.relativePath,
+            ),
           ),
         );
       }
@@ -1135,6 +1143,121 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(2)} GB';
   }
+}
+
+enum _RemoteMediaKind { image, video, other }
+
+class _RemoteFilePreview extends StatelessWidget {
+  const _RemoteFilePreview({required this.file});
+
+  final _RemoteFileChoice file;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = _resolveScheme(file.mediaKind);
+    final hasPreview = file.previewPath != null && file.previewPath!.isNotEmpty;
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: scheme.background,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: scheme.border),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          if (hasPreview)
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: Image.file(
+                File(file.previewPath!),
+                fit: BoxFit.cover,
+                errorBuilder: (_, error, stackTrace) {
+                  return Center(
+                    child: Icon(scheme.icon, color: scheme.iconColor, size: 26),
+                  );
+                },
+              ),
+            )
+          else
+            Center(child: Icon(scheme.icon, color: scheme.iconColor, size: 26)),
+          if (file.mediaKind == _RemoteMediaKind.video)
+            const Center(
+              child: Icon(
+                Icons.play_circle_fill_rounded,
+                color: Colors.white,
+                size: 24,
+              ),
+            ),
+          Positioned(
+            left: AppSpacing.xxs,
+            right: AppSpacing.xxs,
+            bottom: AppSpacing.xxs,
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.xxs,
+                vertical: 2,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.surface.withValues(alpha: 0.88),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Text(
+                file.previewLabel,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  _PreviewScheme _resolveScheme(_RemoteMediaKind kind) {
+    switch (kind) {
+      case _RemoteMediaKind.image:
+        return const _PreviewScheme(
+          background: AppColors.surfaceSoft,
+          border: AppColors.brandAccent,
+          iconColor: AppColors.brandPrimaryDark,
+          icon: Icons.image_rounded,
+        );
+      case _RemoteMediaKind.video:
+        return const _PreviewScheme(
+          background: AppColors.surfaceSoft,
+          border: AppColors.warning,
+          iconColor: AppColors.warning,
+          icon: Icons.play_circle_fill_rounded,
+        );
+      case _RemoteMediaKind.other:
+        return const _PreviewScheme(
+          background: AppColors.surfaceSoft,
+          border: AppColors.mutedBorder,
+          iconColor: AppColors.mutedIcon,
+          icon: Icons.insert_drive_file_rounded,
+        );
+    }
+  }
+}
+
+class _PreviewScheme {
+  const _PreviewScheme({
+    required this.background,
+    required this.border,
+    required this.iconColor,
+    required this.icon,
+  });
+
+  final Color background;
+  final Color border;
+  final Color iconColor;
+  final IconData icon;
 }
 
 class _RemoteOwnerChoice {
@@ -1174,15 +1297,71 @@ class _RemoteFileChoice {
     required this.cacheDisplayName,
     required this.relativePath,
     required this.sizeBytes,
+    this.thumbnailId,
+    this.previewPath,
   });
+
+  static const Set<String> _imageExtensions = <String>{
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.heic',
+    '.heif',
+    '.tif',
+    '.tiff',
+  };
+
+  static const Set<String> _videoExtensions = <String>{
+    '.mp4',
+    '.mov',
+    '.mkv',
+    '.avi',
+    '.webm',
+    '.m4v',
+    '.3gp',
+    '.mpeg',
+    '.mpg',
+  };
 
   final String ownerIp;
   final String cacheId;
   final String cacheDisplayName;
   final String relativePath;
   final int sizeBytes;
+  final String? thumbnailId;
+  final String? previewPath;
 
   String get id => '$ownerIp|$cacheId|$relativePath';
+
+  _RemoteMediaKind get mediaKind {
+    if (_imageExtensions.contains(extension)) {
+      return _RemoteMediaKind.image;
+    }
+    if (_videoExtensions.contains(extension)) {
+      return _RemoteMediaKind.video;
+    }
+    return _RemoteMediaKind.other;
+  }
+
+  String get extension => p.extension(relativePath).toLowerCase();
+
+  String get previewLabel {
+    final ext = extension;
+    if (ext.isNotEmpty) {
+      return ext.substring(1).toUpperCase();
+    }
+    switch (mediaKind) {
+      case _RemoteMediaKind.image:
+        return 'IMG';
+      case _RemoteMediaKind.video:
+        return 'VID';
+      case _RemoteMediaKind.other:
+        return 'FILE';
+    }
+  }
 }
 
 class _ActionBar extends StatelessWidget {
@@ -1239,4 +1418,3 @@ class _ActionBar extends StatelessWidget {
     );
   }
 }
-
