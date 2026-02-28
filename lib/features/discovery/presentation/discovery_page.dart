@@ -218,6 +218,26 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.refresh_rounded),
+                title: const Text('Re-cache shared folders'),
+                subtitle: const Text(
+                  'Refresh index and generate missing previews',
+                ),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _controller.recacheSharedFolders();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder_shared_outlined),
+                title: const Text('View shared folders'),
+                subtitle: const Text('See all currently shared caches'),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  await _openSharedFoldersSheet();
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.note_add_outlined),
                 title: const Text('Add shared files'),
                 subtitle: const Text(
@@ -229,6 +249,147 @@ class _DiscoveryPageState extends State<DiscoveryPage> {
                 },
               ),
             ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openSharedFoldersSheet() async {
+    await _controller.reloadOwnerSharedCaches();
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.78,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final sharedCaches = _controller.ownerSharedCaches;
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Shared folders',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Expanded(
+                        child: sharedCaches.isEmpty
+                            ? const Center(
+                                child: Text('No shared folders yet.'),
+                              )
+                            : ListView.separated(
+                                itemCount: sharedCaches.length,
+                                separatorBuilder: (_, index) =>
+                                    const SizedBox(height: AppSpacing.sm),
+                                itemBuilder: (_, index) {
+                                  final cache = sharedCaches[index];
+                                  final isSelection = cache.rootPath.startsWith(
+                                    'selection://',
+                                  );
+                                  return Card(
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(
+                                        AppSpacing.md,
+                                      ),
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                isSelection
+                                                    ? Icons.list_alt_rounded
+                                                    : Icons.folder_open,
+                                                color: AppColors.brandPrimary,
+                                              ),
+                                              const SizedBox(
+                                                width: AppSpacing.sm,
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  cache.displayName,
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.titleMedium,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          const SizedBox(height: AppSpacing.xs),
+                                          Text(
+                                            '${cache.itemCount} files • '
+                                            '${_formatBytes(cache.totalBytes)}',
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                          ),
+                                          const SizedBox(
+                                            height: AppSpacing.xxs,
+                                          ),
+                                          Text(
+                                            isSelection
+                                                ? 'Selection cache'
+                                                : cache.rootPath,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                          ),
+                                          const SizedBox(
+                                            height: AppSpacing.xxs,
+                                          ),
+                                          Text(
+                                            'Updated: ${_formatTime(DateTime.fromMillisecondsSinceEpoch(cache.updatedAtMs))}',
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.bodySmall,
+                                          ),
+                                          if (!isSelection) ...[
+                                            const SizedBox(
+                                              height: AppSpacing.sm,
+                                            ),
+                                            Align(
+                                              alignment: Alignment.centerLeft,
+                                              child: OutlinedButton.icon(
+                                                onPressed: () async {
+                                                  await _controller
+                                                      .openHistoryPath(
+                                                        cache.rootPath,
+                                                      );
+                                                },
+                                                icon: const Icon(
+                                                  Icons.folder_open,
+                                                ),
+                                                label: const Text(
+                                                  'Open folder',
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
           ),
         );
       },

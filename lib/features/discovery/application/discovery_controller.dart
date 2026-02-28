@@ -54,6 +54,20 @@ class _PreparedTransferFile {
   final TransferAnnouncementItem announcement;
 }
 
+class _PendingRemoteDownloadIntent {
+  _PendingRemoteDownloadIntent({
+    required this.ownerIp,
+    required this.ownerMacAddress,
+    required this.cacheId,
+    required this.createdAt,
+  });
+
+  final String ownerIp;
+  final String? ownerMacAddress;
+  final String cacheId;
+  final DateTime createdAt;
+}
+
 class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
@@ -76,6 +90,7 @@ class DiscoveryController extends ChangeNotifier {
        _pathOpener = pathOpener;
 
   static const Duration _autoRefreshInterval = Duration(seconds: 30);
+  static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
@@ -99,6 +114,8 @@ class DiscoveryController extends ChangeNotifier {
   final Set<String> _trustedDeviceMacs = <String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
+  final Map<String, _PendingRemoteDownloadIntent> _pendingRemoteDownloads =
+      <String, _PendingRemoteDownloadIntent>{};
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
   final List<TransferHistoryRecord> _downloadHistory =
@@ -234,6 +251,11 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> refresh() => _refresh(isManual: true);
+
+  Future<void> reloadOwnerSharedCaches() async {
+    await _loadOwnerCaches();
+    notifyListeners();
+  }
 
   void clearInfoMessage() {
     _infoMessage = null;
@@ -374,6 +396,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     try {
+      _purgeExpiredPendingRemoteDownloads();
       final stamp = DateTime.now().microsecondsSinceEpoch;
       for (final entry in normalizedSelection.entries) {
         final requestId = _fileHashService.buildStableId(
@@ -388,8 +411,22 @@ class DiscoveryController extends ChangeNotifier {
           cacheId: entry.key,
           selectedRelativePaths: entry.value,
         );
-      }
 
+        final normalizedOwnerMac = _resolveRemoteOwnerMac(
+          ownerIp: ownerIp,
+          cacheId: entry.key,
+        );
+        final pendingKey = _pendingRemoteDownloadKey(
+          ownerIp: ownerIp,
+          cacheId: entry.key,
+        );
+        _pendingRemoteDownloads[pendingKey] = _PendingRemoteDownloadIntent(
+          ownerIp: ownerIp,
+          ownerMacAddress: normalizedOwnerMac,
+          cacheId: entry.key,
+          createdAt: DateTime.now(),
+        );
+      }
       _infoMessage = selectedFilesCount > 0
           ? 'Requested $selectedFilesCount file(s) from $ownerName.'
           : 'Download request sent to $ownerName.';
@@ -450,15 +487,87 @@ class DiscoveryController extends ChangeNotifier {
         return;
       }
 
-      await _sharedFolderCacheRepository.buildOwnerCache(
+      final result = await _sharedFolderCacheRepository.upsertOwnerFolderCache(
         ownerMacAddress: _localDeviceMac,
         folderPath: folderPath,
       );
       await _loadOwnerCaches();
-      _infoMessage = 'Shared folder added.';
+      final delta = result.record.itemCount - result.previousItemCount;
+      if (result.created) {
+        _infoMessage =
+            'Shared folder added. Indexed ${result.record.itemCount} file(s).';
+      } else if (delta > 0) {
+        _infoMessage =
+            'Shared folder updated. Found $delta new file(s), '
+            'total ${result.record.itemCount}.';
+      } else {
+        _infoMessage =
+            'Shared folder re-cached. No new files, '
+            'total ${result.record.itemCount}.';
+      }
       _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Failed to add shared folder: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> recacheSharedFolders() async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      await _loadOwnerCaches();
+      final folderCaches = _ownerSharedCaches
+          .where((cache) => !cache.rootPath.startsWith('selection://'))
+          .toList(growable: false);
+      if (folderCaches.isEmpty) {
+        _infoMessage = 'No shared folders to re-cache.';
+        _errorMessage = null;
+        return;
+      }
+
+      var updatedCount = 0;
+      var failedCount = 0;
+      var indexedTotal = 0;
+      var discoveredNewFiles = 0;
+
+      for (final cache in folderCaches) {
+        try {
+          final result = await _sharedFolderCacheRepository
+              .upsertOwnerFolderCache(
+                ownerMacAddress: _localDeviceMac,
+                folderPath: cache.rootPath,
+                displayName: cache.displayName,
+              );
+          updatedCount += 1;
+          indexedTotal += result.record.itemCount;
+          final delta = result.record.itemCount - result.previousItemCount;
+          if (delta > 0) {
+            discoveredNewFiles += delta;
+          }
+        } catch (error) {
+          failedCount += 1;
+          _log('Failed to re-cache folder ${cache.rootPath}: $error');
+        }
+      }
+
+      await _loadOwnerCaches();
+      if (updatedCount == 0) {
+        _errorMessage = 'Failed to re-cache shared folders.';
+        _infoMessage = null;
+      } else {
+        _errorMessage = null;
+        final suffix = failedCount > 0 ? ' ($failedCount failed)' : '';
+        _infoMessage =
+            'Re-cached $updatedCount shared folder(s). '
+            'Indexed $indexedTotal file(s), '
+            'new: $discoveredNewFiles$suffix.';
+      }
+    } catch (error) {
+      _errorMessage = 'Failed to re-cache shared folders: $error';
       _log(_errorMessage!);
     } finally {
       _isAddingShare = false;
@@ -612,8 +721,19 @@ class DiscoveryController extends ChangeNotifier {
         _downloadTotalBytes = request.totalBytes;
         notifyListeners();
 
+        unawaited(
+          _transferStorageService.showAndroidDownloadProgressNotification(
+            requestId: request.requestId,
+            senderName: request.senderName,
+            receivedBytes: 0,
+            totalBytes: request.totalBytes,
+          ),
+        );
+
         final destinationDirectory = await _transferStorageService
             .resolveReceiveDirectory(appFolderName: 'Landa');
+        var lastNotifiedAtMs = 0;
+        var lastNotifiedPercent = -1;
         receiveSession = await _fileTransferService.startReceiver(
           requestId: request.requestId,
           expectedItems: request.items,
@@ -622,6 +742,34 @@ class DiscoveryController extends ChangeNotifier {
             _downloadReceivedBytes = received;
             _downloadTotalBytes = total;
             notifyListeners();
+
+            final nowMs = DateTime.now().millisecondsSinceEpoch;
+            final percent = total <= 0
+                ? -1
+                : (received * 100 ~/ total).clamp(0, 100);
+            final isFinalChunk = total > 0 && received >= total;
+            final hasMeaningfulPercentStep =
+                percent >= 0 &&
+                (lastNotifiedPercent < 0 || percent >= lastNotifiedPercent + 2);
+            final shouldNotify =
+                isFinalChunk ||
+                nowMs - lastNotifiedAtMs >= 600 ||
+                hasMeaningfulPercentStep;
+            if (!shouldNotify) {
+              return;
+            }
+            lastNotifiedAtMs = nowMs;
+            if (percent >= 0) {
+              lastNotifiedPercent = percent;
+            }
+            unawaited(
+              _transferStorageService.showAndroidDownloadProgressNotification(
+                requestId: request.requestId,
+                senderName: request.senderName,
+                receivedBytes: received,
+                totalBytes: total,
+              ),
+            );
           },
         );
         _activeReceiveSessions[request.requestId] = receiveSession;
@@ -818,6 +966,17 @@ class DiscoveryController extends ChangeNotifier {
     final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
       event.senderMacAddress,
     );
+    final requestedByCurrentDevice = _consumePendingRemoteDownload(event);
+    if (requestedByCurrentDevice) {
+      _infoMessage =
+          'Auto-accepting download transfer from ${event.senderName}.';
+      notifyListeners();
+      unawaited(
+        respondToTransferRequest(requestId: event.requestId, approved: true),
+      );
+      return;
+    }
+
     final isTrustedSender =
         normalizedSenderMac != null &&
         _trustedDeviceMacs.contains(normalizedSenderMac);
@@ -925,6 +1084,10 @@ class DiscoveryController extends ChangeNotifier {
         _log('Failed to publish files into user downloads: $error');
       }
 
+      final rootPath = savedPaths.isEmpty
+          ? result.destinationDirectory
+          : File(savedPaths.first).parent.path;
+
       try {
         await _transferHistoryRepository.addRecord(
           id: _fileHashService.buildStableId(
@@ -935,9 +1098,7 @@ class DiscoveryController extends ChangeNotifier {
           direction: TransferHistoryDirection.download,
           peerName: request.senderName,
           peerIp: request.senderIp,
-          rootPath: savedPaths.isEmpty
-              ? result.destinationDirectory
-              : File(savedPaths.first).parent.path,
+          rootPath: rootPath,
           savedPaths: savedPaths,
           fileCount: savedPaths.length,
           totalBytes: result.totalBytes,
@@ -949,15 +1110,29 @@ class DiscoveryController extends ChangeNotifier {
         _log('Failed to persist transfer history: $error');
       }
 
+      unawaited(
+        _transferStorageService.showAndroidDownloadCompletedNotification(
+          requestId: request.requestId,
+          savedPaths: savedPaths,
+          directoryPath: rootPath,
+        ),
+      );
+
       _infoMessage =
           'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-          'Saved to ${savedPaths.isEmpty ? result.destinationDirectory : File(savedPaths.first).parent.path}.';
+          'Saved to $rootPath.';
       _errorMessage = null;
       _downloadReceivedBytes = _downloadTotalBytes;
     } else {
       _errorMessage =
           'Transfer from ${request.senderName} failed: ${result.message}';
       _log(_errorMessage!);
+      unawaited(
+        _transferStorageService.showAndroidDownloadFailedNotification(
+          requestId: request.requestId,
+          message: result.message,
+        ),
+      );
     }
     Future<void>.delayed(const Duration(seconds: 1), () {
       _downloadReceivedBytes = 0;
@@ -984,47 +1159,55 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
-    await _loadOwnerCaches();
-    if (_ownerSharedCaches.isEmpty) {
-      _log('Share query from ${event.requesterIp} returned 0 owner caches');
-      return;
-    }
+    try {
+      final removedCacheIds = await _sharedFolderCacheRepository
+          .pruneUnavailableOwnerCaches(ownerMacAddress: _localDeviceMac);
+      await _loadOwnerCaches();
 
-    final catalog = <SharedCatalogEntryItem>[];
-    for (final cache in _ownerSharedCaches) {
-      final entries = await _sharedFolderCacheRepository.readIndexEntries(
-        cache.cacheId,
-      );
-      final files = entries
-          .map(
-            (entry) => SharedCatalogFileItem(
-              relativePath: entry.relativePath,
-              sizeBytes: entry.sizeBytes,
-              thumbnailId: entry.thumbnailId,
-            ),
-          )
-          .toList(growable: false);
-      catalog.add(
-        SharedCatalogEntryItem(
-          cacheId: cache.cacheId,
-          displayName: cache.displayName,
-          itemCount: cache.itemCount,
-          totalBytes: cache.totalBytes,
-          files: files,
-        ),
-      );
-    }
+      final catalog = <SharedCatalogEntryItem>[];
+      for (final cache in _ownerSharedCaches) {
+        final entries = await _sharedFolderCacheRepository.readIndexEntries(
+          cache.cacheId,
+        );
+        final files = entries
+            .map(
+              (entry) => SharedCatalogFileItem(
+                relativePath: entry.relativePath,
+                sizeBytes: entry.sizeBytes,
+                thumbnailId: entry.thumbnailId,
+              ),
+            )
+            .toList(growable: false);
+        final totalBytes = entries.fold<int>(
+          0,
+          (sum, entry) => sum + entry.sizeBytes,
+        );
+        catalog.add(
+          SharedCatalogEntryItem(
+            cacheId: cache.cacheId,
+            displayName: cache.displayName,
+            itemCount: entries.length,
+            totalBytes: totalBytes,
+            files: files,
+          ),
+        );
+      }
 
-    await _lanDiscoveryService.sendShareCatalog(
-      targetIp: event.requesterIp,
-      requestId: event.requestId,
-      ownerName: _localName,
-      ownerMacAddress: _localDeviceMac,
-      entries: catalog,
-    );
-    _log(
-      'Share catalog sent to ${event.requesterIp}. entries=${catalog.length}',
-    );
+      await _lanDiscoveryService.sendShareCatalog(
+        targetIp: event.requesterIp,
+        requestId: event.requestId,
+        ownerName: _localName,
+        ownerMacAddress: _localDeviceMac,
+        entries: catalog,
+        removedCacheIds: removedCacheIds,
+      );
+      _log(
+        'Share catalog sent to ${event.requesterIp}. '
+        'entries=${catalog.length} removed=${removedCacheIds.length}',
+      );
+    } catch (error) {
+      _log('Failed to answer share query from ${event.requesterIp}: $error');
+    }
   }
 
   void _onShareCatalog(ShareCatalogEvent event) {
@@ -1033,6 +1216,10 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    unawaited(_handleShareCatalog(event));
+  }
+
+  Future<void> _handleShareCatalog(ShareCatalogEvent event) async {
     final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
     final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
     final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
@@ -1049,6 +1236,32 @@ class DiscoveryController extends ChangeNotifier {
               isReachable: true,
               lastSeen: event.observedAt,
             );
+
+    if (ownerMac != null) {
+      final activeCacheIds = event.entries
+          .map((entry) => entry.cacheId)
+          .where((id) => id.trim().isNotEmpty)
+          .toSet();
+      final removedLocal = await _sharedFolderCacheRepository
+          .pruneReceiverCachesForOwner(
+            ownerMacAddress: ownerMac,
+            receiverMacAddress: _localDeviceMac,
+            activeCacheIds: activeCacheIds,
+          );
+      if (removedLocal.isNotEmpty) {
+        _log(
+          'Pruned ${removedLocal.length} stale receiver cache(s) '
+          'for owner ${event.ownerIp}',
+        );
+        _infoMessage =
+            'Remote shares updated: removed ${removedLocal.length} stale cache(s).';
+      } else if (event.removedCacheIds.isNotEmpty) {
+        _log(
+          'Owner ${event.ownerIp} reported '
+          '${event.removedCacheIds.length} removed cache(s).',
+        );
+      }
+    }
 
     _remoteShareOptions.removeWhere(
       (option) => option.ownerIp == event.ownerIp,
@@ -1501,6 +1714,67 @@ class DiscoveryController extends ChangeNotifier {
     } catch (error) {
       _log('Failed to load transfer history: $error');
     }
+  }
+
+  String _pendingRemoteDownloadKey({
+    required String ownerIp,
+    required String cacheId,
+  }) {
+    return '$ownerIp|$cacheId';
+  }
+
+  String? _resolveRemoteOwnerMac({
+    required String ownerIp,
+    required String cacheId,
+  }) {
+    for (final option in _remoteShareOptions) {
+      if (option.ownerIp != ownerIp || option.entry.cacheId != cacheId) {
+        continue;
+      }
+      return DeviceAliasRepository.normalizeMac(option.ownerMacAddress);
+    }
+    return null;
+  }
+
+  bool _consumePendingRemoteDownload(TransferRequestEvent event) {
+    _purgeExpiredPendingRemoteDownloads();
+    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
+      event.senderMacAddress,
+    );
+
+    String? matchedKey;
+    for (final entry in _pendingRemoteDownloads.entries) {
+      final pending = entry.value;
+      if (pending.cacheId != event.sharedCacheId) {
+        continue;
+      }
+
+      final ipMatches = pending.ownerIp == event.senderIp;
+      final macMatches =
+          pending.ownerMacAddress != null &&
+          normalizedSenderMac != null &&
+          pending.ownerMacAddress == normalizedSenderMac;
+      if (!ipMatches && !macMatches) {
+        continue;
+      }
+
+      matchedKey = entry.key;
+      break;
+    }
+
+    if (matchedKey == null) {
+      return false;
+    }
+    _pendingRemoteDownloads.remove(matchedKey);
+    return true;
+  }
+
+  void _purgeExpiredPendingRemoteDownloads() {
+    final now = DateTime.now();
+    _pendingRemoteDownloads.removeWhere(
+      (_, pending) =>
+          now.difference(pending.createdAt) > _pendingRemoteDownloadTtl,
+    );
   }
 
   int _scoreAddress(String interfaceName, String ip) {

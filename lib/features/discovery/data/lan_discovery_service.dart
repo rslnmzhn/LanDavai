@@ -206,6 +206,7 @@ class ShareCatalogEvent {
     required this.ownerName,
     required this.ownerMacAddress,
     required this.entries,
+    required this.removedCacheIds,
     required this.observedAt,
   });
 
@@ -214,6 +215,7 @@ class ShareCatalogEvent {
   final String ownerName;
   final String ownerMacAddress;
   final List<SharedCatalogEntryItem> entries;
+  final List<String> removedCacheIds;
   final DateTime observedAt;
 }
 
@@ -516,6 +518,7 @@ class LanDiscoveryService {
               ownerName: shareCatalog.ownerName,
               ownerMacAddress: shareCatalog.ownerMacAddress,
               entries: shareCatalog.entries,
+              removedCacheIds: shareCatalog.removedCacheIds,
               observedAt: DateTime.now(),
             ),
           );
@@ -679,6 +682,7 @@ class LanDiscoveryService {
     required String ownerName,
     required String ownerMacAddress,
     required List<SharedCatalogEntryItem> entries,
+    List<String> removedCacheIds = const <String>[],
   }) async {
     final payload = <String, Object?>{
       'instanceId': _instanceId,
@@ -686,6 +690,7 @@ class LanDiscoveryService {
       'ownerName': ownerName,
       'ownerMacAddress': ownerMacAddress,
       'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'removedCacheIds': removedCacheIds,
       'createdAtMs': DateTime.now().millisecondsSinceEpoch,
     };
     await _sendEncodedPacket(
@@ -975,12 +980,28 @@ class LanDiscoveryService {
       }
     }
 
+    final removedRaw = decoded['removedCacheIds'];
+    final removedCacheIds = <String>[];
+    if (removedRaw is List<dynamic>) {
+      for (final raw in removedRaw) {
+        if (raw is! String) {
+          continue;
+        }
+        final normalized = raw.trim();
+        if (normalized.isEmpty) {
+          continue;
+        }
+        removedCacheIds.add(normalized);
+      }
+    }
+
     return _ShareCatalogPacket(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,
       ownerMacAddress: ownerMacAddress,
       entries: entries,
+      removedCacheIds: removedCacheIds,
     );
   }
 
@@ -1301,6 +1322,7 @@ class _ShareCatalogPacket {
     required this.ownerName,
     required this.ownerMacAddress,
     required this.entries,
+    required this.removedCacheIds,
   });
 
   final String instanceId;
@@ -1308,6 +1330,7 @@ class _ShareCatalogPacket {
   final String ownerName;
   final String ownerMacAddress;
   final List<SharedCatalogEntryItem> entries;
+  final List<String> removedCacheIds;
 }
 
 class _DownloadRequestPacket {
