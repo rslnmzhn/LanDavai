@@ -119,13 +119,33 @@ static void my_application_on_exit_from_tray(GtkMenuItem* item,
   g_application_quit(G_APPLICATION(self));
 }
 
+static gchar* my_application_resolve_tray_icon_path() {
+  g_autofree gchar* executable_path = g_file_read_link("/proc/self/exe", nullptr);
+  if (executable_path == nullptr) {
+    return g_build_filename("data", "flutter_assets", "assets", "tray",
+                            "landa_tray.png", nullptr);
+  }
+
+  g_autofree gchar* executable_dir = g_path_get_dirname(executable_path);
+  return g_build_filename(executable_dir, "data", "flutter_assets", "assets",
+                          "tray", "landa_tray.png", nullptr);
+}
 static void my_application_setup_tray(MyApplication* self) {
   if (self->tray_indicator != nullptr) {
     return;
   }
 
+  g_autofree gchar* tray_icon_path = my_application_resolve_tray_icon_path();
+  const gchar* tray_icon = "network-workgroup";
+  if (tray_icon_path != nullptr &&
+      g_file_test(tray_icon_path, G_FILE_TEST_EXISTS)) {
+    tray_icon = tray_icon_path;
+  } else {
+    g_warning("Landa tray icon not found. fallback=network-workgroup");
+  }
+
   self->tray_indicator = app_indicator_new(
-      APPLICATION_ID, "network-workgroup",
+      APPLICATION_ID, tray_icon,
       APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
   if (self->tray_indicator == nullptr) {
     g_warning("Failed to create AppIndicator tray instance.");
@@ -146,7 +166,7 @@ static void my_application_setup_tray(MyApplication* self) {
   gtk_widget_show_all(self->tray_menu);
 
   app_indicator_set_menu(self->tray_indicator, GTK_MENU(self->tray_menu));
-  app_indicator_set_icon_full(self->tray_indicator, "network-workgroup",
+  app_indicator_set_icon_full(self->tray_indicator, tray_icon,
                               "Landa tray icon");
   my_application_sync_tray_status(self);
   my_application_log_tray_environment(self);
@@ -413,4 +433,5 @@ MyApplication* my_application_new() {
                                      "application-id", APPLICATION_ID, "flags",
                                      G_APPLICATION_NON_UNIQUE, nullptr));
 }
+
 
