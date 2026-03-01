@@ -805,9 +805,16 @@ class _DeviceTile extends StatelessWidget {
     final iconColor = isHighlighted
         ? AppColors.brandPrimary
         : AppColors.mutedIcon;
+    final iconData = switch (device.deviceCategory) {
+      DeviceCategory.phone => Icons.smartphone_rounded,
+      DeviceCategory.pc => Icons.computer_rounded,
+      DeviceCategory.unknown => Icons.devices,
+    };
     final subtitle = [
       device.ip,
       if (device.macAddress != null) 'MAC ${device.macAddress}',
+      if (device.operatingSystem != null && device.operatingSystem!.isNotEmpty)
+        'OS ${device.operatingSystem}',
     ].join(' • ');
 
     return Container(
@@ -824,7 +831,7 @@ class _DeviceTile extends StatelessWidget {
           horizontal: AppSpacing.md,
           vertical: AppSpacing.xs,
         ),
-        leading: Icon(Icons.devices, color: iconColor),
+        leading: Icon(iconData, color: iconColor),
         title: Text(
           device.displayName,
           style: Theme.of(context).textTheme.titleMedium,

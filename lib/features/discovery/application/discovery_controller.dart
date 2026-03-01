@@ -969,17 +969,80 @@ class DiscoveryController extends ChangeNotifier {
     final aliasName = normalizedMac == null ? null : _aliasByMac[normalizedMac];
     final isTrusted =
         normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+    final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
+    final detectedCategory = _resolveDeviceCategory(
+      deviceType: event.deviceType,
+      operatingSystem: detectedOs,
+    );
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
               aliasName: aliasName ?? existing?.aliasName,
               deviceName: event.deviceName,
+              operatingSystem: detectedOs ?? existing?.operatingSystem,
+              deviceCategory: detectedCategory,
               isTrusted: isTrusted,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
             );
     notifyListeners();
+  }
+
+  String? _normalizeOperatingSystemName(String? raw) {
+    if (raw == null) {
+      return null;
+    }
+    final value = raw.trim();
+    if (value.isEmpty) {
+      return null;
+    }
+    final lower = value.toLowerCase();
+    if (lower.contains('android')) {
+      return 'Android';
+    }
+    if (lower == 'ios' || lower.contains('iphone') || lower.contains('ipad')) {
+      return 'iOS';
+    }
+    if (lower.contains('windows')) {
+      return 'Windows';
+    }
+    if (lower.contains('mac')) {
+      return 'macOS';
+    }
+    if (lower.contains('linux')) {
+      return 'Linux';
+    }
+    return value;
+  }
+
+  DeviceCategory? _resolveDeviceCategory({
+    required String? deviceType,
+    required String? operatingSystem,
+  }) {
+    final normalizedType = deviceType?.trim().toLowerCase();
+    if (normalizedType == 'phone' ||
+        normalizedType == 'mobile' ||
+        normalizedType == 'tablet') {
+      return DeviceCategory.phone;
+    }
+    if (normalizedType == 'pc' ||
+        normalizedType == 'desktop' ||
+        normalizedType == 'laptop') {
+      return DeviceCategory.pc;
+    }
+
+    final os = operatingSystem?.toLowerCase();
+    if (os == null) {
+      return null;
+    }
+    if (os.contains('android') || os.contains('ios')) {
+      return DeviceCategory.phone;
+    }
+    if (os.contains('windows') || os.contains('linux') || os.contains('mac')) {
+      return DeviceCategory.pc;
+    }
+    return null;
   }
 
   void _onTransferRequest(TransferRequestEvent event) {

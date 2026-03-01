@@ -11,11 +11,15 @@ class AppPresenceEvent {
     required this.ip,
     required this.deviceName,
     required this.observedAt,
+    this.operatingSystem,
+    this.deviceType,
   });
 
   final String ip;
   final String deviceName;
   final DateTime observedAt;
+  final String? operatingSystem;
+  final String? deviceType;
 }
 
 class TransferAnnouncementItem {
@@ -334,6 +338,8 @@ class LanDiscoveryService {
   String? _preferredSourceIp;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
+  final String _operatingSystem = Platform.operatingSystem;
+  late final String _deviceType = _resolveLocalDeviceType();
   static const List<String> _virtualInterfaceHints = <String>[
     'loopback',
     'docker',
@@ -413,7 +419,8 @@ class LanDiscoveryService {
 
           if (discoveryPacket.prefix == _discoverPrefix) {
             _log('Discover request from $senderIp');
-            final response = '$_responsePrefix|$_instanceId|$deviceName';
+            final responsePayload = _encodeDiscoveryPayload(deviceName);
+            final response = '$_responsePrefix|$_instanceId|$responsePayload';
             _socket?.send(
               utf8.encode(response),
               datagram.address,
@@ -429,6 +436,8 @@ class LanDiscoveryService {
               AppPresenceEvent(
                 ip: senderIp,
                 deviceName: discoveryPacket.deviceName,
+                operatingSystem: discoveryPacket.operatingSystem,
+                deviceType: discoveryPacket.deviceType,
                 observedAt: DateTime.now(),
               ),
             );
@@ -791,7 +800,8 @@ class LanDiscoveryService {
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
-    final request = '$_discoverPrefix|$_instanceId|$deviceName';
+    final payload = _encodeDiscoveryPayload(deviceName);
+    final request = '$_discoverPrefix|$_instanceId|$payload';
     final bytes = utf8.encode(request);
 
     _log('Broadcasting discover packet');
@@ -828,15 +838,82 @@ class LanDiscoveryService {
 
     if (parts.length >= 3) {
       final instanceId = parts[1].trim();
-      final deviceName = parts.sublist(2).join('|').trim();
+      final rawPayload = parts.sublist(2).join('|').trim();
+      final decodedPayload = _tryDecodeDiscoveryPayload(rawPayload);
+      if (decodedPayload != null) {
+        return _DiscoveryPacket(
+          prefix: prefix,
+          instanceId: instanceId,
+          deviceName: decodedPayload.deviceName,
+          operatingSystem: decodedPayload.operatingSystem,
+          deviceType: decodedPayload.deviceType,
+        );
+      }
+
       return _DiscoveryPacket(
         prefix: prefix,
         instanceId: instanceId,
-        deviceName: deviceName.isEmpty ? 'Unknown device' : deviceName,
+        deviceName: rawPayload.isEmpty ? 'Unknown device' : rawPayload,
       );
     }
 
     return null;
+  }
+
+  String _encodeDiscoveryPayload(String deviceName) {
+    final payload = <String, Object>{
+      'name': deviceName,
+      'os': _operatingSystem,
+      'type': _deviceType,
+    };
+    return base64UrlEncode(utf8.encode(jsonEncode(payload)));
+  }
+
+  _DiscoveryIdentity? _tryDecodeDiscoveryPayload(String encodedPayload) {
+    if (encodedPayload.isEmpty) {
+      return null;
+    }
+    try {
+      final bytes = base64Url.decode(encodedPayload);
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+
+      final rawName = decoded['name'] as String?;
+      final rawOs = decoded['os'] as String?;
+      final rawType = decoded['type'] as String?;
+      return _DiscoveryIdentity(
+        deviceName: (rawName == null || rawName.trim().isEmpty)
+            ? 'Unknown device'
+            : rawName.trim(),
+        operatingSystem: _normalizeDiscoveryText(rawOs),
+        deviceType: _normalizeDiscoveryText(rawType),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _normalizeDiscoveryText(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  String _resolveLocalDeviceType() {
+    if (Platform.isAndroid || Platform.isIOS) {
+      return 'phone';
+    }
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return 'pc';
+    }
+    return 'unknown';
   }
 
   _TransferRequestPacket? _parseTransferRequestPacket(String message) {
@@ -1260,11 +1337,27 @@ class _DiscoveryPacket {
     required this.prefix,
     required this.instanceId,
     required this.deviceName,
+    this.operatingSystem,
+    this.deviceType,
   });
 
   final String prefix;
   final String instanceId;
   final String deviceName;
+  final String? operatingSystem;
+  final String? deviceType;
+}
+
+class _DiscoveryIdentity {
+  const _DiscoveryIdentity({
+    required this.deviceName,
+    this.operatingSystem,
+    this.deviceType,
+  });
+
+  final String deviceName;
+  final String? operatingSystem;
+  final String? deviceType;
 }
 
 class _TransferRequestPacket {
