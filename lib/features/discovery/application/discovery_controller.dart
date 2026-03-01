@@ -779,72 +779,92 @@ class DiscoveryController extends ChangeNotifier {
 
     final request = _incomingRequests[index];
     TransferReceiveSession? receiveSession;
+    var skippedExistingCount = 0;
+    var itemsToReceive = request.items;
+    var expectedBytes = request.totalBytes;
     try {
       if (approved) {
-        _downloadReceivedBytes = 0;
-        _downloadTotalBytes = request.totalBytes;
-        _resetDownloadSpeedTracking(currentBytes: 0);
-        notifyListeners();
-
-        unawaited(
-          _transferStorageService.showAndroidDownloadProgressNotification(
-            requestId: request.requestId,
-            senderName: request.senderName,
-            receivedBytes: 0,
-            totalBytes: request.totalBytes,
-          ),
-        );
-
         final destinationDirectory = await _transferStorageService
             .resolveReceiveDirectory(appFolderName: 'Landa');
-        var lastNotifiedAtMs = 0;
-        var lastNotifiedPercent = -1;
-        receiveSession = await _fileTransferService.startReceiver(
-          requestId: request.requestId,
-          expectedItems: request.items,
+        itemsToReceive = await _filterMissingIncomingItems(
+          items: request.items,
           destinationDirectory: destinationDirectory,
-          onProgress: (received, total) {
-            _downloadReceivedBytes = received;
-            _downloadTotalBytes = total;
-            _updateDownloadSpeedTracking(currentBytes: received);
-            notifyListeners();
+        );
+        skippedExistingCount = request.items.length - itemsToReceive.length;
+        expectedBytes = itemsToReceive.fold<int>(
+          0,
+          (sum, item) => sum + item.sizeBytes,
+        );
 
-            final nowMs = DateTime.now().millisecondsSinceEpoch;
-            final percent = total <= 0
-                ? -1
-                : (received * 100 ~/ total).clamp(0, 100);
-            final isFinalChunk = total > 0 && received >= total;
-            final hasMeaningfulPercentStep =
-                percent >= 0 &&
-                (lastNotifiedPercent < 0 || percent >= lastNotifiedPercent + 2);
-            final shouldNotify =
-                isFinalChunk ||
-                nowMs - lastNotifiedAtMs >= 600 ||
-                hasMeaningfulPercentStep;
-            if (!shouldNotify) {
-              return;
-            }
-            lastNotifiedAtMs = nowMs;
-            if (percent >= 0) {
-              lastNotifiedPercent = percent;
-            }
-            unawaited(
-              _transferStorageService.showAndroidDownloadProgressNotification(
-                requestId: request.requestId,
-                senderName: request.senderName,
-                receivedBytes: received,
-                totalBytes: total,
-              ),
-            );
-          },
-        );
-        _activeReceiveSessions[request.requestId] = receiveSession;
-        unawaited(
-          _waitForIncomingTransferResult(
-            request: request,
-            session: receiveSession,
-          ),
-        );
+        if (itemsToReceive.isNotEmpty) {
+          _downloadReceivedBytes = 0;
+          _downloadTotalBytes = expectedBytes;
+          _resetDownloadSpeedTracking(currentBytes: 0);
+          notifyListeners();
+
+          unawaited(
+            _transferStorageService.showAndroidDownloadProgressNotification(
+              requestId: request.requestId,
+              senderName: request.senderName,
+              receivedBytes: 0,
+              totalBytes: expectedBytes,
+            ),
+          );
+
+          var lastNotifiedAtMs = 0;
+          var lastNotifiedPercent = -1;
+          receiveSession = await _fileTransferService.startReceiver(
+            requestId: request.requestId,
+            expectedItems: request.items,
+            destinationDirectory: destinationDirectory,
+            onProgress: (received, total) {
+              _downloadReceivedBytes = received;
+              _downloadTotalBytes = total;
+              _updateDownloadSpeedTracking(currentBytes: received);
+              notifyListeners();
+
+              final nowMs = DateTime.now().millisecondsSinceEpoch;
+              final percent = total <= 0
+                  ? -1
+                  : (received * 100 ~/ total).clamp(0, 100);
+              final isFinalChunk = total > 0 && received >= total;
+              final hasMeaningfulPercentStep =
+                  percent >= 0 &&
+                  (lastNotifiedPercent < 0 ||
+                      percent >= lastNotifiedPercent + 2);
+              final shouldNotify =
+                  isFinalChunk ||
+                  nowMs - lastNotifiedAtMs >= 600 ||
+                  hasMeaningfulPercentStep;
+              if (!shouldNotify) {
+                return;
+              }
+              lastNotifiedAtMs = nowMs;
+              if (percent >= 0) {
+                lastNotifiedPercent = percent;
+              }
+              unawaited(
+                _transferStorageService.showAndroidDownloadProgressNotification(
+                  requestId: request.requestId,
+                  senderName: request.senderName,
+                  receivedBytes: received,
+                  totalBytes: total,
+                ),
+              );
+            },
+          );
+          _activeReceiveSessions[request.requestId] = receiveSession;
+          unawaited(
+            _waitForIncomingTransferResult(
+              request: request,
+              session: receiveSession,
+            ),
+          );
+        } else {
+          _downloadReceivedBytes = 0;
+          _downloadTotalBytes = 0;
+          _clearDownloadSpeedTracking();
+        }
       }
 
       await _lanDiscoveryService.sendTransferDecision(
@@ -853,6 +873,11 @@ class DiscoveryController extends ChangeNotifier {
         approved: approved,
         receiverName: _localName,
         transferPort: receiveSession?.port,
+        acceptedFileNames: approved
+            ? itemsToReceive
+                  .map((item) => item.fileName)
+                  .toList(growable: false)
+            : null,
       );
 
       if (approved) {
@@ -876,9 +901,17 @@ class DiscoveryController extends ChangeNotifier {
       }
 
       _incomingRequests.removeAt(index);
-      _infoMessage = approved
-          ? 'Transfer accepted. Waiting for file stream...'
-          : 'Transfer declined.';
+      if (!approved) {
+        _infoMessage = 'Transfer declined.';
+      } else if (itemsToReceive.isEmpty) {
+        _infoMessage =
+            'All requested files already exist locally. Transfer skipped.';
+      } else if (skippedExistingCount > 0) {
+        _infoMessage =
+            'Transfer accepted. Skipping $skippedExistingCount existing file(s), waiting for missing files...';
+      } else {
+        _infoMessage = 'Transfer accepted. Waiting for file stream...';
+      }
       _errorMessage = null;
       notifyListeners();
     } catch (error) {
@@ -1138,6 +1171,20 @@ class DiscoveryController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    final filteredFiles = _filterOutgoingFilesForDecision(
+      files: session.files,
+      acceptedFileNames: event.acceptedFileNames,
+    );
+    if (filteredFiles.isEmpty) {
+      _pendingOutgoingTransfers.remove(event.requestId);
+      _infoMessage =
+          '${event.receiverName} already has these files. Transfer skipped.';
+      _errorMessage = null;
+      notifyListeners();
+      return;
+    }
+
     if (event.transferPort == null) {
       _errorMessage =
           '${event.receiverName} accepted request but did not provide transfer port.';
@@ -1148,7 +1195,15 @@ class DiscoveryController extends ChangeNotifier {
     _infoMessage =
         '${event.receiverName} accepted request. Starting transfer...';
     notifyListeners();
-    unawaited(_sendApprovedTransfer(event: event, session: session));
+    unawaited(
+      _sendApprovedTransfer(
+        event: event,
+        session: _OutgoingTransferSession(
+          receiverName: session.receiverName,
+          files: filteredFiles,
+        ),
+      ),
+    );
   }
 
   Future<void> _sendApprovedTransfer({
@@ -1251,9 +1306,10 @@ class DiscoveryController extends ChangeNotifier {
         ),
       );
 
+      final hashStatus = result.hashVerified ? ' Hash verified.' : '';
       _infoMessage =
           'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-          'Saved to $rootPath.';
+          'Saved to $rootPath.$hashStatus';
       _errorMessage = null;
       _downloadReceivedBytes = _downloadTotalBytes;
       _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
@@ -1854,6 +1910,75 @@ class DiscoveryController extends ChangeNotifier {
     }
     final localRelative = entry.relativePath.replaceAll('/', p.separator);
     return p.join(cache.rootPath, localRelative);
+  }
+
+  List<TransferSourceFile> _filterOutgoingFilesForDecision({
+    required List<TransferSourceFile> files,
+    required List<String>? acceptedFileNames,
+  }) {
+    if (acceptedFileNames == null) {
+      return files;
+    }
+
+    final accepted = acceptedFileNames
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    if (accepted.isEmpty) {
+      return const <TransferSourceFile>[];
+    }
+
+    return files
+        .where((file) => accepted.contains(file.fileName))
+        .toList(growable: false);
+  }
+
+  Future<List<TransferFileManifestItem>> _filterMissingIncomingItems({
+    required List<TransferFileManifestItem> items,
+    required Directory destinationDirectory,
+  }) async {
+    final missing = <TransferFileManifestItem>[];
+    for (final item in items) {
+      final relativePath = _sanitizeTransferRelativePath(item.fileName);
+      final targetPath = p.join(destinationDirectory.path, relativePath);
+      final targetFile = File(targetPath);
+      if (!await targetFile.exists()) {
+        missing.add(item);
+        continue;
+      }
+
+      try {
+        final stat = await targetFile.stat();
+        if (stat.type != FileSystemEntityType.file ||
+            stat.size != item.sizeBytes) {
+          missing.add(item);
+          continue;
+        }
+
+        final existingHash = await _fileHashService.computeSha256ForPath(
+          targetPath,
+        );
+        if (existingHash.toLowerCase() != item.sha256.toLowerCase()) {
+          missing.add(item);
+        }
+      } catch (_) {
+        missing.add(item);
+      }
+    }
+    return missing;
+  }
+
+  String _sanitizeTransferRelativePath(String input) {
+    final raw = input.replaceAll('\\', '/');
+    final parts = raw
+        .split('/')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty && part != '.' && part != '..')
+        .toList(growable: false);
+    if (parts.isEmpty) {
+      return 'file.bin';
+    }
+    return p.joinAll(parts);
   }
 
   Duration? _estimateEta({

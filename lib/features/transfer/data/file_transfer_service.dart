@@ -43,6 +43,7 @@ class FileTransferResult {
     required this.savedPaths,
     required this.totalBytes,
     required this.destinationDirectory,
+    required this.hashVerified,
   });
 
   final bool success;
@@ -50,6 +51,7 @@ class FileTransferResult {
   final List<String> savedPaths;
   final int totalBytes;
   final String destinationDirectory;
+  final bool hashVerified;
 }
 
 class FileTransferService {
@@ -82,6 +84,7 @@ class FileTransferService {
             savedPaths: <String>[],
             totalBytes: 0,
             destinationDirectory: destinationDirectory.path,
+            hashVerified: false,
           ),
         );
       }
@@ -101,6 +104,7 @@ class FileTransferService {
             savedPaths: <String>[],
             totalBytes: 0,
             destinationDirectory: destinationDirectory.path,
+            hashVerified: false,
           ),
         );
       }
@@ -131,6 +135,7 @@ class FileTransferService {
                   savedPaths: <String>[],
                   totalBytes: 0,
                   destinationDirectory: destinationDirectory.path,
+                  hashVerified: false,
                 ),
               );
             }
@@ -147,6 +152,7 @@ class FileTransferService {
               savedPaths: <String>[],
               totalBytes: 0,
               destinationDirectory: destinationDirectory.path,
+              hashVerified: false,
             ),
           );
         }
@@ -212,10 +218,23 @@ class FileTransferService {
         if (!await source.exists()) {
           throw StateError('Source file does not exist: ${file.sourcePath}');
         }
+
+        final digestSink = _DigestSink();
+        final hashSink = sha256.startChunkedConversion(digestSink);
         await for (final chunk in source.openRead()) {
           socket.add(chunk);
+          hashSink.add(chunk);
           sentBytes += chunk.length;
           onProgress?.call(sentBytes, totalBytes);
+        }
+        hashSink.close();
+
+        final actualSha = digestSink.value?.toString() ?? '';
+        if (actualSha.toLowerCase() != file.sha256.toLowerCase()) {
+          throw StateError(
+            'Sender SHA-256 mismatch for ${file.fileName}. '
+            'File changed during transfer preparation.',
+          );
         }
       }
       await socket.flush();
@@ -277,16 +296,19 @@ class FileTransferService {
         )
         .toList(growable: false);
 
-    if (normalizedExpected.length != normalizedActual.length) {
-      throw StateError('Transfer file count mismatch.');
-    }
-    for (var i = 0; i < normalizedExpected.length; i += 1) {
-      final expected = normalizedExpected[i];
-      final actual = normalizedActual[i];
-      if (expected.name != actual.name ||
+    final expectedByName = <String, _FileDescriptor>{
+      for (final expected in normalizedExpected) expected.name: expected,
+    };
+    final seenActualNames = <String>{};
+    for (final actual in normalizedActual) {
+      if (!seenActualNames.add(actual.name)) {
+        throw StateError('Transfer manifest duplicate file: ${actual.name}.');
+      }
+      final expected = expectedByName[actual.name];
+      if (expected == null ||
           expected.sizeBytes != actual.sizeBytes ||
           expected.sha256.toLowerCase() != actual.sha256.toLowerCase()) {
-        throw StateError('Transfer manifest mismatch at index $i.');
+        throw StateError('Transfer manifest mismatch for ${actual.name}.');
       }
     }
 
@@ -298,48 +320,74 @@ class FileTransferService {
     );
     onProgress?.call(0, expectedTotalBytes);
 
-    for (final file in normalizedActual) {
-      final destinationPath = await _allocateDestinationPath(
-        destinationDirectory: destinationDirectory,
-        relativePath: file.name,
+    String? inProgressPath;
+    try {
+      for (final file in normalizedActual) {
+        final destinationPath = await _allocateDestinationPath(
+          destinationDirectory: destinationDirectory,
+          relativePath: file.name,
+        );
+        inProgressPath = destinationPath;
+        final destinationFile = File(destinationPath);
+        await destinationFile.parent.create(recursive: true);
+        final sink = destinationFile.openWrite(mode: FileMode.writeOnly);
+
+        final digestSink = _DigestSink();
+        final hashSink = sha256.startChunkedConversion(digestSink);
+        var remaining = file.sizeBytes;
+        while (remaining > 0) {
+          final toRead = min(remaining, _chunkBytes);
+          final chunk = await reader.readExact(toRead);
+          sink.add(chunk);
+          hashSink.add(chunk);
+          remaining -= chunk.length;
+          totalBytes += chunk.length;
+          onProgress?.call(totalBytes, expectedTotalBytes);
+        }
+
+        hashSink.close();
+        await sink.flush();
+        await sink.close();
+
+        final actualSha = digestSink.value?.toString() ?? '';
+        if (actualSha.toLowerCase() != file.sha256.toLowerCase()) {
+          try {
+            await destinationFile.delete();
+          } catch (_) {}
+          throw StateError('SHA-256 mismatch for ${file.name}');
+        }
+        savedPaths.add(destinationPath);
+        inProgressPath = null;
+      }
+
+      return FileTransferResult(
+        success: true,
+        message: 'Transfer completed. Hash verified.',
+        savedPaths: savedPaths,
+        totalBytes: totalBytes,
+        destinationDirectory: destinationDirectory.path,
+        hashVerified: true,
       );
-      final destinationFile = File(destinationPath);
-      await destinationFile.parent.create(recursive: true);
-      final sink = destinationFile.openWrite(mode: FileMode.writeOnly);
-
-      final digestSink = _DigestSink();
-      final hashSink = sha256.startChunkedConversion(digestSink);
-      var remaining = file.sizeBytes;
-      while (remaining > 0) {
-        final toRead = min(remaining, _chunkBytes);
-        final chunk = await reader.readExact(toRead);
-        sink.add(chunk);
-        hashSink.add(chunk);
-        remaining -= chunk.length;
-        totalBytes += chunk.length;
-        onProgress?.call(totalBytes, expectedTotalBytes);
+    } on Object {
+      await _cleanupFailedTransferFiles(savedPaths);
+      if (inProgressPath != null) {
+        try {
+          await File(inProgressPath).delete();
+        } catch (_) {}
       }
-
-      hashSink.close();
-      await sink.flush();
-      await sink.close();
-
-      final actualSha = digestSink.value?.toString() ?? '';
-      if (actualSha.toLowerCase() != file.sha256.toLowerCase()) {
-        await destinationFile.delete();
-        throw StateError('SHA-256 mismatch for ${file.name}');
-      }
-      savedPaths.add(destinationPath);
+      rethrow;
+    } finally {
+      await reader.close();
+      await socket.close();
     }
+  }
 
-    await socket.close();
-    return FileTransferResult(
-      success: true,
-      message: 'Transfer completed.',
-      savedPaths: savedPaths,
-      totalBytes: totalBytes,
-      destinationDirectory: destinationDirectory.path,
-    );
+  Future<void> _cleanupFailedTransferFiles(List<String> paths) async {
+    for (final path in paths) {
+      try {
+        await File(path).delete();
+      } catch (_) {}
+    }
   }
 
   Future<String> _allocateDestinationPath({

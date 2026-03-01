@@ -87,6 +87,7 @@ class TransferDecisionEvent {
     required this.receiverIp,
     required this.transferPort,
     required this.observedAt,
+    this.acceptedFileNames,
   });
 
   final String requestId;
@@ -95,6 +96,7 @@ class TransferDecisionEvent {
   final String receiverIp;
   final int? transferPort;
   final DateTime observedAt;
+  final List<String>? acceptedFileNames;
 }
 
 class ShareQueryEvent {
@@ -490,6 +492,7 @@ class LanDiscoveryService {
               receiverIp: senderIp,
               transferPort: transferDecision.transferPort,
               observedAt: DateTime.now(),
+              acceptedFileNames: transferDecision.acceptedFileNames,
             ),
           );
           datagram = _socket?.receive();
@@ -649,6 +652,7 @@ class LanDiscoveryService {
     required bool approved,
     required String receiverName,
     int? transferPort,
+    List<String>? acceptedFileNames,
   }) async {
     final payload = <String, Object?>{
       'instanceId': _instanceId,
@@ -659,6 +663,9 @@ class LanDiscoveryService {
     };
     if (transferPort != null) {
       payload['transferPort'] = transferPort;
+    }
+    if (acceptedFileNames != null) {
+      payload['acceptedFileNames'] = acceptedFileNames;
     }
     await _sendEncodedPacket(
       prefix: _transferDecisionPrefix,
@@ -985,6 +992,16 @@ class LanDiscoveryService {
     if (transferPortRaw is num) {
       transferPort = transferPortRaw.toInt();
     }
+    List<String>? acceptedFileNames;
+    final acceptedRaw = decoded['acceptedFileNames'];
+    if (acceptedRaw is List<dynamic>) {
+      final parsed = acceptedRaw
+          .whereType<String>()
+          .map((name) => name.trim())
+          .where((name) => name.isNotEmpty)
+          .toList(growable: false);
+      acceptedFileNames = parsed;
+    }
     if (requestId == null ||
         receiverName == null ||
         approved == null ||
@@ -998,6 +1015,7 @@ class LanDiscoveryService {
       receiverName: receiverName,
       approved: approved,
       transferPort: transferPort,
+      acceptedFileNames: acceptedFileNames,
     );
   }
 
@@ -1387,6 +1405,7 @@ class _TransferDecisionPacket {
     required this.receiverName,
     required this.approved,
     required this.transferPort,
+    this.acceptedFileNames,
   });
 
   final String instanceId;
@@ -1394,6 +1413,7 @@ class _TransferDecisionPacket {
   final String receiverName;
   final bool approved;
   final int? transferPort;
+  final List<String>? acceptedFileNames;
 }
 
 class _ShareQueryPacket {
