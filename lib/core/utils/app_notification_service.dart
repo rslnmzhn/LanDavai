@@ -35,4 +35,23 @@ class AppNotificationService {
       );
     }
   }
+
+  Future<void> showFriendRequestNotification({
+    required String requesterName,
+  }) async {
+    if (!Platform.isAndroid && !Platform.isWindows) {
+      return;
+    }
+    try {
+      await _channel.invokeMethod<void>(
+        'showFriendRequestNotification',
+        <String, Object?>{'requesterName': requesterName},
+      );
+    } catch (error) {
+      developer.log(
+        'Failed to show friend-request notification: $error',
+        name: 'AppNotificationService',
+      );
+    }
+  }
 }

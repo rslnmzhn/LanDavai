@@ -147,6 +147,27 @@ void FlutterWindow::ConfigureMethodChannel() {
           return;
         }
 
+
+        if (call.method_name() == "showFriendRequestNotification") {
+          std::wstring requester = L"Device";
+
+          if (args != nullptr) {
+            const auto requester_it =
+                args->find(flutter::EncodableValue("requesterName"));
+            if (requester_it != args->end()) {
+              if (const auto* value =
+                      std::get_if<std::string>(&requester_it->second)) {
+                requester = Utf8ToWide(*value);
+              }
+            }
+          }
+
+          std::wstringstream stream;
+          stream << requester << L" sent you a friend request.";
+          ShowDownloadAttemptBalloon(stream.str());
+          result->Success(flutter::EncodableValue());
+          return;
+        }
         result->NotImplemented();
       });
 }

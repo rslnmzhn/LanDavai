@@ -176,8 +176,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                 _controller.selectedDevice?.ip ==
                                 devices[index].ip,
                             onSelect: _controller.selectDeviceByIp,
-                            onRename: _showRenameDialog,
-                            onToggleFavorite: _controller.toggleTrustedDevice,
+                            onOpenActionsMenu: _openDeviceActionsMenu,
                           ),
                         ),
                 ),
@@ -201,176 +200,182 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       isScrollControlled: true,
       builder: (context) {
         return FractionallySizedBox(
-          heightFactor: 0.82,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              final friends = _controller.friends;
-              return SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              'Friends (Internet P2P)',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                          ),
-                          FilledButton.icon(
-                            onPressed: _controller.isFriendMutationInProgress
-                                ? null
-                                : _showAddFriendDialog,
-                            icon: const Icon(Icons.person_add_alt_1_rounded),
-                            label: const Text('Add'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      SelectableText(
-                        'Your Friend ID: ${_controller.localPeerId}',
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Expanded(
-                        child: friends.isEmpty
-                            ? const Center(child: Text('No friends added yet.'))
-                            : ListView.separated(
-                                itemCount: friends.length,
-                                separatorBuilder: (_, index) =>
-                                    const SizedBox(height: AppSpacing.xs),
-                                itemBuilder: (_, index) {
-                                  final friend = friends[index];
-                                  return Card(
-                                    child: ListTile(
-                                      title: Text(friend.displayName),
-                                      subtitle: Text(
-                                        '${friend.friendId}\\n${friend.endpoint}',
+          heightFactor: 0.84,
+          child: DefaultTabController(
+            length: 2,
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final friends = _controller.friendDevices;
+                final requests = _controller.incomingFriendRequests;
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Friends',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          'Friendship requires confirmation from both devices.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        TabBar(
+                          tabs: [
+                            Tab(text: 'Friends (${friends.length})'),
+                            Tab(text: 'Requests (${requests.length})'),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              friends.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No friends yet.\\nOpen a device menu and send a friend request.',
+                                        textAlign: TextAlign.center,
                                       ),
-                                      isThreeLine: true,
-                                      trailing: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          IconButton(
-                                            tooltip: friend.isEnabled
-                                                ? 'Disable'
-                                                : 'Enable',
-                                            onPressed: () {
-                                              unawaited(
-                                                _controller.setFriendEnabled(
-                                                  friendId: friend.friendId,
-                                                  enabled: !friend.isEnabled,
-                                                ),
-                                              );
-                                            },
-                                            icon: Icon(
-                                              friend.isEnabled
-                                                  ? Icons.cloud_done_rounded
-                                                  : Icons.cloud_off_rounded,
+                                    )
+                                  : ListView.separated(
+                                      itemCount: friends.length,
+                                      separatorBuilder: (_, index) =>
+                                          const SizedBox(height: AppSpacing.xs),
+                                      itemBuilder: (_, index) {
+                                        final friend = friends[index];
+                                        final subtitleParts = <String>[
+                                          friend.ip,
+                                          if (friend.macAddress != null)
+                                            'MAC ${friend.macAddress}',
+                                          if (friend.operatingSystem != null &&
+                                              friend
+                                                  .operatingSystem!
+                                                  .isNotEmpty)
+                                            'OS ${friend.operatingSystem}',
+                                        ];
+                                        return Card(
+                                          child: ListTile(
+                                            leading: const Icon(
+                                              Icons.star,
+                                              color: AppColors.warning,
+                                            ),
+                                            title: Text(friend.displayName),
+                                            subtitle: Text(
+                                              subtitleParts.join(' • '),
+                                            ),
+                                            trailing: IconButton(
+                                              tooltip: 'Remove from friends',
+                                              onPressed:
+                                                  _controller
+                                                      .isFriendMutationInProgress
+                                                  ? null
+                                                  : () {
+                                                      unawaited(
+                                                        _controller
+                                                            .removeDeviceFromFriends(
+                                                              friend,
+                                                            ),
+                                                      );
+                                                    },
+                                              icon: const Icon(
+                                                Icons
+                                                    .person_remove_alt_1_rounded,
+                                              ),
                                             ),
                                           ),
-                                          IconButton(
-                                            tooltip: 'Remove',
-                                            onPressed:
-                                                _controller
-                                                    .isFriendMutationInProgress
-                                                ? null
-                                                : () async {
-                                                    await _controller
-                                                        .removeFriend(
-                                                          friend.friendId,
-                                                        );
-                                                  },
-                                            icon: const Icon(
-                                              Icons.delete_outline_rounded,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                        );
+                                      },
                                     ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
+                              requests.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No pending friend requests.',
+                                      ),
+                                    )
+                                  : ListView.separated(
+                                      itemCount: requests.length,
+                                      separatorBuilder: (_, index) =>
+                                          const SizedBox(height: AppSpacing.xs),
+                                      itemBuilder: (_, index) {
+                                        final request = requests[index];
+                                        return Card(
+                                          child: ListTile(
+                                            leading: const Icon(
+                                              Icons.person_add_alt_1_rounded,
+                                            ),
+                                            title: Text(request.senderName),
+                                            subtitle: Text(
+                                              '${request.senderIp} • '
+                                              'MAC ${request.senderMacAddress}\n'
+                                              'Received ${_formatTime(request.createdAt)}',
+                                            ),
+                                            isThreeLine: true,
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  tooltip: 'Decline',
+                                                  onPressed:
+                                                      _controller
+                                                          .isFriendMutationInProgress
+                                                      ? null
+                                                      : () {
+                                                          unawaited(
+                                                            _controller
+                                                                .respondToFriendRequest(
+                                                                  requestId: request
+                                                                      .requestId,
+                                                                  accept: false,
+                                                                ),
+                                                          );
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.close_rounded,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'Accept',
+                                                  onPressed:
+                                                      _controller
+                                                          .isFriendMutationInProgress
+                                                      ? null
+                                                      : () {
+                                                          unawaited(
+                                                            _controller
+                                                                .respondToFriendRequest(
+                                                                  requestId: request
+                                                                      .requestId,
+                                                                  accept: true,
+                                                                ),
+                                                          );
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.check_rounded,
+                                                    color: AppColors.success,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         );
       },
-    );
-  }
-
-  Future<void> _showAddFriendDialog() async {
-    final friendIdController = TextEditingController();
-    final nameController = TextEditingController();
-    final endpointController = TextEditingController(
-      text: '203.0.113.7:${LanDiscoveryService.discoveryPort}',
-    );
-
-    final save = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Add Friend'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: friendIdController,
-                  decoration: const InputDecoration(
-                    labelText: 'Friend ID',
-                    hintText: 'LN-ABCDEFG123',
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Name',
-                    hintText: 'My friend laptop',
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                TextField(
-                  controller: endpointController,
-                  decoration: const InputDecoration(
-                    labelText: 'Public endpoint',
-                    hintText: '203.0.113.7:40404',
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Save'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (save != true) {
-      return;
-    }
-
-    await _controller.saveFriend(
-      friendId: friendIdController.text,
-      displayName: nameController.text,
-      endpoint: endpointController.text,
-      isEnabled: true,
     );
   }
 
@@ -450,6 +455,73 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
+  }
+
+  Future<void> _openDeviceActionsMenu(
+    DiscoveredDevice device,
+    Offset? globalPosition,
+  ) async {
+    final isFriend = device.isTrusted;
+    final hasPendingRequest = _controller.hasPendingFriendRequestForDevice(
+      device,
+    );
+
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final position = globalPosition == null || overlay == null
+        ? null
+        : RelativeRect.fromRect(
+            Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+            Offset.zero & overlay.size,
+          );
+
+    final action = await showMenu<String>(
+      context: context,
+      position: position ?? const RelativeRect.fromLTRB(24, 180, 24, 0),
+      items: [
+        const PopupMenuItem<String>(
+          value: 'rename',
+          child: ListTile(
+            leading: Icon(Icons.edit_outlined),
+            title: Text('Rename device'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: isFriend || hasPendingRequest ? null : 'friend',
+          enabled: !isFriend && !hasPendingRequest,
+          child: ListTile(
+            leading: Icon(
+              isFriend
+                  ? Icons.check_circle_outline
+                  : hasPendingRequest
+                  ? Icons.schedule_rounded
+                  : Icons.person_add_alt_1_rounded,
+            ),
+            title: Text(
+              isFriend
+                  ? 'Already friends'
+                  : hasPendingRequest
+                  ? 'Friend request pending'
+                  : 'Add to friends',
+            ),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+
+    if (!mounted || action == null) {
+      return;
+    }
+
+    if (action == 'rename') {
+      await _showRenameDialog(device);
+      return;
+    }
+    if (action == 'friend') {
+      await _controller.sendFriendRequest(device);
+    }
   }
 
   Future<void> _openAddShareMenu() async {
@@ -1023,18 +1095,22 @@ class _DeviceTile extends StatelessWidget {
     required this.device,
     required this.selected,
     required this.onSelect,
-    required this.onRename,
-    required this.onToggleFavorite,
+    required this.onOpenActionsMenu,
   });
 
   final DiscoveredDevice device;
   final bool selected;
   final void Function(String ip) onSelect;
-  final Future<void> Function(DiscoveredDevice device) onRename;
-  final Future<void> Function(DiscoveredDevice device) onToggleFavorite;
+  final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
+  onOpenActionsMenu;
 
   @override
   Widget build(BuildContext context) {
+    final targetPlatform = Theme.of(context).platform;
+    final isDesktopPlatform =
+        targetPlatform == TargetPlatform.windows ||
+        targetPlatform == TargetPlatform.linux ||
+        targetPlatform == TargetPlatform.macOS;
     final isHighlighted = device.isAppDetected;
     final tileBackground = selected
         ? AppColors.brandAccent.withValues(alpha: 0.22)
@@ -1067,37 +1143,48 @@ class _DeviceTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: borderColor),
       ),
-      child: ListTile(
-        minTileHeight: 56,
-        onTap: () => onSelect(device.ip),
-        onLongPress: () => onRename(device),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
-        ),
-        leading: Icon(iconData, color: iconColor),
-        title: Text(
-          device.displayName,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: device.isTrusted
-                  ? 'Убрать из избранного'
-                  : 'Добавить в избранное',
-              onPressed: () => onToggleFavorite(device),
-              icon: Icon(
-                device.isTrusted ? Icons.star : Icons.star_border,
-                color: device.isTrusted
-                    ? AppColors.warning
-                    : AppColors.textSecondary,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onLongPressStart: isDesktopPlatform
+            ? null
+            : (details) =>
+                  unawaited(onOpenActionsMenu(device, details.globalPosition)),
+        onSecondaryTapDown: isDesktopPlatform
+            ? (details) =>
+                  unawaited(onOpenActionsMenu(device, details.globalPosition))
+            : null,
+        child: ListTile(
+          minTileHeight: 56,
+          onTap: () => onSelect(device.ip),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.xs,
+          ),
+          leading: Icon(iconData, color: iconColor),
+          title: Text(
+            device.displayName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          subtitle: Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: device.isTrusted ? 'Friend' : 'Not a friend yet',
+                child: Icon(
+                  device.isTrusted ? Icons.star : Icons.star_border,
+                  color: device.isTrusted
+                      ? AppColors.warning
+                      : AppColors.textSecondary,
+                ),
               ),
-            ),
-            _StatusChip(device: device, selected: selected),
-          ],
+              const SizedBox(width: AppSpacing.xs),
+              _StatusChip(device: device, selected: selected),
+            ],
+          ),
         ),
       ),
     );
