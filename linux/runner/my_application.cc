@@ -144,9 +144,13 @@ static void my_application_setup_tray(MyApplication* self) {
     g_warning("Landa tray icon not found. fallback=network-workgroup");
   }
 
+  // AppIndicator is deprecated upstream but still required for tray support.
+  // Silence the deprecation warning to keep -Werror builds passing.
+  G_GNUC_BEGIN_IGNORE_DEPRECATIONS
   self->tray_indicator = app_indicator_new(
       APPLICATION_ID, tray_icon,
       APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+  G_GNUC_END_IGNORE_DEPRECATIONS
   if (self->tray_indicator == nullptr) {
     g_warning("Failed to create AppIndicator tray instance.");
     return;
@@ -433,5 +437,4 @@ MyApplication* my_application_new() {
                                      "application-id", APPLICATION_ID, "flags",
                                      G_APPLICATION_NON_UNIQUE, nullptr));
 }
-
 
