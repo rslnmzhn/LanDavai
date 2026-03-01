@@ -11,6 +11,7 @@ class AppPresenceEvent {
     required this.ip,
     required this.deviceName,
     required this.observedAt,
+    this.peerId,
     this.operatingSystem,
     this.deviceType,
   });
@@ -18,8 +19,21 @@ class AppPresenceEvent {
   final String ip;
   final String deviceName;
   final DateTime observedAt;
+  final String? peerId;
   final String? operatingSystem;
   final String? deviceType;
+}
+
+class InternetPeerEndpoint {
+  const InternetPeerEndpoint({
+    required this.friendId,
+    required this.host,
+    required this.port,
+  });
+
+  final String friendId;
+  final String host;
+  final int port;
 }
 
 class TransferAnnouncementItem {
@@ -342,6 +356,9 @@ class LanDiscoveryService {
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
   final String _operatingSystem = Platform.operatingSystem;
   late final String _deviceType = _resolveLocalDeviceType();
+  String _localPeerId = '';
+  List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
+  Set<String> _internetPeerIpAllowlist = <String>{};
   static const List<String> _virtualInterfaceHints = <String>[
     'loopback',
     'docker',
@@ -361,6 +378,7 @@ class LanDiscoveryService {
 
   Future<void> start({
     required String deviceName,
+    required String localPeerId,
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -376,6 +394,7 @@ class LanDiscoveryService {
       return;
     }
     _started = true;
+    _localPeerId = localPeerId.trim();
 
     _preferredSourceIp = preferredSourceIp;
     _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
@@ -404,8 +423,10 @@ class LanDiscoveryService {
           datagram = _socket?.receive();
           continue;
         }
+        final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
         if (_preferredSourceIp != null &&
-            !_isSame24Subnet(senderIp, _preferredSourceIp!)) {
+            !_isSame24Subnet(senderIp, _preferredSourceIp!) &&
+            !isAllowedInternetSender) {
           _log('Ignoring packet from foreign subnet: $senderIp');
           datagram = _socket?.receive();
           continue;
@@ -426,7 +447,7 @@ class LanDiscoveryService {
             _socket?.send(
               utf8.encode(response),
               datagram.address,
-              discoveryPort,
+              datagram.port,
             );
             _log('Discover response sent to $senderIp');
           } else if (discoveryPacket.prefix == _responsePrefix) {
@@ -440,6 +461,7 @@ class LanDiscoveryService {
                 deviceName: discoveryPacket.deviceName,
                 operatingSystem: discoveryPacket.operatingSystem,
                 deviceType: discoveryPacket.deviceType,
+                peerId: discoveryPacket.peerId,
                 observedAt: DateTime.now(),
               ),
             );
@@ -608,6 +630,32 @@ class LanDiscoveryService {
       const Duration(seconds: 4),
       (_) => _sendDiscoveryPing(deviceName),
     );
+  }
+
+  void updateInternetPeers(List<InternetPeerEndpoint> peers) {
+    final normalized = <InternetPeerEndpoint>[];
+    final ipAllow = <String>{};
+    for (final peer in peers) {
+      final host = peer.host.trim();
+      final friendId = peer.friendId.trim();
+      if (host.isEmpty || friendId.isEmpty) {
+        continue;
+      }
+      final port = peer.port <= 0 || peer.port > 65535
+          ? discoveryPort
+          : peer.port;
+      final parsedIp = InternetAddress.tryParse(host);
+      if (parsedIp == null || parsedIp.type != InternetAddressType.IPv4) {
+        continue;
+      }
+      normalized.add(
+        InternetPeerEndpoint(friendId: friendId, host: host, port: port),
+      );
+      ipAllow.add(parsedIp.address);
+    }
+    _internetPeers = normalized;
+    _internetPeerIpAllowlist = ipAllow;
+    _log('Internet peers updated. count=');
   }
 
   Future<void> stop() async {
@@ -820,6 +868,15 @@ class LanDiscoveryService {
         _log('Discover packet sent to ${broadcast.address}');
       }
     }
+
+    for (final peer in _internetPeers) {
+      final address = InternetAddress.tryParse(peer.host);
+      if (address == null || address.type != InternetAddressType.IPv4) {
+        continue;
+      }
+      _socket?.send(bytes, address, peer.port);
+      _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
+    }
   }
 
   _DiscoveryPacket? _parseDiscoveryPacket(String message) {
@@ -854,6 +911,7 @@ class LanDiscoveryService {
           deviceName: decodedPayload.deviceName,
           operatingSystem: decodedPayload.operatingSystem,
           deviceType: decodedPayload.deviceType,
+          peerId: decodedPayload.peerId,
         );
       }
 
@@ -872,6 +930,7 @@ class LanDiscoveryService {
       'name': deviceName,
       'os': _operatingSystem,
       'type': _deviceType,
+      'peerId': _localPeerId,
     };
     return base64UrlEncode(utf8.encode(jsonEncode(payload)));
   }
@@ -890,12 +949,14 @@ class LanDiscoveryService {
       final rawName = decoded['name'] as String?;
       final rawOs = decoded['os'] as String?;
       final rawType = decoded['type'] as String?;
+      final rawPeerId = decoded['peerId'] as String?;
       return _DiscoveryIdentity(
         deviceName: (rawName == null || rawName.trim().isEmpty)
             ? 'Unknown device'
             : rawName.trim(),
         operatingSystem: _normalizeDiscoveryText(rawOs),
         deviceType: _normalizeDiscoveryText(rawType),
+        peerId: _normalizeDiscoveryText(rawPeerId),
       );
     } catch (_) {
       return null;
@@ -1321,6 +1382,13 @@ class LanDiscoveryService {
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
   }
 
+  bool _isAllowedInternetSender(String senderIp) {
+    if (_internetPeerIpAllowlist.isEmpty) {
+      return false;
+    }
+    return _internetPeerIpAllowlist.contains(senderIp);
+  }
+
   void _log(String message) {
     developer.log(message, name: 'LanDiscoveryService');
   }
@@ -1357,6 +1425,7 @@ class _DiscoveryPacket {
     required this.deviceName,
     this.operatingSystem,
     this.deviceType,
+    this.peerId,
   });
 
   final String prefix;
@@ -1364,6 +1433,7 @@ class _DiscoveryPacket {
   final String deviceName;
   final String? operatingSystem;
   final String? deviceType;
+  final String? peerId;
 }
 
 class _DiscoveryIdentity {
@@ -1371,11 +1441,13 @@ class _DiscoveryIdentity {
     required this.deviceName,
     this.operatingSystem,
     this.deviceType,
+    this.peerId,
   });
 
   final String deviceName;
   final String? operatingSystem;
   final String? deviceType;
+  final String? peerId;
 }
 
 class _TransferRequestPacket {

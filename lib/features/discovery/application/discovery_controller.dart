@@ -21,9 +21,11 @@ import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../data/device_alias_repository.dart';
+import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
+import '../domain/friend_peer.dart';
 
 class RemoteShareOption {
   RemoteShareOption({
@@ -76,6 +78,7 @@ class DiscoveryController extends ChangeNotifier {
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceAliasRepository deviceAliasRepository,
+    required FriendRepository friendRepository,
     required AppSettingsRepository appSettingsRepository,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
@@ -87,6 +90,7 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceAliasRepository = deviceAliasRepository,
+       _friendRepository = friendRepository,
        _appSettingsRepository = appSettingsRepository,
        _appNotificationService = appNotificationService,
        _transferHistoryRepository = transferHistoryRepository,
@@ -101,6 +105,7 @@ class DiscoveryController extends ChangeNotifier {
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceAliasRepository _deviceAliasRepository;
+  final FriendRepository _friendRepository;
   final AppSettingsRepository _appSettingsRepository;
   final AppNotificationService _appNotificationService;
   final TransferHistoryRepository _transferHistoryRepository;
@@ -128,6 +133,8 @@ class DiscoveryController extends ChangeNotifier {
       <String, TransferReceiveSession>{};
   final List<TransferHistoryRecord> _downloadHistory =
       <TransferHistoryRecord>[];
+  final List<FriendPeer> _friends = <FriendPeer>[];
+  final Map<String, String> _friendNameById = <String, String>{};
   Timer? _scanTimer;
   AppSettings _settings = AppSettings.defaults;
   bool _started = false;
@@ -153,6 +160,8 @@ class DiscoveryController extends ChangeNotifier {
   String? _localIp;
   final String _localName = Platform.localHostname;
   String _localDeviceMac = '02:00:00:00:00:01';
+  String _localPeerId = '';
+  bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
   String? _errorMessage;
   String? _infoMessage;
@@ -192,6 +201,9 @@ class DiscoveryController extends ChangeNotifier {
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
+  String get localPeerId => _localPeerId;
+  bool get isFriendMutationInProgress => _isFriendMutationInProgress;
+  List<FriendPeer> get friends => List<FriendPeer>.unmodifiable(_friends);
   AppSettings get settings => _settings;
   bool get isAppInForeground => _isAppInForeground;
   Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
@@ -251,16 +263,20 @@ class DiscoveryController extends ChangeNotifier {
 
     await _resolveLocalAddress();
     _resolveLocalDeviceMac();
+    _localPeerId = await _friendRepository.loadOrCreateLocalPeerId();
     await _loadAliases();
     await _loadTrustedDevices();
     await _loadSettings();
     await _loadOwnerCaches();
     await _loadDownloadHistory();
+    await _loadFriends();
 
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
+      _syncInternetPeers();
       await _lanDiscoveryService.start(
         deviceName: _localName,
+        localPeerId: _localPeerId,
         onAppDetected: _onAppDetected,
         onTransferRequest: _onTransferRequest,
         onTransferDecision: _onTransferDecision,
@@ -291,6 +307,88 @@ class DiscoveryController extends ChangeNotifier {
   void clearInfoMessage() {
     _infoMessage = null;
     notifyListeners();
+  }
+
+  Future<void> saveFriend({
+    required String friendId,
+    required String displayName,
+    required String endpoint,
+    bool isEnabled = true,
+  }) async {
+    final normalizedId = friendId.trim();
+    if (normalizedId.isEmpty) {
+      _errorMessage = 'Friend ID is required.';
+      notifyListeners();
+      return;
+    }
+
+    final parsedEndpoint = _parseEndpoint(endpoint);
+    if (parsedEndpoint == null) {
+      _errorMessage =
+          'Endpoint must be in IPv4:port format, for example 203.0.113.7:40404.';
+      notifyListeners();
+      return;
+    }
+
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+    try {
+      await _friendRepository.upsertFriend(
+        friendId: normalizedId,
+        displayName: displayName.trim(),
+        endpointHost: parsedEndpoint.$1,
+        endpointPort: parsedEndpoint.$2,
+        isEnabled: isEnabled,
+      );
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      _infoMessage = 'Friend saved: $normalizedId';
+    } catch (error) {
+      _errorMessage = 'Failed to save friend: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeFriend(String friendId) async {
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+    try {
+      await _friendRepository.removeFriend(friendId);
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      _infoMessage = 'Friend removed: ${friendId.trim()}';
+    } catch (error) {
+      _errorMessage = 'Failed to remove friend: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setFriendEnabled({
+    required String friendId,
+    required bool enabled,
+  }) async {
+    try {
+      await _friendRepository.setFriendEnabled(
+        friendId: friendId,
+        isEnabled: enabled,
+      );
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to update friend: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
   }
 
   Future<void> updateBackgroundScanInterval(
@@ -1025,6 +1123,9 @@ class DiscoveryController extends ChangeNotifier {
     final isTrusted =
         normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
+    final friendName = event.peerId == null
+        ? null
+        : _friendNameById[event.peerId!];
     final detectedCategory = _resolveDeviceCategory(
       deviceType: event.deviceType,
       operatingSystem: detectedOs,
@@ -1033,7 +1134,7 @@ class DiscoveryController extends ChangeNotifier {
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
               aliasName: aliasName ?? existing?.aliasName,
-              deviceName: event.deviceName,
+              deviceName: friendName ?? event.deviceName,
               operatingSystem: detectedOs ?? existing?.operatingSystem,
               deviceCategory: detectedCategory,
               isTrusted: isTrusted,
@@ -2110,6 +2211,68 @@ class DiscoveryController extends ChangeNotifier {
     _activeReceiveSessions.clear();
     _lanDiscoveryService.stop();
     super.dispose();
+  }
+
+  Future<void> _loadFriends() async {
+    try {
+      final friends = await _friendRepository.listFriends();
+      _friends
+        ..clear()
+        ..addAll(friends);
+      _friendNameById
+        ..clear()
+        ..addEntries(
+          friends.map(
+            (friend) => MapEntry(friend.friendId, friend.displayName),
+          ),
+        );
+    } catch (error) {
+      _log('Failed to load friends: $error');
+    }
+  }
+
+  void _syncInternetPeers() {
+    final peers = _friends
+        .where((friend) => friend.isEnabled)
+        .map(
+          (friend) => InternetPeerEndpoint(
+            friendId: friend.friendId,
+            host: friend.endpointHost,
+            port: friend.endpointPort,
+          ),
+        )
+        .toList(growable: false);
+    _lanDiscoveryService.updateInternetPeers(peers);
+  }
+
+  (String, int)? _parseEndpoint(String endpoint) {
+    final raw = endpoint.trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+
+    final match = RegExp(
+      r'^([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?::([0-9]{1,5}))?$',
+    ).firstMatch(raw);
+    if (match == null) {
+      return null;
+    }
+
+    final host = match.group(1)!;
+    final parts = host.split('.');
+    if (parts.any((part) {
+      final value = int.tryParse(part);
+      return value == null || value < 0 || value > 255;
+    })) {
+      return null;
+    }
+
+    final parsedPort =
+        int.tryParse(match.group(2) ?? '') ?? LanDiscoveryService.discoveryPort;
+    if (parsedPort <= 0 || parsedPort > 65535) {
+      return null;
+    }
+    return (host, parsedPort);
   }
 
   void _log(String message) {

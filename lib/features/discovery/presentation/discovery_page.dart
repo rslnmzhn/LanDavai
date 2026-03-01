@@ -21,6 +21,7 @@ import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../data/device_alias_repository.dart';
+import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
@@ -49,6 +50,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       deviceAliasRepository: DeviceAliasRepository(
         database: AppDatabase.instance,
       ),
+      friendRepository: FriendRepository(database: AppDatabase.instance),
       appSettingsRepository: settingsRepository,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(
@@ -112,6 +114,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           appBar: AppBar(
             title: const Text('Landa devices'),
             actions: [
+              IconButton(
+                tooltip: 'Friends',
+                onPressed: _openFriendsSheet,
+                icon: const Icon(Icons.group_rounded),
+              ),
               IconButton(
                 tooltip: 'Settings',
                 onPressed: _openSettingsSheet,
@@ -185,6 +192,185 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           ),
         );
       },
+    );
+  }
+
+  Future<void> _openFriendsSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.82,
+          child: AnimatedBuilder(
+            animation: _controller,
+            builder: (context, _) {
+              final friends = _controller.friends;
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Friends (Internet P2P)',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                          ),
+                          FilledButton.icon(
+                            onPressed: _controller.isFriendMutationInProgress
+                                ? null
+                                : _showAddFriendDialog,
+                            icon: const Icon(Icons.person_add_alt_1_rounded),
+                            label: const Text('Add'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      SelectableText(
+                        'Your Friend ID: ${_controller.localPeerId}',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Expanded(
+                        child: friends.isEmpty
+                            ? const Center(child: Text('No friends added yet.'))
+                            : ListView.separated(
+                                itemCount: friends.length,
+                                separatorBuilder: (_, index) =>
+                                    const SizedBox(height: AppSpacing.xs),
+                                itemBuilder: (_, index) {
+                                  final friend = friends[index];
+                                  return Card(
+                                    child: ListTile(
+                                      title: Text(friend.displayName),
+                                      subtitle: Text(
+                                        '${friend.friendId}\\n${friend.endpoint}',
+                                      ),
+                                      isThreeLine: true,
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          IconButton(
+                                            tooltip: friend.isEnabled
+                                                ? 'Disable'
+                                                : 'Enable',
+                                            onPressed: () {
+                                              unawaited(
+                                                _controller.setFriendEnabled(
+                                                  friendId: friend.friendId,
+                                                  enabled: !friend.isEnabled,
+                                                ),
+                                              );
+                                            },
+                                            icon: Icon(
+                                              friend.isEnabled
+                                                  ? Icons.cloud_done_rounded
+                                                  : Icons.cloud_off_rounded,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            tooltip: 'Remove',
+                                            onPressed:
+                                                _controller
+                                                    .isFriendMutationInProgress
+                                                ? null
+                                                : () async {
+                                                    await _controller
+                                                        .removeFriend(
+                                                          friend.friendId,
+                                                        );
+                                                  },
+                                            icon: const Icon(
+                                              Icons.delete_outline_rounded,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddFriendDialog() async {
+    final friendIdController = TextEditingController();
+    final nameController = TextEditingController();
+    final endpointController = TextEditingController(
+      text: '203.0.113.7:${LanDiscoveryService.discoveryPort}',
+    );
+
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Add Friend'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: friendIdController,
+                  decoration: const InputDecoration(
+                    labelText: 'Friend ID',
+                    hintText: 'LN-ABCDEFG123',
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    hintText: 'My friend laptop',
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextField(
+                  controller: endpointController,
+                  decoration: const InputDecoration(
+                    labelText: 'Public endpoint',
+                    hintText: '203.0.113.7:40404',
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (save != true) {
+      return;
+    }
+
+    await _controller.saveFriend(
+      friendId: friendIdController.text,
+      displayName: nameController.text,
+      endpoint: endpointController.text,
+      isEnabled: true,
     );
   }
 
