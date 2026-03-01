@@ -746,6 +746,16 @@ class _TransferProgressCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
+              Text(
+                _formatRateAndEta(
+                  speedBytesPerSecond: controller.uploadSpeedBytesPerSecond,
+                  eta: controller.uploadEta,
+                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
                 value: controller.uploadProgress,
                 minHeight: 6,
@@ -760,6 +770,16 @@ class _TransferProgressCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
+              Text(
+                _formatRateAndEta(
+                  speedBytesPerSecond: controller.downloadSpeedBytesPerSecond,
+                  eta: controller.downloadEta,
+                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
                 value: controller.downloadProgress,
                 minHeight: 6,
@@ -771,6 +791,44 @@ class _TransferProgressCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _formatRateAndEta({
+    required double speedBytesPerSecond,
+    required Duration? eta,
+  }) {
+    final speedText = speedBytesPerSecond > 0
+        ? _formatSpeed(speedBytesPerSecond)
+        : '-- B/s';
+    final etaText = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta)}';
+    return '$speedText • $etaText';
+  }
+
+  String _formatSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+    }
+    final kb = bytesPerSecond / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB/s';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB/s';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(2)} GB/s';
+  }
+
+  String _formatEta(Duration eta) {
+    final totalSeconds = eta.inSeconds.clamp(0, 359999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 }
 

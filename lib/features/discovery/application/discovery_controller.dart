@@ -142,6 +142,12 @@ class DiscoveryController extends ChangeNotifier {
   int _uploadTotalBytes = 0;
   int _downloadReceivedBytes = 0;
   int _downloadTotalBytes = 0;
+  double _uploadSpeedBytesPerSecond = 0;
+  double _downloadSpeedBytesPerSecond = 0;
+  DateTime? _uploadSpeedSampleAt;
+  DateTime? _downloadSpeedSampleAt;
+  int _uploadSpeedSampleBytes = 0;
+  int _downloadSpeedSampleBytes = 0;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
@@ -169,6 +175,20 @@ class DiscoveryController extends ChangeNotifier {
   int get uploadTotalBytes => _uploadTotalBytes;
   int get downloadReceivedBytes => _downloadReceivedBytes;
   int get downloadTotalBytes => _downloadTotalBytes;
+  double get uploadSpeedBytesPerSecond => _uploadSpeedBytesPerSecond;
+  double get downloadSpeedBytesPerSecond => _downloadSpeedBytesPerSecond;
+  Duration? get uploadEta => _estimateEta(
+    totalBytes: _uploadTotalBytes,
+    transferredBytes: _uploadSentBytes,
+    speedBytesPerSecond: _uploadSpeedBytesPerSecond,
+    isActive: isUploading,
+  );
+  Duration? get downloadEta => _estimateEta(
+    totalBytes: _downloadTotalBytes,
+    transferredBytes: _downloadReceivedBytes,
+    speedBytesPerSecond: _downloadSpeedBytesPerSecond,
+    isActive: isDownloading,
+  );
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
@@ -763,6 +783,7 @@ class DiscoveryController extends ChangeNotifier {
       if (approved) {
         _downloadReceivedBytes = 0;
         _downloadTotalBytes = request.totalBytes;
+        _resetDownloadSpeedTracking(currentBytes: 0);
         notifyListeners();
 
         unawaited(
@@ -785,6 +806,7 @@ class DiscoveryController extends ChangeNotifier {
           onProgress: (received, total) {
             _downloadReceivedBytes = received;
             _downloadTotalBytes = total;
+            _updateDownloadSpeedTracking(currentBytes: received);
             notifyListeners();
 
             final nowMs = DateTime.now().millisecondsSinceEpoch;
@@ -1138,6 +1160,7 @@ class DiscoveryController extends ChangeNotifier {
       0,
       (sum, file) => sum + file.sizeBytes,
     );
+    _resetUploadSpeedTracking(currentBytes: 0);
     notifyListeners();
 
     try {
@@ -1149,6 +1172,7 @@ class DiscoveryController extends ChangeNotifier {
         onProgress: (sent, total) {
           _uploadSentBytes = sent;
           _uploadTotalBytes = total;
+          _updateUploadSpeedTracking(currentBytes: sent);
           notifyListeners();
         },
       );
@@ -1156,6 +1180,7 @@ class DiscoveryController extends ChangeNotifier {
           'Transferred ${session.files.length} file(s) to ${session.receiverName}.';
       _errorMessage = null;
       _uploadSentBytes = _uploadTotalBytes;
+      _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
     } catch (error) {
       _errorMessage = 'File transfer failed: $error';
       _log(_errorMessage!);
@@ -1164,6 +1189,7 @@ class DiscoveryController extends ChangeNotifier {
       Future<void>.delayed(const Duration(seconds: 1), () {
         _uploadSentBytes = 0;
         _uploadTotalBytes = 0;
+        _clearUploadSpeedTracking();
         notifyListeners();
       });
       notifyListeners();
@@ -1230,6 +1256,7 @@ class DiscoveryController extends ChangeNotifier {
           'Saved to $rootPath.';
       _errorMessage = null;
       _downloadReceivedBytes = _downloadTotalBytes;
+      _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
     } else {
       _errorMessage =
           'Transfer from ${request.senderName} failed: ${result.message}';
@@ -1244,6 +1271,7 @@ class DiscoveryController extends ChangeNotifier {
     Future<void>.delayed(const Duration(seconds: 1), () {
       _downloadReceivedBytes = 0;
       _downloadTotalBytes = 0;
+      _clearDownloadSpeedTracking();
       notifyListeners();
     });
     notifyListeners();
@@ -1826,6 +1854,114 @@ class DiscoveryController extends ChangeNotifier {
     }
     final localRelative = entry.relativePath.replaceAll('/', p.separator);
     return p.join(cache.rootPath, localRelative);
+  }
+
+  Duration? _estimateEta({
+    required int totalBytes,
+    required int transferredBytes,
+    required double speedBytesPerSecond,
+    required bool isActive,
+  }) {
+    if (!isActive) {
+      return null;
+    }
+    final remaining = totalBytes - transferredBytes;
+    if (remaining <= 0) {
+      return Duration.zero;
+    }
+    if (speedBytesPerSecond <= 1) {
+      return null;
+    }
+    final seconds = (remaining / speedBytesPerSecond).ceil();
+    return Duration(seconds: seconds);
+  }
+
+  void _resetUploadSpeedTracking({required int currentBytes}) {
+    _uploadSpeedBytesPerSecond = 0;
+    _uploadSpeedSampleBytes = currentBytes;
+    _uploadSpeedSampleAt = DateTime.now();
+  }
+
+  void _updateUploadSpeedTracking({required int currentBytes}) {
+    final now = DateTime.now();
+    final sampleAt = _uploadSpeedSampleAt;
+    if (sampleAt == null) {
+      _uploadSpeedSampleAt = now;
+      _uploadSpeedSampleBytes = currentBytes;
+      return;
+    }
+
+    final elapsedMs = now.difference(sampleAt).inMilliseconds;
+    final deltaBytes = currentBytes - _uploadSpeedSampleBytes;
+    if (deltaBytes < 0) {
+      _uploadSpeedSampleAt = now;
+      _uploadSpeedSampleBytes = currentBytes;
+      _uploadSpeedBytesPerSecond = 0;
+      return;
+    }
+    if (elapsedMs < 250 || deltaBytes == 0) {
+      return;
+    }
+
+    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
+    if (_uploadSpeedBytesPerSecond <= 0) {
+      _uploadSpeedBytesPerSecond = instantSpeed;
+    } else {
+      _uploadSpeedBytesPerSecond =
+          (_uploadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
+    }
+    _uploadSpeedSampleAt = now;
+    _uploadSpeedSampleBytes = currentBytes;
+  }
+
+  void _clearUploadSpeedTracking() {
+    _uploadSpeedBytesPerSecond = 0;
+    _uploadSpeedSampleBytes = 0;
+    _uploadSpeedSampleAt = null;
+  }
+
+  void _resetDownloadSpeedTracking({required int currentBytes}) {
+    _downloadSpeedBytesPerSecond = 0;
+    _downloadSpeedSampleBytes = currentBytes;
+    _downloadSpeedSampleAt = DateTime.now();
+  }
+
+  void _updateDownloadSpeedTracking({required int currentBytes}) {
+    final now = DateTime.now();
+    final sampleAt = _downloadSpeedSampleAt;
+    if (sampleAt == null) {
+      _downloadSpeedSampleAt = now;
+      _downloadSpeedSampleBytes = currentBytes;
+      return;
+    }
+
+    final elapsedMs = now.difference(sampleAt).inMilliseconds;
+    final deltaBytes = currentBytes - _downloadSpeedSampleBytes;
+    if (deltaBytes < 0) {
+      _downloadSpeedSampleAt = now;
+      _downloadSpeedSampleBytes = currentBytes;
+      _downloadSpeedBytesPerSecond = 0;
+      return;
+    }
+    if (elapsedMs < 250 || deltaBytes == 0) {
+      return;
+    }
+
+    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
+    if (_downloadSpeedBytesPerSecond <= 0) {
+      _downloadSpeedBytesPerSecond = instantSpeed;
+    } else {
+      _downloadSpeedBytesPerSecond =
+          (_downloadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
+    }
+    _downloadSpeedSampleAt = now;
+    _downloadSpeedSampleBytes = currentBytes;
+  }
+
+  void _clearDownloadSpeedTracking() {
+    _downloadSpeedBytesPerSecond = 0;
+    _downloadSpeedSampleBytes = 0;
+    _downloadSpeedSampleAt = null;
   }
 
   int _compareIp(String a, String b) {
