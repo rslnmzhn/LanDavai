@@ -165,6 +165,17 @@ class TransferStorageService {
     }
   }
 
+  Future<Directory> resolveClipboardDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final support = await getApplicationSupportDirectory();
+    final target = Directory(
+      p.join(support.path, appFolderName, 'clipboard_cache'),
+    );
+    await target.create(recursive: true);
+    return target;
+  }
+
   Future<List<String>> publishToUserDownloads({
     required List<String> sourcePaths,
     required List<String> relativePaths,

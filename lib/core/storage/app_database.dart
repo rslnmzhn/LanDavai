@@ -15,7 +15,8 @@ class AppDatabase {
   static const String transferHistoryTable = 'transfer_history';
   static const String appSettingsTable = 'app_settings';
   static const String friendsTable = 'friends';
-  static const int schemaVersion = 5;
+  static const String clipboardHistoryTable = 'clipboard_history';
+  static const int schemaVersion = 6;
 
   Database? _database;
 
@@ -129,6 +130,7 @@ class AppDatabase {
     await _createTransferHistoryTable(db);
     await _createAppSettingsTable(db);
     await _createFriendsTable(db);
+    await _createClipboardHistoryTable(db);
   }
 
   Future<void> _runMigrations(
@@ -153,6 +155,10 @@ class AppDatabase {
 
     if (oldVersion < 5 && newVersion >= 5) {
       await _createFriendsTable(db);
+    }
+
+    if (oldVersion < 6 && newVersion >= 6) {
+      await _createClipboardHistoryTable(db);
     }
   }
 
@@ -185,6 +191,27 @@ class AppDatabase {
         setting_value TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       )
+    ''');
+  }
+
+  Future<void> _createClipboardHistoryTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $clipboardHistoryTable (
+        id TEXT PRIMARY KEY,
+        entry_type TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        text_value TEXT,
+        image_path TEXT,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_clipboard_history_created
+      ON $clipboardHistoryTable(created_at DESC)
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_clipboard_history_hash
+      ON $clipboardHistoryTable(content_hash)
     ''');
   }
 

@@ -12,6 +12,9 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/data/transfer_history_repository.dart';
+import '../../clipboard/data/clipboard_capture_service.dart';
+import '../../clipboard/data/clipboard_history_repository.dart';
+import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../settings/data/app_settings_repository.dart';
 import '../../settings/domain/app_settings.dart';
@@ -57,6 +60,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       transferHistoryRepository: TransferHistoryRepository(
         database: AppDatabase.instance,
       ),
+      clipboardHistoryRepository: ClipboardHistoryRepository(
+        database: AppDatabase.instance,
+      ),
+      clipboardCaptureService: ClipboardCaptureService(),
       sharedFolderCacheRepository: SharedFolderCacheRepository(
         database: AppDatabase.instance,
       ),
@@ -124,6 +131,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 tooltip: 'Settings',
                 onPressed: _openSettingsSheet,
                 icon: const Icon(Icons.tune_rounded),
+              ),
+              IconButton(
+                tooltip: 'Clipboard',
+                onPressed: _openClipboardSheet,
+                icon: const Icon(Icons.content_paste_rounded),
               ),
               IconButton(
                 tooltip: 'Download history',
@@ -385,6 +397,19 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     );
   }
 
+  Future<void> _openClipboardSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.9,
+          child: ClipboardSheet(controller: _controller),
+        );
+      },
+    );
+  }
+
   Future<void> _openSettingsSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -414,6 +439,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               },
               onPreviewCacheMaxAgeDaysChanged: (value) {
                 unawaited(_controller.setPreviewCacheMaxAgeDays(value));
+              },
+              onClipboardHistoryMaxEntriesChanged: (value) {
+                unawaited(_controller.setClipboardHistoryMaxEntries(value));
               },
             );
           },
