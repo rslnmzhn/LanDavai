@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
@@ -53,10 +55,15 @@ class _OutgoingTransferSession {
 }
 
 class _PreparedTransferFile {
-  _PreparedTransferFile({required this.sourcePath, required this.announcement});
+  _PreparedTransferFile({
+    required this.sourcePath,
+    required this.announcement,
+    this.deleteAfterTransfer = false,
+  });
 
   final String sourcePath;
   final TransferAnnouncementItem announcement;
+  final bool deleteAfterTransfer;
 }
 
 class _PendingRemoteDownloadIntent {
@@ -71,6 +78,24 @@ class _PendingRemoteDownloadIntent {
   final String? ownerMacAddress;
   final String cacheId;
   final DateTime createdAt;
+}
+
+class _PendingRemotePreviewIntent {
+  _PendingRemotePreviewIntent({
+    required this.ownerIp,
+    required this.ownerMacAddress,
+    required this.cacheId,
+    required this.normalizedRelativePath,
+    required this.createdAt,
+    required this.completer,
+  });
+
+  final String ownerIp;
+  final String? ownerMacAddress;
+  final String cacheId;
+  final String normalizedRelativePath;
+  final DateTime createdAt;
+  final Completer<String?> completer;
 }
 
 class IncomingFriendRequest {
@@ -133,6 +158,7 @@ class DiscoveryController extends ChangeNotifier {
        _pathOpener = pathOpener;
 
   static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
+  static const Duration _pendingRemotePreviewTtl = Duration(minutes: 1);
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
 
   final LanDiscoveryService _lanDiscoveryService;
@@ -167,6 +193,10 @@ class DiscoveryController extends ChangeNotifier {
       <String, _PendingOutgoingFriendRequest>{};
   final Map<String, _PendingRemoteDownloadIntent> _pendingRemoteDownloads =
       <String, _PendingRemoteDownloadIntent>{};
+  final Map<String, _PendingRemotePreviewIntent> _pendingRemotePreviewsByKey =
+      <String, _PendingRemotePreviewIntent>{};
+  final Map<String, Completer<String?>> _previewResultCompletersByRequestId =
+      <String, Completer<String?>>{};
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
   final List<TransferHistoryRecord> _downloadHistory =
@@ -774,6 +804,82 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  Future<String?> requestRemoteFilePreview({
+    required String ownerIp,
+    required String ownerName,
+    required String cacheId,
+    required String relativePath,
+  }) async {
+    final normalizedRelativePath = _normalizeTransferPathForMatch(relativePath);
+    if (normalizedRelativePath.isEmpty) {
+      _errorMessage = 'Preview path is empty.';
+      notifyListeners();
+      return null;
+    }
+
+    _purgeExpiredPendingRemotePreviews();
+    final pendingKey = _pendingRemotePreviewKey(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+      normalizedRelativePath: normalizedRelativePath,
+    );
+
+    final existing = _pendingRemotePreviewsByKey[pendingKey];
+    if (existing != null) {
+      return existing.completer.future;
+    }
+
+    final previewCompleter = Completer<String?>();
+    final normalizedOwnerMac = _resolveRemoteOwnerMac(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+    );
+    _pendingRemotePreviewsByKey[pendingKey] = _PendingRemotePreviewIntent(
+      ownerIp: ownerIp,
+      ownerMacAddress: normalizedOwnerMac,
+      cacheId: cacheId,
+      normalizedRelativePath: normalizedRelativePath,
+      createdAt: DateTime.now(),
+      completer: previewCompleter,
+    );
+
+    try {
+      final requestId = _fileHashService.buildStableId(
+        'preview|$ownerIp|$cacheId|$normalizedRelativePath|'
+        '${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
+      );
+      await _lanDiscoveryService.sendDownloadRequest(
+        targetIp: ownerIp,
+        requestId: requestId,
+        requesterName: _localName,
+        requesterMacAddress: _localDeviceMac,
+        cacheId: cacheId,
+        selectedRelativePaths: <String>[relativePath],
+        previewMode: true,
+      );
+
+      final previewPath = await previewCompleter.future.timeout(
+        const Duration(seconds: 45),
+        onTimeout: () => null,
+      );
+      if (previewPath == null) {
+        _errorMessage = 'Preview timed out for $ownerName.';
+        notifyListeners();
+      }
+      return previewPath;
+    } catch (error) {
+      _errorMessage = 'Failed to request preview: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+      if (!previewCompleter.isCompleted) {
+        previewCompleter.complete(null);
+      }
+      return null;
+    } finally {
+      _pendingRemotePreviewsByKey.remove(pendingKey);
+    }
+  }
+
   Future<void> renameDeviceAlias({
     required DiscoveredDevice device,
     required String alias,
@@ -1042,6 +1148,8 @@ class DiscoveryController extends ChangeNotifier {
   Future<void> respondToTransferRequest({
     required String requestId,
     required bool approved,
+    bool forPreview = false,
+    String? previewRelativePath,
   }) async {
     final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
     if (index < 0) {
@@ -1049,19 +1157,51 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final request = _incomingRequests[index];
+    final isPreview = forPreview;
     TransferReceiveSession? receiveSession;
     var skippedExistingCount = 0;
     var itemsToReceive = request.items;
     var expectedBytes = request.totalBytes;
+    var decisionApproved = approved;
+    final previewCompleter = isPreview
+        ? _previewResultCompletersByRequestId.remove(request.requestId)
+        : null;
+
     try {
-      if (approved) {
-        final destinationDirectory = await _transferStorageService
-            .resolveReceiveDirectory(appFolderName: 'Landa');
-        itemsToReceive = await _filterMissingIncomingItems(
-          items: request.items,
-          destinationDirectory: destinationDirectory,
-        );
-        skippedExistingCount = request.items.length - itemsToReceive.length;
+      if (decisionApproved) {
+        final destinationDirectory = isPreview
+            ? await _transferStorageService.resolvePreviewDirectory(
+                appFolderName: 'Landa',
+              )
+            : await _transferStorageService.resolveReceiveDirectory(
+                appFolderName: 'Landa',
+              );
+
+        if (isPreview) {
+          final normalizedPreviewPath = previewRelativePath == null
+              ? null
+              : _normalizeTransferPathForMatch(previewRelativePath);
+          if (normalizedPreviewPath != null &&
+              normalizedPreviewPath.isNotEmpty) {
+            itemsToReceive = request.items
+                .where(
+                  (item) =>
+                      _normalizeTransferPathForMatch(item.fileName) ==
+                      normalizedPreviewPath,
+                )
+                .toList(growable: false);
+          }
+          if (itemsToReceive.isEmpty && request.items.isNotEmpty) {
+            itemsToReceive = <TransferFileManifestItem>[request.items.first];
+          }
+        } else {
+          itemsToReceive = await _filterMissingIncomingItems(
+            items: request.items,
+            destinationDirectory: destinationDirectory,
+          );
+          skippedExistingCount = request.items.length - itemsToReceive.length;
+        }
+
         expectedBytes = itemsToReceive.fold<int>(
           0,
           (sum, item) => sum + item.sizeBytes,
@@ -1073,14 +1213,16 @@ class DiscoveryController extends ChangeNotifier {
           _resetDownloadSpeedTracking(currentBytes: 0);
           notifyListeners();
 
-          unawaited(
-            _transferStorageService.showAndroidDownloadProgressNotification(
-              requestId: request.requestId,
-              senderName: request.senderName,
-              receivedBytes: 0,
-              totalBytes: expectedBytes,
-            ),
-          );
+          if (!isPreview) {
+            unawaited(
+              _transferStorageService.showAndroidDownloadProgressNotification(
+                requestId: request.requestId,
+                senderName: request.senderName,
+                receivedBytes: 0,
+                totalBytes: expectedBytes,
+              ),
+            );
+          }
 
           var lastNotifiedAtMs = 0;
           var lastNotifiedPercent = -1;
@@ -1093,6 +1235,10 @@ class DiscoveryController extends ChangeNotifier {
               _downloadTotalBytes = total;
               _updateDownloadSpeedTracking(currentBytes: received);
               notifyListeners();
+
+              if (isPreview) {
+                return;
+              }
 
               final nowMs = DateTime.now().millisecondsSinceEpoch;
               final percent = total <= 0
@@ -1129,29 +1275,40 @@ class DiscoveryController extends ChangeNotifier {
             _waitForIncomingTransferResult(
               request: request,
               session: receiveSession,
+              acceptedItems: itemsToReceive,
+              persistToUserDownloads: !isPreview,
+              recordHistory: !isPreview,
+              sendCompletionNotification: !isPreview,
+              previewCompleter: previewCompleter,
             ),
           );
         } else {
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
           _clearDownloadSpeedTracking();
+          if (isPreview) {
+            decisionApproved = false;
+            if (previewCompleter != null && !previewCompleter.isCompleted) {
+              previewCompleter.complete(null);
+            }
+          }
         }
       }
 
       await _lanDiscoveryService.sendTransferDecision(
         targetIp: request.senderIp,
         requestId: request.requestId,
-        approved: approved,
+        approved: decisionApproved,
         receiverName: _localName,
-        transferPort: receiveSession?.port,
-        acceptedFileNames: approved
+        transferPort: decisionApproved ? receiveSession?.port : null,
+        acceptedFileNames: decisionApproved
             ? itemsToReceive
                   .map((item) => item.fileName)
                   .toList(growable: false)
             : null,
       );
 
-      if (approved) {
+      if (decisionApproved && !isPreview) {
         final entries = request.items
             .map(
               (item) => SharedFolderIndexEntry(
@@ -1172,8 +1329,12 @@ class DiscoveryController extends ChangeNotifier {
       }
 
       _incomingRequests.removeAt(index);
-      if (!approved) {
-        _infoMessage = 'Transfer declined.';
+      if (!decisionApproved) {
+        _infoMessage = isPreview
+            ? 'Preview request was declined.'
+            : 'Transfer declined.';
+      } else if (isPreview) {
+        _infoMessage = 'Preview accepted. Waiting for file stream...';
       } else if (itemsToReceive.isEmpty) {
         _infoMessage =
             'All requested files already exist locally. Transfer skipped.';
@@ -1190,6 +1351,10 @@ class DiscoveryController extends ChangeNotifier {
         await receiveSession.close();
         _activeReceiveSessions.remove(request.requestId);
       }
+      if (previewCompleter != null && !previewCompleter.isCompleted) {
+        previewCompleter.complete(null);
+      }
+      _previewResultCompletersByRequestId.remove(request.requestId);
       _errorMessage = 'Failed to respond to transfer request: $error';
       _log(_errorMessage!);
       notifyListeners();
@@ -1413,6 +1578,23 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    final previewIntent = _consumePendingRemotePreview(event);
+    if (previewIntent != null) {
+      _previewResultCompletersByRequestId[event.requestId] =
+          previewIntent.completer;
+      _infoMessage = 'Preparing remote preview from ${event.senderName}...';
+      notifyListeners();
+      unawaited(
+        respondToTransferRequest(
+          requestId: event.requestId,
+          approved: true,
+          forPreview: true,
+          previewRelativePath: previewIntent.normalizedRelativePath,
+        ),
+      );
+      return;
+    }
+
     final isFriendSender =
         normalizedSenderMac != null &&
         _trustedDeviceMacs.contains(normalizedSenderMac);
@@ -1555,6 +1737,7 @@ class DiscoveryController extends ChangeNotifier {
     );
     if (filteredFiles.isEmpty) {
       _pendingOutgoingTransfers.remove(event.requestId);
+      unawaited(_cleanupTemporaryOutgoingFiles(session.files));
       _infoMessage =
           '${event.receiverName} already has these files. Transfer skipped.';
       _errorMessage = null;
@@ -1618,6 +1801,7 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
     } finally {
       _pendingOutgoingTransfers.remove(event.requestId);
+      await _cleanupTemporaryOutgoingFiles(session.files);
       Future<void>.delayed(const Duration(seconds: 1), () {
         _uploadSentBytes = 0;
         _uploadTotalBytes = 0;
@@ -1628,78 +1812,122 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  Future<void> _cleanupTemporaryOutgoingFiles(
+    List<TransferSourceFile> files,
+  ) async {
+    for (final file in files) {
+      if (!file.deleteAfterTransfer) {
+        continue;
+      }
+      try {
+        final source = File(file.sourcePath);
+        if (await source.exists()) {
+          await source.delete();
+        }
+      } catch (_) {}
+    }
+  }
+
   Future<void> _waitForIncomingTransferResult({
     required IncomingTransferRequest request,
     required TransferReceiveSession session,
+    required List<TransferFileManifestItem> acceptedItems,
+    required bool persistToUserDownloads,
+    required bool recordHistory,
+    required bool sendCompletionNotification,
+    Completer<String?>? previewCompleter,
   }) async {
     final result = await session.result;
     _activeReceiveSessions.remove(request.requestId);
 
     if (result.success) {
       var savedPaths = result.savedPaths;
-      try {
-        savedPaths = await _transferStorageService.publishToUserDownloads(
-          sourcePaths: result.savedPaths,
-          relativePaths: request.items
-              .map((item) => item.fileName)
-              .toList(growable: false),
-          appFolderName: 'Landa',
-        );
-      } catch (error) {
-        _log('Failed to publish files into user downloads: $error');
+      if (persistToUserDownloads) {
+        try {
+          savedPaths = await _transferStorageService.publishToUserDownloads(
+            sourcePaths: result.savedPaths,
+            relativePaths: acceptedItems
+                .map((item) => item.fileName)
+                .toList(growable: false),
+            appFolderName: 'Landa',
+          );
+        } catch (error) {
+          _log('Failed to publish files into user downloads: $error');
+        }
       }
 
       final rootPath = savedPaths.isEmpty
           ? result.destinationDirectory
           : File(savedPaths.first).parent.path;
 
-      try {
-        await _transferHistoryRepository.addRecord(
-          id: _fileHashService.buildStableId(
-            'download-history|${request.requestId}|'
-            '${DateTime.now().microsecondsSinceEpoch}',
-          ),
-          requestId: request.requestId,
-          direction: TransferHistoryDirection.download,
-          peerName: request.senderName,
-          peerIp: request.senderIp,
-          rootPath: rootPath,
-          savedPaths: savedPaths,
-          fileCount: savedPaths.length,
-          totalBytes: result.totalBytes,
-          status: TransferHistoryStatus.completed,
-          createdAtMs: DateTime.now().millisecondsSinceEpoch,
-        );
-        await _loadDownloadHistory();
-      } catch (error) {
-        _log('Failed to persist transfer history: $error');
+      if (recordHistory) {
+        try {
+          await _transferHistoryRepository.addRecord(
+            id: _fileHashService.buildStableId(
+              'download-history|${request.requestId}|'
+              '${DateTime.now().microsecondsSinceEpoch}',
+            ),
+            requestId: request.requestId,
+            direction: TransferHistoryDirection.download,
+            peerName: request.senderName,
+            peerIp: request.senderIp,
+            rootPath: rootPath,
+            savedPaths: savedPaths,
+            fileCount: savedPaths.length,
+            totalBytes: result.totalBytes,
+            status: TransferHistoryStatus.completed,
+            createdAtMs: DateTime.now().millisecondsSinceEpoch,
+          );
+          await _loadDownloadHistory();
+        } catch (error) {
+          _log('Failed to persist transfer history: $error');
+        }
       }
 
-      unawaited(
-        _transferStorageService.showAndroidDownloadCompletedNotification(
-          requestId: request.requestId,
-          savedPaths: savedPaths,
-          directoryPath: rootPath,
-        ),
-      );
+      if (sendCompletionNotification) {
+        unawaited(
+          _transferStorageService.showAndroidDownloadCompletedNotification(
+            requestId: request.requestId,
+            savedPaths: savedPaths,
+            directoryPath: rootPath,
+          ),
+        );
+      }
 
       final hashStatus = result.hashVerified ? ' Hash verified.' : '';
-      _infoMessage =
-          'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-          'Saved to $rootPath.$hashStatus';
+      if (previewCompleter != null) {
+        final previewPath = savedPaths.isEmpty ? null : savedPaths.first;
+        if (!previewCompleter.isCompleted) {
+          previewCompleter.complete(previewPath);
+        }
+        _infoMessage = previewPath == null
+            ? 'Preview received but file is unavailable.'
+            : 'Preview ready: ${p.basename(previewPath)}.$hashStatus';
+      } else {
+        _infoMessage =
+            'Received ${savedPaths.length} file(s) from ${request.senderName}. '
+            'Saved to $rootPath.$hashStatus';
+      }
+
       _errorMessage = null;
       _downloadReceivedBytes = _downloadTotalBytes;
       _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
     } else {
-      _errorMessage =
-          'Transfer from ${request.senderName} failed: ${result.message}';
+      if (previewCompleter != null && !previewCompleter.isCompleted) {
+        previewCompleter.complete(null);
+      }
+      _errorMessage = previewCompleter != null
+          ? 'Preview from ${request.senderName} failed: ${result.message}'
+          : 'Transfer from ${request.senderName} failed: ${result.message}';
       _log(_errorMessage!);
-      unawaited(
-        _transferStorageService.showAndroidDownloadFailedNotification(
-          requestId: request.requestId,
-          message: result.message,
-        ),
-      );
+      if (sendCompletionNotification) {
+        unawaited(
+          _transferStorageService.showAndroidDownloadFailedNotification(
+            requestId: request.requestId,
+            message: result.message,
+          ),
+        );
+      }
     }
     Future<void>.delayed(const Duration(seconds: 1), () {
       _downloadReceivedBytes = 0;
@@ -2032,7 +2260,8 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    if (_settings.downloadAttemptNotificationsEnabled) {
+    final isPreviewRequest = event.previewMode;
+    if (!isPreviewRequest && _settings.downloadAttemptNotificationsEnabled) {
       unawaited(
         _appNotificationService.showDownloadAttemptNotification(
           requesterName: event.requesterName,
@@ -2041,31 +2270,43 @@ class DiscoveryController extends ChangeNotifier {
         ),
       );
     }
-    _infoMessage =
-        'Download request from ${event.requesterName} for "${cache.displayName}".';
+
+    _infoMessage = isPreviewRequest
+        ? 'Preview request from ${event.requesterName}.'
+        : 'Download request from ${event.requesterName} for "${cache.displayName}".';
     notifyListeners();
 
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
         : event.selectedRelativePaths.toSet();
-    final preparedFiles = await _buildTransferFilesForCache(
-      cache,
-      relativePathFilter: relativePathFilter,
-    );
+    final preparedFiles = isPreviewRequest
+        ? await _buildCompressedPreviewFilesForCache(
+            cache,
+            relativePathFilter: relativePathFilter,
+          )
+        : await _buildTransferFilesForCache(
+            cache,
+            relativePathFilter: relativePathFilter,
+          );
+
     if (preparedFiles.isEmpty) {
       _log(
-        'Download request from ${event.requesterIp} ignored. '
+        '${isPreviewRequest ? 'Preview' : 'Download'} request from ${event.requesterIp} ignored. '
         'No readable files in cacheId=${event.cacheId}',
       );
       return;
     }
+
     final items = preparedFiles
         .map((prepared) => prepared.announcement)
         .toList(growable: false);
 
-    final requestId = _fileHashService.buildStableId(
-      'download-share|${event.requestId}|${event.requesterIp}|${cache.cacheId}',
-    );
+    final requestId = isPreviewRequest
+        ? event.requestId
+        : _fileHashService.buildStableId(
+            'download-share|${event.requestId}|${event.requesterIp}|${cache.cacheId}',
+          );
+
     try {
       _pendingOutgoingTransfers[requestId] = _OutgoingTransferSession(
         receiverName: event.requesterName,
@@ -2076,27 +2317,37 @@ class DiscoveryController extends ChangeNotifier {
                 fileName: prepared.announcement.fileName,
                 sizeBytes: prepared.announcement.sizeBytes,
                 sha256: prepared.announcement.sha256,
+                deleteAfterTransfer: prepared.deleteAfterTransfer,
               ),
             )
             .toList(growable: false),
       );
+
       await _lanDiscoveryService.sendTransferRequest(
         targetIp: event.requesterIp,
         requestId: requestId,
         senderName: _localName,
         senderMacAddress: _localDeviceMac,
         sharedCacheId: cache.cacheId,
-        sharedLabel: cache.displayName,
+        sharedLabel: isPreviewRequest
+            ? 'Preview: ${cache.displayName}'
+            : cache.displayName,
         items: items,
       );
     } catch (error) {
-      _pendingOutgoingTransfers.remove(requestId);
-      _log('Failed to prepare download-share transfer: $error');
+      final pending = _pendingOutgoingTransfers.remove(requestId);
+      if (pending != null) {
+        unawaited(_cleanupTemporaryOutgoingFiles(pending.files));
+      }
+      _log(
+        'Failed to prepare ${isPreviewRequest ? 'preview' : 'download-share'} transfer: $error',
+      );
       return;
     }
+
     _log(
       'Transfer request sent for cache ${cache.cacheId} to ${event.requesterIp}. '
-      'items=${items.length}',
+      'items=${items.length} preview=$isPreviewRequest',
     );
   }
 
@@ -2257,6 +2508,256 @@ class DiscoveryController extends ChangeNotifier {
 
   Duration get _activeAutoRefreshInterval {
     return _settings.backgroundScanInterval.duration;
+  }
+
+  static const Set<String> _previewImageExtensions = <String>{
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.heic',
+    '.heif',
+    '.tif',
+    '.tiff',
+  };
+  static const Set<String> _previewVideoExtensions = <String>{
+    '.mp4',
+    '.mov',
+    '.mkv',
+    '.avi',
+    '.webm',
+    '.m4v',
+    '.3gp',
+    '.mpeg',
+    '.mpg',
+  };
+  static const Set<String> _previewTextExtensions = <String>{
+    '.txt',
+    '.md',
+    '.log',
+    '.json',
+    '.yaml',
+    '.yml',
+    '.csv',
+    '.xml',
+  };
+
+  Future<List<_PreparedTransferFile>> _buildCompressedPreviewFilesForCache(
+    SharedFolderCacheRecord cache, {
+    Set<String>? relativePathFilter,
+  }) async {
+    final entries = await _sharedFolderCacheRepository.readIndexEntries(
+      cache.cacheId,
+    );
+    final normalizedFilter = relativePathFilter
+        ?.map(_normalizeTransferPathForMatch)
+        .toSet();
+
+    final result = <_PreparedTransferFile>[];
+    for (final entry in entries) {
+      if (normalizedFilter != null &&
+          !normalizedFilter.contains(
+            _normalizeTransferPathForMatch(entry.relativePath),
+          )) {
+        continue;
+      }
+      final sourcePath = _resolveCacheFilePath(cache: cache, entry: entry);
+      if (sourcePath == null) {
+        continue;
+      }
+      final preview = await _buildCompressedPreviewForEntry(
+        cache: cache,
+        entry: entry,
+        sourcePath: sourcePath,
+      );
+      if (preview != null) {
+        result.add(preview);
+      }
+    }
+    return result;
+  }
+
+  Future<_PreparedTransferFile?> _buildCompressedPreviewForEntry({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+    required String sourcePath,
+  }) async {
+    final file = File(sourcePath);
+    if (!await file.exists()) {
+      return null;
+    }
+
+    final ext = p.extension(entry.relativePath).toLowerCase();
+    if (_previewImageExtensions.contains(ext)) {
+      try {
+        final bytes = await file.readAsBytes();
+        final decoded = img.decodeImage(bytes);
+        if (decoded != null) {
+          final longest = math.max(decoded.width, decoded.height);
+          final resized = longest > 960
+              ? img.copyResize(
+                  decoded,
+                  width: decoded.width >= decoded.height ? 960 : null,
+                  height: decoded.height > decoded.width ? 960 : null,
+                )
+              : decoded;
+          final compressed = Uint8List.fromList(
+            img.encodeJpg(resized, quality: 52),
+          );
+          return _writeCompressedPreviewArtifact(
+            originalRelativePath: entry.relativePath,
+            outputExtension: '.jpg',
+            contentBytes: compressed,
+          );
+        }
+      } catch (_) {}
+    }
+
+    if (_previewVideoExtensions.contains(ext)) {
+      try {
+        Uint8List? bytes;
+        final thumbnailId = entry.thumbnailId;
+        if (thumbnailId != null && thumbnailId.trim().isNotEmpty) {
+          bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
+            cacheId: cache.cacheId,
+            thumbnailId: thumbnailId,
+          );
+        }
+        if (bytes != null && bytes.isNotEmpty) {
+          final decoded = img.decodeImage(bytes);
+          final compressed = decoded == null
+              ? bytes
+              : Uint8List.fromList(img.encodeJpg(decoded, quality: 50));
+          return _writeCompressedPreviewArtifact(
+            originalRelativePath: entry.relativePath,
+            outputExtension: '.jpg',
+            contentBytes: compressed,
+            suffix: 'video-preview',
+          );
+        }
+      } catch (_) {}
+      return _writeCompressedPreviewArtifact(
+        originalRelativePath: entry.relativePath,
+        outputExtension: '.txt',
+        contentBytes: utf8.encode(
+          'Video preview is unavailable on sender side for this file.',
+        ),
+        suffix: 'video-preview',
+      );
+    }
+
+    if (_previewTextExtensions.contains(ext)) {
+      try {
+        final bytes = await file.readAsBytes();
+        final maxBytes = math.min(bytes.length, 64 * 1024);
+        final snippet = utf8.decode(
+          bytes.sublist(0, maxBytes),
+          allowMalformed: true,
+        );
+        final previewText = bytes.length > maxBytes
+            ? '$snippet\n\n--- Preview truncated ---'
+            : snippet;
+        return _writeCompressedPreviewArtifact(
+          originalRelativePath: entry.relativePath,
+          outputExtension: '.txt',
+          contentBytes: utf8.encode(previewText),
+          suffix: 'text-preview',
+        );
+      } catch (_) {}
+    }
+
+    if (ext == '.pdf') {
+      final previewText =
+          'PDF preview is available after download. Compressed text preview is not generated for this file yet.';
+      return _writeCompressedPreviewArtifact(
+        originalRelativePath: entry.relativePath,
+        outputExtension: '.txt',
+        contentBytes: utf8.encode(previewText),
+        suffix: 'pdf-preview',
+      );
+    }
+
+    return _writeCompressedPreviewArtifact(
+      originalRelativePath: entry.relativePath,
+      outputExtension: '.txt',
+      contentBytes: utf8.encode(
+        'Preview is not available for this file type yet.',
+      ),
+      suffix: 'preview-note',
+    );
+  }
+
+  Future<_PreparedTransferFile?> _writeCompressedPreviewArtifact({
+    required String originalRelativePath,
+    required String outputExtension,
+    required List<int> contentBytes,
+    String suffix = 'preview',
+  }) async {
+    if (contentBytes.isEmpty) {
+      return null;
+    }
+
+    final directory = await _transferStorageService.resolvePreviewDirectory(
+      appFolderName: 'Landa',
+    );
+    final relativeName = _buildPreviewRelativeName(
+      originalRelativePath,
+      outputExtension: outputExtension,
+      suffix: suffix,
+    );
+    final token = _fileHashService.buildStableId(
+      'preview-artifact|$relativeName|$suffix|${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final outputPath = p.join(directory.path, '$token$outputExtension');
+    final outputFile = File(outputPath);
+    await outputFile.create(recursive: true);
+    await outputFile.writeAsBytes(contentBytes, flush: true);
+
+    final stat = await outputFile.stat();
+    final sha = await _fileHashService.computeSha256ForPath(outputPath);
+    return _PreparedTransferFile(
+      sourcePath: outputPath,
+      announcement: TransferAnnouncementItem(
+        fileName: relativeName,
+        sizeBytes: stat.size,
+        sha256: sha,
+      ),
+      deleteAfterTransfer: true,
+    );
+  }
+
+  String _buildPreviewRelativeName(
+    String originalRelativePath, {
+    required String outputExtension,
+    required String suffix,
+  }) {
+    final normalized = originalRelativePath.replaceAll('\\', '/');
+    final dir = p.dirname(normalized);
+    final base = p.basenameWithoutExtension(normalized);
+    final safeBase = _safePreviewSegment(base);
+    final fileName = '$safeBase.$suffix$outputExtension';
+    if (dir == '.' || dir.isEmpty) {
+      return fileName;
+    }
+    final safeDir = dir
+        .split('/')
+        .where((segment) => segment.isNotEmpty && segment != '.')
+        .map(_safePreviewSegment)
+        .toList(growable: false);
+    if (safeDir.isEmpty) {
+      return fileName;
+    }
+    return [...safeDir, fileName].join('/');
+  }
+
+  String _safePreviewSegment(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return 'file';
+    }
+    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
   }
 
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
@@ -2516,6 +3017,18 @@ class DiscoveryController extends ChangeNotifier {
       unawaited(session.close());
     }
     _activeReceiveSessions.clear();
+    for (final pending in _pendingRemotePreviewsByKey.values) {
+      if (!pending.completer.isCompleted) {
+        pending.completer.complete(null);
+      }
+    }
+    _pendingRemotePreviewsByKey.clear();
+    for (final completer in _previewResultCompletersByRequestId.values) {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+      }
+    }
+    _previewResultCompletersByRequestId.clear();
     _lanDiscoveryService.stop();
     super.dispose();
   }
@@ -2619,6 +3132,18 @@ class DiscoveryController extends ChangeNotifier {
     return '$ownerIp|$cacheId';
   }
 
+  String _pendingRemotePreviewKey({
+    required String ownerIp,
+    required String cacheId,
+    required String normalizedRelativePath,
+  }) {
+    return '$ownerIp|$cacheId|$normalizedRelativePath';
+  }
+
+  String _normalizeTransferPathForMatch(String value) {
+    return value.replaceAll('\\', '/').trim().toLowerCase();
+  }
+
   String? _resolveRemoteOwnerMac({
     required String ownerIp,
     required String cacheId,
@@ -2663,6 +3188,52 @@ class DiscoveryController extends ChangeNotifier {
     }
     _pendingRemoteDownloads.remove(matchedKey);
     return true;
+  }
+
+  _PendingRemotePreviewIntent? _consumePendingRemotePreview(
+    TransferRequestEvent event,
+  ) {
+    _purgeExpiredPendingRemotePreviews();
+    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
+      event.senderMacAddress,
+    );
+
+    String? matchedKey;
+    for (final entry in _pendingRemotePreviewsByKey.entries) {
+      final pending = entry.value;
+      if (pending.cacheId != event.sharedCacheId) {
+        continue;
+      }
+
+      final ipMatches = pending.ownerIp == event.senderIp;
+      final macMatches =
+          pending.ownerMacAddress != null &&
+          normalizedSenderMac != null &&
+          pending.ownerMacAddress == normalizedSenderMac;
+      if (!ipMatches && !macMatches) {
+        continue;
+      }
+
+      matchedKey = entry.key;
+      break;
+    }
+
+    if (matchedKey == null) {
+      return null;
+    }
+    return _pendingRemotePreviewsByKey.remove(matchedKey);
+  }
+
+  void _purgeExpiredPendingRemotePreviews() {
+    final now = DateTime.now();
+    _pendingRemotePreviewsByKey.removeWhere((_, pending) {
+      final expired =
+          now.difference(pending.createdAt) > _pendingRemotePreviewTtl;
+      if (expired && !pending.completer.isCompleted) {
+        pending.completer.complete(null);
+      }
+      return expired;
+    });
   }
 
   void _purgeExpiredPendingRemoteDownloads() {

@@ -34,6 +34,17 @@ class TransferStorageService {
     return target;
   }
 
+  Future<Directory> resolvePreviewDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final support = await getApplicationSupportDirectory();
+    final target = Directory(
+      p.join(support.path, appFolderName, 'preview_cache'),
+    );
+    await target.create(recursive: true);
+    return target;
+  }
+
   Future<List<String>> publishToUserDownloads({
     required List<String> sourcePaths,
     required List<String> relativePaths,
