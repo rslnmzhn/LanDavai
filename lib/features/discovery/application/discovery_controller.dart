@@ -527,6 +527,22 @@ class DiscoveryController extends ChangeNotifier {
     await _saveSettings(_settings.copyWith(minimizeToTrayOnClose: enabled));
   }
 
+  Future<void> setPreviewCacheMaxSizeGb(int value) async {
+    final normalized = value < 0 ? 0 : value;
+    if (_settings.previewCacheMaxSizeGb == normalized) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(previewCacheMaxSizeGb: normalized));
+  }
+
+  Future<void> setPreviewCacheMaxAgeDays(int value) async {
+    final normalized = value < 0 ? 0 : value;
+    if (_settings.previewCacheMaxAgeDays == normalized) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(previewCacheMaxAgeDays: normalized));
+  }
+
   void setAppForegroundState(bool isForeground) {
     if (_isAppInForeground == isForeground) {
       return;
@@ -817,6 +833,7 @@ class DiscoveryController extends ChangeNotifier {
       return null;
     }
 
+    await _cleanupPreviewCacheBySettings();
     _purgeExpiredPendingRemotePreviews();
     final pendingKey = _pendingRemotePreviewKey(
       ownerIp: ownerIp,
@@ -2471,8 +2488,11 @@ class DiscoveryController extends ChangeNotifier {
       _log(
         'Loaded settings. background=${_settings.backgroundScanInterval.label}, '
         'notifyDownloadAttempts=${_settings.downloadAttemptNotificationsEnabled}, '
-        'trayOnClose=${_settings.minimizeToTrayOnClose}',
+        'trayOnClose=${_settings.minimizeToTrayOnClose}, '
+        'previewMaxSizeGb=${_settings.previewCacheMaxSizeGb}, '
+        'previewMaxAgeDays=${_settings.previewCacheMaxAgeDays}',
       );
+      unawaited(_cleanupPreviewCacheBySettings());
     } catch (error) {
       _log('Failed to load app settings: $error');
       _settings = AppSettings.defaults;
@@ -2485,6 +2505,7 @@ class DiscoveryController extends ChangeNotifier {
       _settings = settings;
       _errorMessage = null;
       _restartAutoRefreshTimer();
+      unawaited(_cleanupPreviewCacheBySettings());
       notifyListeners();
     } catch (error) {
       _errorMessage = 'Failed to save app settings: $error';
@@ -2508,6 +2529,25 @@ class DiscoveryController extends ChangeNotifier {
 
   Duration get _activeAutoRefreshInterval {
     return _settings.backgroundScanInterval.duration;
+  }
+
+  Future<void> _cleanupPreviewCacheBySettings() async {
+    try {
+      final result = await _transferStorageService.cleanupPreviewCache(
+        maxSizeGb: _settings.previewCacheMaxSizeGb,
+        maxAgeDays: _settings.previewCacheMaxAgeDays,
+        appFolderName: 'Landa',
+      );
+      if (result.filesDeleted > 0) {
+        _log(
+          'Preview cache cleanup complete. '
+          'deleted=${result.filesDeleted} freedBytes=${result.bytesFreed} '
+          'remaining=${result.filesRemaining} remainingBytes=${result.remainingBytes}',
+        );
+      }
+    } catch (error) {
+      _log('Failed to cleanup preview cache: $error');
+    }
   }
 
   static const Set<String> _previewImageExtensions = <String>{

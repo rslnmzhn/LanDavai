@@ -62,22 +62,30 @@ class AppSettings {
     required this.backgroundScanInterval,
     required this.downloadAttemptNotificationsEnabled,
     required this.minimizeToTrayOnClose,
+    required this.previewCacheMaxSizeGb,
+    required this.previewCacheMaxAgeDays,
   });
 
   final BackgroundScanIntervalOption backgroundScanInterval;
   final bool downloadAttemptNotificationsEnabled;
   final bool minimizeToTrayOnClose;
+  final int previewCacheMaxSizeGb;
+  final int previewCacheMaxAgeDays;
 
   static const AppSettings defaults = AppSettings(
     backgroundScanInterval: BackgroundScanIntervalOption.fiveMinutes,
     downloadAttemptNotificationsEnabled: true,
     minimizeToTrayOnClose: true,
+    previewCacheMaxSizeGb: 2,
+    previewCacheMaxAgeDays: 30,
   );
 
   AppSettings copyWith({
     BackgroundScanIntervalOption? backgroundScanInterval,
     bool? downloadAttemptNotificationsEnabled,
     bool? minimizeToTrayOnClose,
+    int? previewCacheMaxSizeGb,
+    int? previewCacheMaxAgeDays,
   }) {
     return AppSettings(
       backgroundScanInterval:
@@ -87,6 +95,10 @@ class AppSettings {
           this.downloadAttemptNotificationsEnabled,
       minimizeToTrayOnClose:
           minimizeToTrayOnClose ?? this.minimizeToTrayOnClose,
+      previewCacheMaxSizeGb:
+          previewCacheMaxSizeGb ?? this.previewCacheMaxSizeGb,
+      previewCacheMaxAgeDays:
+          previewCacheMaxAgeDays ?? this.previewCacheMaxAgeDays,
     );
   }
 }

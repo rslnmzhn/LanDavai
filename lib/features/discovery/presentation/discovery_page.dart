@@ -409,6 +409,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   _desktopWindowService.setMinimizeToTrayEnabled(enabled),
                 );
               },
+              onPreviewCacheMaxSizeGbChanged: (value) {
+                unawaited(_controller.setPreviewCacheMaxSizeGb(value));
+              },
+              onPreviewCacheMaxAgeDaysChanged: (value) {
+                unawaited(_controller.setPreviewCacheMaxAgeDays(value));
+              },
             );
           },
         );
