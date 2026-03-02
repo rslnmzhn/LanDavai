@@ -1,3 +1,5 @@
+enum DeviceCategory { phone, pc, unknown }
+
 class DiscoveredDevice {
   DiscoveredDevice({
     required this.ip,
@@ -5,6 +7,8 @@ class DiscoveredDevice {
     this.macAddress,
     this.aliasName,
     this.deviceName,
+    this.operatingSystem,
+    this.deviceCategory = DeviceCategory.unknown,
     this.isTrusted = false,
     this.isAppDetected = false,
     this.isReachable = false,
@@ -14,6 +18,8 @@ class DiscoveredDevice {
   final String? macAddress;
   final String? aliasName;
   final String? deviceName;
+  final String? operatingSystem;
+  final DeviceCategory deviceCategory;
   final bool isTrusted;
   final bool isAppDetected;
   final bool isReachable;
@@ -25,6 +31,8 @@ class DiscoveredDevice {
     Object? macAddress = _unset,
     Object? aliasName = _unset,
     Object? deviceName = _unset,
+    Object? operatingSystem = _unset,
+    DeviceCategory? deviceCategory,
     bool? isTrusted,
     bool? isAppDetected,
     bool? isReachable,
@@ -41,6 +49,10 @@ class DiscoveredDevice {
       deviceName: identical(deviceName, _unset)
           ? this.deviceName
           : deviceName as String?,
+      operatingSystem: identical(operatingSystem, _unset)
+          ? this.operatingSystem
+          : operatingSystem as String?,
+      deviceCategory: deviceCategory ?? this.deviceCategory,
       isTrusted: isTrusted ?? this.isTrusted,
       isAppDetected: isAppDetected ?? this.isAppDetected,
       isReachable: isReachable ?? this.isReachable,

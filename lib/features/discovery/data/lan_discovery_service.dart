@@ -11,11 +11,29 @@ class AppPresenceEvent {
     required this.ip,
     required this.deviceName,
     required this.observedAt,
+    this.peerId,
+    this.operatingSystem,
+    this.deviceType,
   });
 
   final String ip;
   final String deviceName;
   final DateTime observedAt;
+  final String? peerId;
+  final String? operatingSystem;
+  final String? deviceType;
+}
+
+class InternetPeerEndpoint {
+  const InternetPeerEndpoint({
+    required this.friendId,
+    required this.host,
+    required this.port,
+  });
+
+  final String friendId;
+  final String host;
+  final int port;
 }
 
 class TransferAnnouncementItem {
@@ -83,6 +101,7 @@ class TransferDecisionEvent {
     required this.receiverIp,
     required this.transferPort,
     required this.observedAt,
+    this.acceptedFileNames,
   });
 
   final String requestId;
@@ -90,6 +109,41 @@ class TransferDecisionEvent {
   final String receiverName;
   final String receiverIp;
   final int? transferPort;
+  final DateTime observedAt;
+  final List<String>? acceptedFileNames;
+}
+
+class FriendRequestEvent {
+  const FriendRequestEvent({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final String requesterMacAddress;
+  final DateTime observedAt;
+}
+
+class FriendResponseEvent {
+  const FriendResponseEvent({
+    required this.requestId,
+    required this.responderIp,
+    required this.responderName,
+    required this.responderMacAddress,
+    required this.accepted,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String responderIp;
+  final String responderName;
+  final String responderMacAddress;
+  final bool accepted;
   final DateTime observedAt;
 }
 
@@ -317,6 +371,8 @@ class LanDiscoveryService {
   static const String _responsePrefix = 'LANDA_HERE_V1';
   static const String _transferRequestPrefix = 'LANDA_TRANSFER_REQUEST_V1';
   static const String _transferDecisionPrefix = 'LANDA_TRANSFER_DECISION_V1';
+  static const String _friendRequestPrefix = 'LANDA_FRIEND_REQUEST_V1';
+  static const String _friendResponsePrefix = 'LANDA_FRIEND_RESPONSE_V1';
   static const String _shareQueryPrefix = 'LANDA_SHARE_QUERY_V1';
   static const String _shareCatalogPrefix = 'LANDA_SHARE_CATALOG_V1';
   static const String _downloadRequestPrefix = 'LANDA_DOWNLOAD_REQUEST_V1';
@@ -334,6 +390,11 @@ class LanDiscoveryService {
   String? _preferredSourceIp;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
+  final String _operatingSystem = Platform.operatingSystem;
+  late final String _deviceType = _resolveLocalDeviceType();
+  String _localPeerId = '';
+  List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
+  Set<String> _internetPeerIpAllowlist = <String>{};
   static const List<String> _virtualInterfaceHints = <String>[
     'loopback',
     'docker',
@@ -353,9 +414,12 @@ class LanDiscoveryService {
 
   Future<void> start({
     required String deviceName,
+    required String localPeerId,
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
+    void Function(FriendRequestEvent event)? onFriendRequest,
+    void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
@@ -368,6 +432,7 @@ class LanDiscoveryService {
       return;
     }
     _started = true;
+    _localPeerId = localPeerId.trim();
 
     _preferredSourceIp = preferredSourceIp;
     _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
@@ -396,8 +461,10 @@ class LanDiscoveryService {
           datagram = _socket?.receive();
           continue;
         }
+        final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
         if (_preferredSourceIp != null &&
-            !_isSame24Subnet(senderIp, _preferredSourceIp!)) {
+            !_isSame24Subnet(senderIp, _preferredSourceIp!) &&
+            !isAllowedInternetSender) {
           _log('Ignoring packet from foreign subnet: $senderIp');
           datagram = _socket?.receive();
           continue;
@@ -413,11 +480,12 @@ class LanDiscoveryService {
 
           if (discoveryPacket.prefix == _discoverPrefix) {
             _log('Discover request from $senderIp');
-            final response = '$_responsePrefix|$_instanceId|$deviceName';
+            final responsePayload = _encodeDiscoveryPayload(deviceName);
+            final response = '$_responsePrefix|$_instanceId|$responsePayload';
             _socket?.send(
               utf8.encode(response),
               datagram.address,
-              discoveryPort,
+              datagram.port,
             );
             _log('Discover response sent to $senderIp');
           } else if (discoveryPacket.prefix == _responsePrefix) {
@@ -429,6 +497,9 @@ class LanDiscoveryService {
               AppPresenceEvent(
                 ip: senderIp,
                 deviceName: discoveryPacket.deviceName,
+                operatingSystem: discoveryPacket.operatingSystem,
+                deviceType: discoveryPacket.deviceType,
+                peerId: discoveryPacket.peerId,
                 observedAt: DateTime.now(),
               ),
             );
@@ -480,6 +551,54 @@ class LanDiscoveryService {
               receiverName: transferDecision.receiverName,
               receiverIp: senderIp,
               transferPort: transferDecision.transferPort,
+              observedAt: DateTime.now(),
+              acceptedFileNames: transferDecision.acceptedFileNames,
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
+
+        final friendRequest = _parseFriendRequestPacket(message);
+        if (friendRequest != null) {
+          if (friendRequest.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          _log(
+            'Friend request received from $senderIp '
+            '(requestId=${friendRequest.requestId})',
+          );
+          onFriendRequest?.call(
+            FriendRequestEvent(
+              requestId: friendRequest.requestId,
+              requesterIp: senderIp,
+              requesterName: friendRequest.requesterName,
+              requesterMacAddress: friendRequest.requesterMacAddress,
+              observedAt: DateTime.now(),
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
+
+        final friendResponse = _parseFriendResponsePacket(message);
+        if (friendResponse != null) {
+          if (friendResponse.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          _log(
+            'Friend response received from $senderIp '
+            '(requestId=${friendResponse.requestId}, accepted=${friendResponse.accepted})',
+          );
+          onFriendResponse?.call(
+            FriendResponseEvent(
+              requestId: friendResponse.requestId,
+              responderIp: senderIp,
+              responderName: friendResponse.responderName,
+              responderMacAddress: friendResponse.responderMacAddress,
+              accepted: friendResponse.accepted,
               observedAt: DateTime.now(),
             ),
           );
@@ -598,6 +717,32 @@ class LanDiscoveryService {
     );
   }
 
+  void updateInternetPeers(List<InternetPeerEndpoint> peers) {
+    final normalized = <InternetPeerEndpoint>[];
+    final ipAllow = <String>{};
+    for (final peer in peers) {
+      final host = peer.host.trim();
+      final friendId = peer.friendId.trim();
+      if (host.isEmpty || friendId.isEmpty) {
+        continue;
+      }
+      final port = peer.port <= 0 || peer.port > 65535
+          ? discoveryPort
+          : peer.port;
+      final parsedIp = InternetAddress.tryParse(host);
+      if (parsedIp == null || parsedIp.type != InternetAddressType.IPv4) {
+        continue;
+      }
+      normalized.add(
+        InternetPeerEndpoint(friendId: friendId, host: host, port: port),
+      );
+      ipAllow.add(parsedIp.address);
+    }
+    _internetPeers = normalized;
+    _internetPeerIpAllowlist = ipAllow;
+    _log('Internet peers updated. count=');
+  }
+
   Future<void> stop() async {
     _log('Stopping UDP discovery');
     _beaconTimer?.cancel();
@@ -640,6 +785,7 @@ class LanDiscoveryService {
     required bool approved,
     required String receiverName,
     int? transferPort,
+    List<String>? acceptedFileNames,
   }) async {
     final payload = <String, Object?>{
       'instanceId': _instanceId,
@@ -651,8 +797,53 @@ class LanDiscoveryService {
     if (transferPort != null) {
       payload['transferPort'] = transferPort;
     }
+    if (acceptedFileNames != null) {
+      payload['acceptedFileNames'] = acceptedFileNames;
+    }
     await _sendEncodedPacket(
       prefix: _transferDecisionPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendFriendRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+  }) async {
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'requesterName': requesterName,
+      'requesterMacAddress': requesterMacAddress,
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _friendRequestPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendFriendResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required String responderMacAddress,
+    required bool accepted,
+  }) async {
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'responderName': responderName,
+      'responderMacAddress': responderMacAddress,
+      'accepted': accepted,
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _friendResponsePrefix,
       payload: payload,
       targetIp: targetIp,
     );
@@ -791,7 +982,8 @@ class LanDiscoveryService {
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
-    final request = '$_discoverPrefix|$_instanceId|$deviceName';
+    final payload = _encodeDiscoveryPayload(deviceName);
+    final request = '$_discoverPrefix|$_instanceId|$payload';
     final bytes = utf8.encode(request);
 
     _log('Broadcasting discover packet');
@@ -802,6 +994,15 @@ class LanDiscoveryService {
         _socket?.send(bytes, broadcast, discoveryPort);
         _log('Discover packet sent to ${broadcast.address}');
       }
+    }
+
+    for (final peer in _internetPeers) {
+      final address = InternetAddress.tryParse(peer.host);
+      if (address == null || address.type != InternetAddressType.IPv4) {
+        continue;
+      }
+      _socket?.send(bytes, address, peer.port);
+      _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
     }
   }
 
@@ -828,15 +1029,86 @@ class LanDiscoveryService {
 
     if (parts.length >= 3) {
       final instanceId = parts[1].trim();
-      final deviceName = parts.sublist(2).join('|').trim();
+      final rawPayload = parts.sublist(2).join('|').trim();
+      final decodedPayload = _tryDecodeDiscoveryPayload(rawPayload);
+      if (decodedPayload != null) {
+        return _DiscoveryPacket(
+          prefix: prefix,
+          instanceId: instanceId,
+          deviceName: decodedPayload.deviceName,
+          operatingSystem: decodedPayload.operatingSystem,
+          deviceType: decodedPayload.deviceType,
+          peerId: decodedPayload.peerId,
+        );
+      }
+
       return _DiscoveryPacket(
         prefix: prefix,
         instanceId: instanceId,
-        deviceName: deviceName.isEmpty ? 'Unknown device' : deviceName,
+        deviceName: rawPayload.isEmpty ? 'Unknown device' : rawPayload,
       );
     }
 
     return null;
+  }
+
+  String _encodeDiscoveryPayload(String deviceName) {
+    final payload = <String, Object>{
+      'name': deviceName,
+      'os': _operatingSystem,
+      'type': _deviceType,
+      'peerId': _localPeerId,
+    };
+    return base64UrlEncode(utf8.encode(jsonEncode(payload)));
+  }
+
+  _DiscoveryIdentity? _tryDecodeDiscoveryPayload(String encodedPayload) {
+    if (encodedPayload.isEmpty) {
+      return null;
+    }
+    try {
+      final bytes = base64Url.decode(encodedPayload);
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map<String, dynamic>) {
+        return null;
+      }
+
+      final rawName = decoded['name'] as String?;
+      final rawOs = decoded['os'] as String?;
+      final rawType = decoded['type'] as String?;
+      final rawPeerId = decoded['peerId'] as String?;
+      return _DiscoveryIdentity(
+        deviceName: (rawName == null || rawName.trim().isEmpty)
+            ? 'Unknown device'
+            : rawName.trim(),
+        operatingSystem: _normalizeDiscoveryText(rawOs),
+        deviceType: _normalizeDiscoveryText(rawType),
+        peerId: _normalizeDiscoveryText(rawPeerId),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _normalizeDiscoveryText(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    return trimmed;
+  }
+
+  String _resolveLocalDeviceType() {
+    if (Platform.isAndroid || Platform.isIOS) {
+      return 'phone';
+    }
+    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+      return 'pc';
+    }
+    return 'unknown';
   }
 
   _TransferRequestPacket? _parseTransferRequestPacket(String message) {
@@ -908,6 +1180,16 @@ class LanDiscoveryService {
     if (transferPortRaw is num) {
       transferPort = transferPortRaw.toInt();
     }
+    List<String>? acceptedFileNames;
+    final acceptedRaw = decoded['acceptedFileNames'];
+    if (acceptedRaw is List<dynamic>) {
+      final parsed = acceptedRaw
+          .whereType<String>()
+          .map((name) => name.trim())
+          .where((name) => name.isNotEmpty)
+          .toList(growable: false);
+      acceptedFileNames = parsed;
+    }
     if (requestId == null ||
         receiverName == null ||
         approved == null ||
@@ -921,6 +1203,66 @@ class LanDiscoveryService {
       receiverName: receiverName,
       approved: approved,
       transferPort: transferPort,
+      acceptedFileNames: acceptedFileNames,
+    );
+  }
+
+  _FriendRequestPacket? _parseFriendRequestPacket(String message) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _friendRequestPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final requesterName = decoded['requesterName'] as String?;
+    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
+    if (instanceId == null ||
+        requestId == null ||
+        requesterName == null ||
+        requesterMacAddress == null) {
+      return null;
+    }
+
+    return _FriendRequestPacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+    );
+  }
+
+  _FriendResponsePacket? _parseFriendResponsePacket(String message) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _friendResponsePrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final responderName = decoded['responderName'] as String?;
+    final responderMacAddress = decoded['responderMacAddress'] as String?;
+    final accepted = decoded['accepted'] as bool?;
+    if (instanceId == null ||
+        requestId == null ||
+        responderName == null ||
+        responderMacAddress == null ||
+        accepted == null) {
+      return null;
+    }
+
+    return _FriendResponsePacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      responderMacAddress: responderMacAddress,
+      accepted: accepted,
     );
   }
 
@@ -1226,6 +1568,13 @@ class LanDiscoveryService {
     return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
   }
 
+  bool _isAllowedInternetSender(String senderIp) {
+    if (_internetPeerIpAllowlist.isEmpty) {
+      return false;
+    }
+    return _internetPeerIpAllowlist.contains(senderIp);
+  }
+
   void _log(String message) {
     developer.log(message, name: 'LanDiscoveryService');
   }
@@ -1260,11 +1609,31 @@ class _DiscoveryPacket {
     required this.prefix,
     required this.instanceId,
     required this.deviceName,
+    this.operatingSystem,
+    this.deviceType,
+    this.peerId,
   });
 
   final String prefix;
   final String instanceId;
   final String deviceName;
+  final String? operatingSystem;
+  final String? deviceType;
+  final String? peerId;
+}
+
+class _DiscoveryIdentity {
+  const _DiscoveryIdentity({
+    required this.deviceName,
+    this.operatingSystem,
+    this.deviceType,
+    this.peerId,
+  });
+
+  final String deviceName;
+  final String? operatingSystem;
+  final String? deviceType;
+  final String? peerId;
 }
 
 class _TransferRequestPacket {
@@ -1294,6 +1663,7 @@ class _TransferDecisionPacket {
     required this.receiverName,
     required this.approved,
     required this.transferPort,
+    this.acceptedFileNames,
   });
 
   final String instanceId;
@@ -1301,6 +1671,37 @@ class _TransferDecisionPacket {
   final String receiverName;
   final bool approved;
   final int? transferPort;
+  final List<String>? acceptedFileNames;
+}
+
+class _FriendRequestPacket {
+  const _FriendRequestPacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.requesterName,
+    required this.requesterMacAddress,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String requesterName;
+  final String requesterMacAddress;
+}
+
+class _FriendResponsePacket {
+  const _FriendResponsePacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.responderName,
+    required this.responderMacAddress,
+    required this.accepted,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String responderName;
+  final String responderMacAddress;
+  final bool accepted;
 }
 
 class _ShareQueryPacket {

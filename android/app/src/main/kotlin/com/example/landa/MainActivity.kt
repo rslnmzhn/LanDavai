@@ -134,6 +134,11 @@ class MainActivity : FlutterActivity() {
                     )
                     result.success(null)
                 }
+                "showFriendRequestNotification" -> {
+                    val requesterName = call.argument<String>("requesterName") ?: "Unknown device"
+                    showFriendRequestNotification(requesterName = requesterName)
+                    result.success(null)
+                }
                 else -> result.notImplemented()
             }
         }
@@ -429,6 +434,29 @@ class MainActivity : FlutterActivity() {
 
         NotificationManagerCompat.from(this).notify(
             abs(("attempt|$requesterName|$shareLabel|${System.currentTimeMillis()}").hashCode()),
+            notification,
+        )
+    }
+
+    private fun showFriendRequestNotification(
+        requesterName: String,
+    ) {
+        if (!canPostNotifications()) {
+            return
+        }
+
+        val text = "$requesterName sent you a friend request."
+        val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Friend request")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(
+            abs(("friend|$requesterName|${System.currentTimeMillis()}").hashCode()),
             notification,
         )
     }

@@ -14,7 +14,8 @@ class AppDatabase {
   static const String sharedFolderCachesTable = 'shared_folder_caches';
   static const String transferHistoryTable = 'transfer_history';
   static const String appSettingsTable = 'app_settings';
-  static const int schemaVersion = 4;
+  static const String friendsTable = 'friends';
+  static const int schemaVersion = 5;
 
   Database? _database;
 
@@ -127,6 +128,7 @@ class AppDatabase {
     ''');
     await _createTransferHistoryTable(db);
     await _createAppSettingsTable(db);
+    await _createFriendsTable(db);
   }
 
   Future<void> _runMigrations(
@@ -147,6 +149,10 @@ class AppDatabase {
 
     if (oldVersion < 4 && newVersion >= 4) {
       await _createAppSettingsTable(db);
+    }
+
+    if (oldVersion < 5 && newVersion >= 5) {
+      await _createFriendsTable(db);
     }
   }
 
@@ -179,6 +185,23 @@ class AppDatabase {
         setting_value TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       )
+    ''');
+  }
+
+  Future<void> _createFriendsTable(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS $friendsTable (
+        friend_id TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        endpoint_host TEXT NOT NULL,
+        endpoint_port INTEGER NOT NULL,
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE INDEX IF NOT EXISTS idx_friends_enabled
+      ON $friendsTable(is_enabled, updated_at DESC)
     ''');
   }
 }

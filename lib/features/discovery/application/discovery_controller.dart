@@ -21,9 +21,11 @@ import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../data/device_alias_repository.dart';
+import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
+import '../domain/friend_peer.dart';
 
 class RemoteShareOption {
   RemoteShareOption({
@@ -71,11 +73,44 @@ class _PendingRemoteDownloadIntent {
   final DateTime createdAt;
 }
 
+class IncomingFriendRequest {
+  const IncomingFriendRequest({
+    required this.requestId,
+    required this.senderIp,
+    required this.senderName,
+    required this.senderMacAddress,
+    required this.createdAt,
+  });
+
+  final String requestId;
+  final String senderIp;
+  final String senderName;
+  final String senderMacAddress;
+  final DateTime createdAt;
+}
+
+class _PendingOutgoingFriendRequest {
+  const _PendingOutgoingFriendRequest({
+    required this.requestId,
+    required this.targetIp,
+    required this.targetName,
+    required this.targetMacAddress,
+    required this.createdAt,
+  });
+
+  final String requestId;
+  final String targetIp;
+  final String targetName;
+  final String targetMacAddress;
+  final DateTime createdAt;
+}
+
 class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceAliasRepository deviceAliasRepository,
+    required FriendRepository friendRepository,
     required AppSettingsRepository appSettingsRepository,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
@@ -87,6 +122,7 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceAliasRepository = deviceAliasRepository,
+       _friendRepository = friendRepository,
        _appSettingsRepository = appSettingsRepository,
        _appNotificationService = appNotificationService,
        _transferHistoryRepository = transferHistoryRepository,
@@ -97,10 +133,12 @@ class DiscoveryController extends ChangeNotifier {
        _pathOpener = pathOpener;
 
   static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
+  static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceAliasRepository _deviceAliasRepository;
+  final FriendRepository _friendRepository;
   final AppSettingsRepository _appSettingsRepository;
   final AppNotificationService _appNotificationService;
   final TransferHistoryRepository _transferHistoryRepository;
@@ -115,6 +153,8 @@ class DiscoveryController extends ChangeNotifier {
   final Map<String, String> _aliasByMac = <String, String>{};
   final List<IncomingTransferRequest> _incomingRequests =
       <IncomingTransferRequest>[];
+  final List<IncomingFriendRequest> _incomingFriendRequests =
+      <IncomingFriendRequest>[];
   final List<SharedFolderCacheRecord> _ownerSharedCaches =
       <SharedFolderCacheRecord>[];
   final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
@@ -122,12 +162,17 @@ class DiscoveryController extends ChangeNotifier {
   final Set<String> _trustedDeviceMacs = <String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
+  final Map<String, _PendingOutgoingFriendRequest>
+  _pendingOutgoingFriendRequestsByRequestId =
+      <String, _PendingOutgoingFriendRequest>{};
   final Map<String, _PendingRemoteDownloadIntent> _pendingRemoteDownloads =
       <String, _PendingRemoteDownloadIntent>{};
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
   final List<TransferHistoryRecord> _downloadHistory =
       <TransferHistoryRecord>[];
+  final List<FriendPeer> _friends = <FriendPeer>[];
+  final Map<String, String> _friendNameById = <String, String>{};
   Timer? _scanTimer;
   AppSettings _settings = AppSettings.defaults;
   bool _started = false;
@@ -142,11 +187,19 @@ class DiscoveryController extends ChangeNotifier {
   int _uploadTotalBytes = 0;
   int _downloadReceivedBytes = 0;
   int _downloadTotalBytes = 0;
+  double _uploadSpeedBytesPerSecond = 0;
+  double _downloadSpeedBytesPerSecond = 0;
+  DateTime? _uploadSpeedSampleAt;
+  DateTime? _downloadSpeedSampleAt;
+  int _uploadSpeedSampleBytes = 0;
+  int _downloadSpeedSampleBytes = 0;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
   final String _localName = Platform.localHostname;
   String _localDeviceMac = '02:00:00:00:00:01';
+  String _localPeerId = '';
+  bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
   String? _errorMessage;
   String? _infoMessage;
@@ -169,9 +222,26 @@ class DiscoveryController extends ChangeNotifier {
   int get uploadTotalBytes => _uploadTotalBytes;
   int get downloadReceivedBytes => _downloadReceivedBytes;
   int get downloadTotalBytes => _downloadTotalBytes;
+  double get uploadSpeedBytesPerSecond => _uploadSpeedBytesPerSecond;
+  double get downloadSpeedBytesPerSecond => _downloadSpeedBytesPerSecond;
+  Duration? get uploadEta => _estimateEta(
+    totalBytes: _uploadTotalBytes,
+    transferredBytes: _uploadSentBytes,
+    speedBytesPerSecond: _uploadSpeedBytesPerSecond,
+    isActive: isUploading,
+  );
+  Duration? get downloadEta => _estimateEta(
+    totalBytes: _downloadTotalBytes,
+    transferredBytes: _downloadReceivedBytes,
+    speedBytesPerSecond: _downloadSpeedBytesPerSecond,
+    isActive: isDownloading,
+  );
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
+  String get localPeerId => _localPeerId;
+  bool get isFriendMutationInProgress => _isFriendMutationInProgress;
+  List<FriendPeer> get friends => List<FriendPeer>.unmodifiable(_friends);
   AppSettings get settings => _settings;
   bool get isAppInForeground => _isAppInForeground;
   Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
@@ -179,6 +249,8 @@ class DiscoveryController extends ChangeNotifier {
   String? get infoMessage => _infoMessage;
   List<IncomingTransferRequest> get incomingRequests =>
       List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
+  List<IncomingFriendRequest> get incomingFriendRequests =>
+      List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
   List<SharedFolderCacheRecord> get ownerSharedCaches =>
       List<SharedFolderCacheRecord>.unmodifiable(_ownerSharedCaches);
   List<RemoteShareOption> get remoteShareOptions =>
@@ -221,6 +293,28 @@ class DiscoveryController extends ChangeNotifier {
   int get appDetectedCount =>
       _devicesByIp.values.where((d) => d.isAppDetected).length;
 
+  List<DiscoveredDevice> get friendDevices {
+    final values = _devicesByIp.values
+        .where((device) => device.isTrusted)
+        .toList();
+    values.sort(
+      (a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+    );
+    return values;
+  }
+
+  bool hasPendingFriendRequestForDevice(DiscoveredDevice device) {
+    _purgeExpiredPendingFriendRequests();
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null) {
+      return false;
+    }
+    return _pendingOutgoingFriendRequestsByRequestId.values.any(
+      (pending) => pending.targetMacAddress == mac,
+    );
+  }
+
   Future<void> start() async {
     if (_started) {
       _log('start() ignored: controller already started');
@@ -231,19 +325,25 @@ class DiscoveryController extends ChangeNotifier {
 
     await _resolveLocalAddress();
     _resolveLocalDeviceMac();
+    _localPeerId = await _friendRepository.loadOrCreateLocalPeerId();
     await _loadAliases();
     await _loadTrustedDevices();
     await _loadSettings();
     await _loadOwnerCaches();
     await _loadDownloadHistory();
+    await _loadFriends();
 
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
+      _syncInternetPeers();
       await _lanDiscoveryService.start(
         deviceName: _localName,
+        localPeerId: _localPeerId,
         onAppDetected: _onAppDetected,
         onTransferRequest: _onTransferRequest,
         onTransferDecision: _onTransferDecision,
+        onFriendRequest: _onFriendRequest,
+        onFriendResponse: _onFriendResponse,
         onShareQuery: _onShareQuery,
         onShareCatalog: _onShareCatalog,
         onDownloadRequest: _onDownloadRequest,
@@ -268,9 +368,108 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> removeSharedCache(SharedFolderCacheRecord cache) async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      await _sharedFolderCacheRepository.deleteCache(cache.cacheId);
+      await _loadOwnerCaches();
+      _errorMessage = null;
+      _infoMessage = 'Removed from sharing: ${cache.displayName}';
+    } catch (error) {
+      _errorMessage = 'Failed to remove shared folder: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
   void clearInfoMessage() {
     _infoMessage = null;
     notifyListeners();
+  }
+
+  Future<void> saveFriend({
+    required String friendId,
+    required String displayName,
+    required String endpoint,
+    bool isEnabled = true,
+  }) async {
+    final normalizedId = friendId.trim();
+    if (normalizedId.isEmpty) {
+      _errorMessage = 'Friend ID is required.';
+      notifyListeners();
+      return;
+    }
+
+    final parsedEndpoint = _parseEndpoint(endpoint);
+    if (parsedEndpoint == null) {
+      _errorMessage =
+          'Endpoint must be in IPv4:port format, for example 203.0.113.7:40404.';
+      notifyListeners();
+      return;
+    }
+
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+    try {
+      await _friendRepository.upsertFriend(
+        friendId: normalizedId,
+        displayName: displayName.trim(),
+        endpointHost: parsedEndpoint.$1,
+        endpointPort: parsedEndpoint.$2,
+        isEnabled: isEnabled,
+      );
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      _infoMessage = 'Friend saved: $normalizedId';
+    } catch (error) {
+      _errorMessage = 'Failed to save friend: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeFriend(String friendId) async {
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+    try {
+      await _friendRepository.removeFriend(friendId);
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      _infoMessage = 'Friend removed: ${friendId.trim()}';
+    } catch (error) {
+      _errorMessage = 'Failed to remove friend: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setFriendEnabled({
+    required String friendId,
+    required bool enabled,
+  }) async {
+    try {
+      await _friendRepository.setFriendEnabled(
+        friendId: friendId,
+        isEnabled: enabled,
+      );
+      await _loadFriends();
+      _syncInternetPeers();
+      _errorMessage = null;
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to update friend: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
   }
 
   Future<void> updateBackgroundScanInterval(
@@ -315,40 +514,132 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> toggleTrustedDevice(DiscoveredDevice device) async {
-    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
-    if (mac == null) {
-      _errorMessage = 'Cannot mark favorite until MAC address is known.';
+  Future<void> sendFriendRequest(DiscoveredDevice device) async {
+    if (!device.isAppDetected) {
+      _errorMessage = 'Friend request is available only for Landa devices.';
       notifyListeners();
       return;
     }
 
-    final currentlyTrusted = _trustedDeviceMacs.contains(mac);
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null) {
+      _errorMessage = 'Cannot send friend request until MAC address is known.';
+      notifyListeners();
+      return;
+    }
+
+    if (_trustedDeviceMacs.contains(mac)) {
+      _infoMessage = '${device.displayName} is already in your friends list.';
+      notifyListeners();
+      return;
+    }
+
+    _purgeExpiredPendingFriendRequests();
+    final alreadyPending = _pendingOutgoingFriendRequestsByRequestId.values.any(
+      (pending) => pending.targetMacAddress == mac,
+    );
+    if (alreadyPending) {
+      _infoMessage = 'Friend request already sent to ${device.displayName}.';
+      notifyListeners();
+      return;
+    }
+
+    final requestId = _fileHashService.buildStableId(
+      'friend-request|${DateTime.now().microsecondsSinceEpoch}|$mac|$_localDeviceMac',
+    );
+
+    _isFriendMutationInProgress = true;
+    notifyListeners();
     try {
-      await _deviceAliasRepository.setTrusted(
-        macAddress: mac,
-        isTrusted: !currentlyTrusted,
+      await _lanDiscoveryService.sendFriendRequest(
+        targetIp: device.ip,
+        requestId: requestId,
+        requesterName: _localName,
+        requesterMacAddress: _localDeviceMac,
       );
-      if (currentlyTrusted) {
-        _trustedDeviceMacs.remove(mac);
+      _pendingOutgoingFriendRequestsByRequestId[requestId] =
+          _PendingOutgoingFriendRequest(
+            requestId: requestId,
+            targetIp: device.ip,
+            targetName: device.displayName,
+            targetMacAddress: mac,
+            createdAt: DateTime.now(),
+          );
+      _errorMessage = null;
+      _infoMessage = 'Friend request sent to ${device.displayName}.';
+    } catch (error) {
+      _errorMessage = 'Failed to send friend request: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> respondToFriendRequest({
+    required String requestId,
+    required bool accept,
+  }) async {
+    final index = _incomingFriendRequests.indexWhere(
+      (request) => request.requestId == requestId,
+    );
+    if (index < 0) {
+      return;
+    }
+
+    final request = _incomingFriendRequests[index];
+    _incomingFriendRequests.removeAt(index);
+
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+
+    try {
+      if (accept) {
+        await _setFriendStatus(
+          macAddress: request.senderMacAddress,
+          isFriend: true,
+        );
+        _infoMessage = '${request.senderName} added to friends.';
       } else {
-        _trustedDeviceMacs.add(mac);
+        _infoMessage = 'Friend request from ${request.senderName} declined.';
       }
 
-      _devicesByIp.updateAll((_, value) {
-        final candidateMac = DeviceAliasRepository.normalizeMac(
-          value.macAddress,
-        );
-        if (candidateMac != mac) {
-          return value;
-        }
-        return value.copyWith(isTrusted: !currentlyTrusted);
-      });
+      await _lanDiscoveryService.sendFriendResponse(
+        targetIp: request.senderIp,
+        requestId: request.requestId,
+        responderName: _localName,
+        responderMacAddress: _localDeviceMac,
+        accepted: accept,
+      );
       _errorMessage = null;
-      notifyListeners();
     } catch (error) {
-      _errorMessage = 'Failed to update favorite device: $error';
+      _errorMessage = 'Failed to process friend request: $error';
       _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeDeviceFromFriends(DiscoveredDevice device) async {
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null) {
+      _errorMessage = 'Cannot remove friend until MAC address is known.';
+      notifyListeners();
+      return;
+    }
+
+    _isFriendMutationInProgress = true;
+    notifyListeners();
+    try {
+      await _setFriendStatus(macAddress: mac, isFriend: false);
+      _errorMessage = null;
+      _infoMessage = '${device.displayName} removed from friends.';
+    } catch (error) {
+      _errorMessage = 'Failed to remove friend: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isFriendMutationInProgress = false;
       notifyListeners();
     }
   }
@@ -759,70 +1050,92 @@ class DiscoveryController extends ChangeNotifier {
 
     final request = _incomingRequests[index];
     TransferReceiveSession? receiveSession;
+    var skippedExistingCount = 0;
+    var itemsToReceive = request.items;
+    var expectedBytes = request.totalBytes;
     try {
       if (approved) {
-        _downloadReceivedBytes = 0;
-        _downloadTotalBytes = request.totalBytes;
-        notifyListeners();
-
-        unawaited(
-          _transferStorageService.showAndroidDownloadProgressNotification(
-            requestId: request.requestId,
-            senderName: request.senderName,
-            receivedBytes: 0,
-            totalBytes: request.totalBytes,
-          ),
-        );
-
         final destinationDirectory = await _transferStorageService
             .resolveReceiveDirectory(appFolderName: 'Landa');
-        var lastNotifiedAtMs = 0;
-        var lastNotifiedPercent = -1;
-        receiveSession = await _fileTransferService.startReceiver(
-          requestId: request.requestId,
-          expectedItems: request.items,
+        itemsToReceive = await _filterMissingIncomingItems(
+          items: request.items,
           destinationDirectory: destinationDirectory,
-          onProgress: (received, total) {
-            _downloadReceivedBytes = received;
-            _downloadTotalBytes = total;
-            notifyListeners();
+        );
+        skippedExistingCount = request.items.length - itemsToReceive.length;
+        expectedBytes = itemsToReceive.fold<int>(
+          0,
+          (sum, item) => sum + item.sizeBytes,
+        );
 
-            final nowMs = DateTime.now().millisecondsSinceEpoch;
-            final percent = total <= 0
-                ? -1
-                : (received * 100 ~/ total).clamp(0, 100);
-            final isFinalChunk = total > 0 && received >= total;
-            final hasMeaningfulPercentStep =
-                percent >= 0 &&
-                (lastNotifiedPercent < 0 || percent >= lastNotifiedPercent + 2);
-            final shouldNotify =
-                isFinalChunk ||
-                nowMs - lastNotifiedAtMs >= 600 ||
-                hasMeaningfulPercentStep;
-            if (!shouldNotify) {
-              return;
-            }
-            lastNotifiedAtMs = nowMs;
-            if (percent >= 0) {
-              lastNotifiedPercent = percent;
-            }
-            unawaited(
-              _transferStorageService.showAndroidDownloadProgressNotification(
-                requestId: request.requestId,
-                senderName: request.senderName,
-                receivedBytes: received,
-                totalBytes: total,
-              ),
-            );
-          },
-        );
-        _activeReceiveSessions[request.requestId] = receiveSession;
-        unawaited(
-          _waitForIncomingTransferResult(
-            request: request,
-            session: receiveSession,
-          ),
-        );
+        if (itemsToReceive.isNotEmpty) {
+          _downloadReceivedBytes = 0;
+          _downloadTotalBytes = expectedBytes;
+          _resetDownloadSpeedTracking(currentBytes: 0);
+          notifyListeners();
+
+          unawaited(
+            _transferStorageService.showAndroidDownloadProgressNotification(
+              requestId: request.requestId,
+              senderName: request.senderName,
+              receivedBytes: 0,
+              totalBytes: expectedBytes,
+            ),
+          );
+
+          var lastNotifiedAtMs = 0;
+          var lastNotifiedPercent = -1;
+          receiveSession = await _fileTransferService.startReceiver(
+            requestId: request.requestId,
+            expectedItems: request.items,
+            destinationDirectory: destinationDirectory,
+            onProgress: (received, total) {
+              _downloadReceivedBytes = received;
+              _downloadTotalBytes = total;
+              _updateDownloadSpeedTracking(currentBytes: received);
+              notifyListeners();
+
+              final nowMs = DateTime.now().millisecondsSinceEpoch;
+              final percent = total <= 0
+                  ? -1
+                  : (received * 100 ~/ total).clamp(0, 100);
+              final isFinalChunk = total > 0 && received >= total;
+              final hasMeaningfulPercentStep =
+                  percent >= 0 &&
+                  (lastNotifiedPercent < 0 ||
+                      percent >= lastNotifiedPercent + 2);
+              final shouldNotify =
+                  isFinalChunk ||
+                  nowMs - lastNotifiedAtMs >= 600 ||
+                  hasMeaningfulPercentStep;
+              if (!shouldNotify) {
+                return;
+              }
+              lastNotifiedAtMs = nowMs;
+              if (percent >= 0) {
+                lastNotifiedPercent = percent;
+              }
+              unawaited(
+                _transferStorageService.showAndroidDownloadProgressNotification(
+                  requestId: request.requestId,
+                  senderName: request.senderName,
+                  receivedBytes: received,
+                  totalBytes: total,
+                ),
+              );
+            },
+          );
+          _activeReceiveSessions[request.requestId] = receiveSession;
+          unawaited(
+            _waitForIncomingTransferResult(
+              request: request,
+              session: receiveSession,
+            ),
+          );
+        } else {
+          _downloadReceivedBytes = 0;
+          _downloadTotalBytes = 0;
+          _clearDownloadSpeedTracking();
+        }
       }
 
       await _lanDiscoveryService.sendTransferDecision(
@@ -831,6 +1144,11 @@ class DiscoveryController extends ChangeNotifier {
         approved: approved,
         receiverName: _localName,
         transferPort: receiveSession?.port,
+        acceptedFileNames: approved
+            ? itemsToReceive
+                  .map((item) => item.fileName)
+                  .toList(growable: false)
+            : null,
       );
 
       if (approved) {
@@ -854,9 +1172,17 @@ class DiscoveryController extends ChangeNotifier {
       }
 
       _incomingRequests.removeAt(index);
-      _infoMessage = approved
-          ? 'Transfer accepted. Waiting for file stream...'
-          : 'Transfer declined.';
+      if (!approved) {
+        _infoMessage = 'Transfer declined.';
+      } else if (itemsToReceive.isEmpty) {
+        _infoMessage =
+            'All requested files already exist locally. Transfer skipped.';
+      } else if (skippedExistingCount > 0) {
+        _infoMessage =
+            'Transfer accepted. Skipping $skippedExistingCount existing file(s), waiting for missing files...';
+      } else {
+        _infoMessage = 'Transfer accepted. Waiting for file stream...';
+      }
       _errorMessage = null;
       notifyListeners();
     } catch (error) {
@@ -969,17 +1295,83 @@ class DiscoveryController extends ChangeNotifier {
     final aliasName = normalizedMac == null ? null : _aliasByMac[normalizedMac];
     final isTrusted =
         normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+    final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
+    final friendName = event.peerId == null
+        ? null
+        : _friendNameById[event.peerId!];
+    final detectedCategory = _resolveDeviceCategory(
+      deviceType: event.deviceType,
+      operatingSystem: detectedOs,
+    );
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
               aliasName: aliasName ?? existing?.aliasName,
-              deviceName: event.deviceName,
+              deviceName: friendName ?? event.deviceName,
+              operatingSystem: detectedOs ?? existing?.operatingSystem,
+              deviceCategory: detectedCategory,
               isTrusted: isTrusted,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
             );
     notifyListeners();
+  }
+
+  String? _normalizeOperatingSystemName(String? raw) {
+    if (raw == null) {
+      return null;
+    }
+    final value = raw.trim();
+    if (value.isEmpty) {
+      return null;
+    }
+    final lower = value.toLowerCase();
+    if (lower.contains('android')) {
+      return 'Android';
+    }
+    if (lower == 'ios' || lower.contains('iphone') || lower.contains('ipad')) {
+      return 'iOS';
+    }
+    if (lower.contains('windows')) {
+      return 'Windows';
+    }
+    if (lower.contains('mac')) {
+      return 'macOS';
+    }
+    if (lower.contains('linux')) {
+      return 'Linux';
+    }
+    return value;
+  }
+
+  DeviceCategory? _resolveDeviceCategory({
+    required String? deviceType,
+    required String? operatingSystem,
+  }) {
+    final normalizedType = deviceType?.trim().toLowerCase();
+    if (normalizedType == 'phone' ||
+        normalizedType == 'mobile' ||
+        normalizedType == 'tablet') {
+      return DeviceCategory.phone;
+    }
+    if (normalizedType == 'pc' ||
+        normalizedType == 'desktop' ||
+        normalizedType == 'laptop') {
+      return DeviceCategory.pc;
+    }
+
+    final os = operatingSystem?.toLowerCase();
+    if (os == null) {
+      return null;
+    }
+    if (os.contains('android') || os.contains('ios')) {
+      return DeviceCategory.phone;
+    }
+    if (os.contains('windows') || os.contains('linux') || os.contains('mac')) {
+      return DeviceCategory.pc;
+    }
+    return null;
   }
 
   void _onTransferRequest(TransferRequestEvent event) {
@@ -1021,13 +1413,12 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    final isTrustedSender =
+    final isFriendSender =
         normalizedSenderMac != null &&
         _trustedDeviceMacs.contains(normalizedSenderMac);
 
-    if (isTrustedSender) {
-      _infoMessage =
-          'Auto-accepting transfer from trusted device ${event.senderName}.';
+    if (isFriendSender) {
+      _infoMessage = 'Auto-accepting transfer from friend ${event.senderName}.';
       notifyListeners();
       unawaited(
         respondToTransferRequest(requestId: event.requestId, approved: true),
@@ -1037,6 +1428,110 @@ class DiscoveryController extends ChangeNotifier {
 
     _infoMessage = 'Incoming transfer request from ${event.senderName}.';
     notifyListeners();
+  }
+
+  void _onFriendRequest(FriendRequestEvent event) {
+    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
+      event.requesterMacAddress,
+    );
+    if (normalizedSenderMac == null) {
+      _log(
+        'Ignoring friend request with invalid MAC from ${event.requesterIp}',
+      );
+      return;
+    }
+
+    if (normalizedSenderMac == _localDeviceMac) {
+      return;
+    }
+
+    final senderDevice = _devicesByIp[event.requesterIp];
+    final senderName = senderDevice?.displayName ?? event.requesterName;
+
+    if (_trustedDeviceMacs.contains(normalizedSenderMac)) {
+      _log('Friend request from known friend $senderName. Auto-accepting.');
+      unawaited(
+        _lanDiscoveryService.sendFriendResponse(
+          targetIp: event.requesterIp,
+          requestId: event.requestId,
+          responderName: _localName,
+          responderMacAddress: _localDeviceMac,
+          accepted: true,
+        ),
+      );
+      return;
+    }
+
+    _incomingFriendRequests.removeWhere(
+      (request) =>
+          request.requestId == event.requestId ||
+          request.senderMacAddress == normalizedSenderMac,
+    );
+    _incomingFriendRequests.insert(
+      0,
+      IncomingFriendRequest(
+        requestId: event.requestId,
+        senderIp: event.requesterIp,
+        senderName: senderName,
+        senderMacAddress: normalizedSenderMac,
+        createdAt: event.observedAt,
+      ),
+    );
+
+    _infoMessage = 'New friend request from $senderName.';
+    notifyListeners();
+    unawaited(
+      _appNotificationService.showFriendRequestNotification(
+        requesterName: senderName,
+      ),
+    );
+  }
+
+  void _onFriendResponse(FriendResponseEvent event) {
+    _purgeExpiredPendingFriendRequests();
+    final pending = _pendingOutgoingFriendRequestsByRequestId.remove(
+      event.requestId,
+    );
+    if (pending == null) {
+      return;
+    }
+
+    final responderMac = DeviceAliasRepository.normalizeMac(
+      event.responderMacAddress,
+    );
+    final responderName = event.responderName.trim().isEmpty
+        ? pending.targetName
+        : event.responderName;
+
+    if (!event.accepted) {
+      _infoMessage = '$responderName declined your friend request.';
+      notifyListeners();
+      return;
+    }
+
+    if (responderMac == null) {
+      _errorMessage = 'Friend request accepted, but responder MAC is invalid.';
+      notifyListeners();
+      return;
+    }
+
+    unawaited(_setFriendAfterAcceptance(responderMac, responderName));
+  }
+
+  Future<void> _setFriendAfterAcceptance(
+    String responderMac,
+    String responderName,
+  ) async {
+    try {
+      await _setFriendStatus(macAddress: responderMac, isFriend: true);
+      _errorMessage = null;
+      _infoMessage = '$responderName accepted your friend request.';
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to save accepted friend: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
@@ -1053,6 +1548,20 @@ class DiscoveryController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+
+    final filteredFiles = _filterOutgoingFilesForDecision(
+      files: session.files,
+      acceptedFileNames: event.acceptedFileNames,
+    );
+    if (filteredFiles.isEmpty) {
+      _pendingOutgoingTransfers.remove(event.requestId);
+      _infoMessage =
+          '${event.receiverName} already has these files. Transfer skipped.';
+      _errorMessage = null;
+      notifyListeners();
+      return;
+    }
+
     if (event.transferPort == null) {
       _errorMessage =
           '${event.receiverName} accepted request but did not provide transfer port.';
@@ -1063,7 +1572,15 @@ class DiscoveryController extends ChangeNotifier {
     _infoMessage =
         '${event.receiverName} accepted request. Starting transfer...';
     notifyListeners();
-    unawaited(_sendApprovedTransfer(event: event, session: session));
+    unawaited(
+      _sendApprovedTransfer(
+        event: event,
+        session: _OutgoingTransferSession(
+          receiverName: session.receiverName,
+          files: filteredFiles,
+        ),
+      ),
+    );
   }
 
   Future<void> _sendApprovedTransfer({
@@ -1075,6 +1592,7 @@ class DiscoveryController extends ChangeNotifier {
       0,
       (sum, file) => sum + file.sizeBytes,
     );
+    _resetUploadSpeedTracking(currentBytes: 0);
     notifyListeners();
 
     try {
@@ -1086,6 +1604,7 @@ class DiscoveryController extends ChangeNotifier {
         onProgress: (sent, total) {
           _uploadSentBytes = sent;
           _uploadTotalBytes = total;
+          _updateUploadSpeedTracking(currentBytes: sent);
           notifyListeners();
         },
       );
@@ -1093,6 +1612,7 @@ class DiscoveryController extends ChangeNotifier {
           'Transferred ${session.files.length} file(s) to ${session.receiverName}.';
       _errorMessage = null;
       _uploadSentBytes = _uploadTotalBytes;
+      _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
     } catch (error) {
       _errorMessage = 'File transfer failed: $error';
       _log(_errorMessage!);
@@ -1101,6 +1621,7 @@ class DiscoveryController extends ChangeNotifier {
       Future<void>.delayed(const Duration(seconds: 1), () {
         _uploadSentBytes = 0;
         _uploadTotalBytes = 0;
+        _clearUploadSpeedTracking();
         notifyListeners();
       });
       notifyListeners();
@@ -1162,11 +1683,13 @@ class DiscoveryController extends ChangeNotifier {
         ),
       );
 
+      final hashStatus = result.hashVerified ? ' Hash verified.' : '';
       _infoMessage =
           'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-          'Saved to $rootPath.';
+          'Saved to $rootPath.$hashStatus';
       _errorMessage = null;
       _downloadReceivedBytes = _downloadTotalBytes;
+      _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
     } else {
       _errorMessage =
           'Transfer from ${request.senderName} failed: ${result.message}';
@@ -1181,6 +1704,7 @@ class DiscoveryController extends ChangeNotifier {
     Future<void>.delayed(const Duration(seconds: 1), () {
       _downloadReceivedBytes = 0;
       _downloadTotalBytes = 0;
+      _clearDownloadSpeedTracking();
       notifyListeners();
     });
     notifyListeners();
@@ -1659,6 +2183,37 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  Future<void> _setFriendStatus({
+    required String macAddress,
+    required bool isFriend,
+  }) async {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    if (normalizedMac == null) {
+      throw ArgumentError('Invalid MAC address: $macAddress');
+    }
+
+    await _deviceAliasRepository.setTrusted(
+      macAddress: normalizedMac,
+      isTrusted: isFriend,
+    );
+
+    if (isFriend) {
+      _trustedDeviceMacs.add(normalizedMac);
+    } else {
+      _trustedDeviceMacs.remove(normalizedMac);
+    }
+
+    _devicesByIp.updateAll((_, device) {
+      final candidateMac = DeviceAliasRepository.normalizeMac(
+        device.macAddress,
+      );
+      if (candidateMac != normalizedMac) {
+        return device;
+      }
+      return device.copyWith(isTrusted: isFriend);
+    });
+  }
+
   Future<void> _loadSettings() async {
     try {
       _settings = await _appSettingsRepository.load();
@@ -1765,6 +2320,183 @@ class DiscoveryController extends ChangeNotifier {
     return p.join(cache.rootPath, localRelative);
   }
 
+  List<TransferSourceFile> _filterOutgoingFilesForDecision({
+    required List<TransferSourceFile> files,
+    required List<String>? acceptedFileNames,
+  }) {
+    if (acceptedFileNames == null) {
+      return files;
+    }
+
+    final accepted = acceptedFileNames
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+    if (accepted.isEmpty) {
+      return const <TransferSourceFile>[];
+    }
+
+    return files
+        .where((file) => accepted.contains(file.fileName))
+        .toList(growable: false);
+  }
+
+  Future<List<TransferFileManifestItem>> _filterMissingIncomingItems({
+    required List<TransferFileManifestItem> items,
+    required Directory destinationDirectory,
+  }) async {
+    final missing = <TransferFileManifestItem>[];
+    for (final item in items) {
+      final relativePath = _sanitizeTransferRelativePath(item.fileName);
+      final targetPath = p.join(destinationDirectory.path, relativePath);
+      final targetFile = File(targetPath);
+      if (!await targetFile.exists()) {
+        missing.add(item);
+        continue;
+      }
+
+      try {
+        final stat = await targetFile.stat();
+        if (stat.type != FileSystemEntityType.file ||
+            stat.size != item.sizeBytes) {
+          missing.add(item);
+          continue;
+        }
+
+        final existingHash = await _fileHashService.computeSha256ForPath(
+          targetPath,
+        );
+        if (existingHash.toLowerCase() != item.sha256.toLowerCase()) {
+          missing.add(item);
+        }
+      } catch (_) {
+        missing.add(item);
+      }
+    }
+    return missing;
+  }
+
+  String _sanitizeTransferRelativePath(String input) {
+    final raw = input.replaceAll('\\', '/');
+    final parts = raw
+        .split('/')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty && part != '.' && part != '..')
+        .toList(growable: false);
+    if (parts.isEmpty) {
+      return 'file.bin';
+    }
+    return p.joinAll(parts);
+  }
+
+  Duration? _estimateEta({
+    required int totalBytes,
+    required int transferredBytes,
+    required double speedBytesPerSecond,
+    required bool isActive,
+  }) {
+    if (!isActive) {
+      return null;
+    }
+    final remaining = totalBytes - transferredBytes;
+    if (remaining <= 0) {
+      return Duration.zero;
+    }
+    if (speedBytesPerSecond <= 1) {
+      return null;
+    }
+    final seconds = (remaining / speedBytesPerSecond).ceil();
+    return Duration(seconds: seconds);
+  }
+
+  void _resetUploadSpeedTracking({required int currentBytes}) {
+    _uploadSpeedBytesPerSecond = 0;
+    _uploadSpeedSampleBytes = currentBytes;
+    _uploadSpeedSampleAt = DateTime.now();
+  }
+
+  void _updateUploadSpeedTracking({required int currentBytes}) {
+    final now = DateTime.now();
+    final sampleAt = _uploadSpeedSampleAt;
+    if (sampleAt == null) {
+      _uploadSpeedSampleAt = now;
+      _uploadSpeedSampleBytes = currentBytes;
+      return;
+    }
+
+    final elapsedMs = now.difference(sampleAt).inMilliseconds;
+    final deltaBytes = currentBytes - _uploadSpeedSampleBytes;
+    if (deltaBytes < 0) {
+      _uploadSpeedSampleAt = now;
+      _uploadSpeedSampleBytes = currentBytes;
+      _uploadSpeedBytesPerSecond = 0;
+      return;
+    }
+    if (elapsedMs < 250 || deltaBytes == 0) {
+      return;
+    }
+
+    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
+    if (_uploadSpeedBytesPerSecond <= 0) {
+      _uploadSpeedBytesPerSecond = instantSpeed;
+    } else {
+      _uploadSpeedBytesPerSecond =
+          (_uploadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
+    }
+    _uploadSpeedSampleAt = now;
+    _uploadSpeedSampleBytes = currentBytes;
+  }
+
+  void _clearUploadSpeedTracking() {
+    _uploadSpeedBytesPerSecond = 0;
+    _uploadSpeedSampleBytes = 0;
+    _uploadSpeedSampleAt = null;
+  }
+
+  void _resetDownloadSpeedTracking({required int currentBytes}) {
+    _downloadSpeedBytesPerSecond = 0;
+    _downloadSpeedSampleBytes = currentBytes;
+    _downloadSpeedSampleAt = DateTime.now();
+  }
+
+  void _updateDownloadSpeedTracking({required int currentBytes}) {
+    final now = DateTime.now();
+    final sampleAt = _downloadSpeedSampleAt;
+    if (sampleAt == null) {
+      _downloadSpeedSampleAt = now;
+      _downloadSpeedSampleBytes = currentBytes;
+      return;
+    }
+
+    final elapsedMs = now.difference(sampleAt).inMilliseconds;
+    final deltaBytes = currentBytes - _downloadSpeedSampleBytes;
+    if (deltaBytes < 0) {
+      _downloadSpeedSampleAt = now;
+      _downloadSpeedSampleBytes = currentBytes;
+      _downloadSpeedBytesPerSecond = 0;
+      return;
+    }
+    if (elapsedMs < 250 || deltaBytes == 0) {
+      return;
+    }
+
+    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
+    if (_downloadSpeedBytesPerSecond <= 0) {
+      _downloadSpeedBytesPerSecond = instantSpeed;
+    } else {
+      _downloadSpeedBytesPerSecond =
+          (_downloadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
+    }
+    _downloadSpeedSampleAt = now;
+    _downloadSpeedSampleBytes = currentBytes;
+  }
+
+  void _clearDownloadSpeedTracking() {
+    _downloadSpeedBytesPerSecond = 0;
+    _downloadSpeedSampleBytes = 0;
+    _downloadSpeedSampleAt = null;
+  }
+
   int _compareIp(String a, String b) {
     final aParts = a.split('.').map(int.parse).toList(growable: false);
     final bParts = b.split('.').map(int.parse).toList(growable: false);
@@ -1786,6 +2518,68 @@ class DiscoveryController extends ChangeNotifier {
     _activeReceiveSessions.clear();
     _lanDiscoveryService.stop();
     super.dispose();
+  }
+
+  Future<void> _loadFriends() async {
+    try {
+      final friends = await _friendRepository.listFriends();
+      _friends
+        ..clear()
+        ..addAll(friends);
+      _friendNameById
+        ..clear()
+        ..addEntries(
+          friends.map(
+            (friend) => MapEntry(friend.friendId, friend.displayName),
+          ),
+        );
+    } catch (error) {
+      _log('Failed to load friends: $error');
+    }
+  }
+
+  void _syncInternetPeers() {
+    final peers = _friends
+        .where((friend) => friend.isEnabled)
+        .map(
+          (friend) => InternetPeerEndpoint(
+            friendId: friend.friendId,
+            host: friend.endpointHost,
+            port: friend.endpointPort,
+          ),
+        )
+        .toList(growable: false);
+    _lanDiscoveryService.updateInternetPeers(peers);
+  }
+
+  (String, int)? _parseEndpoint(String endpoint) {
+    final raw = endpoint.trim();
+    if (raw.isEmpty) {
+      return null;
+    }
+
+    final match = RegExp(
+      r'^([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?::([0-9]{1,5}))?$',
+    ).firstMatch(raw);
+    if (match == null) {
+      return null;
+    }
+
+    final host = match.group(1)!;
+    final parts = host.split('.');
+    if (parts.any((part) {
+      final value = int.tryParse(part);
+      return value == null || value < 0 || value > 255;
+    })) {
+      return null;
+    }
+
+    final parsedPort =
+        int.tryParse(match.group(2) ?? '') ?? LanDiscoveryService.discoveryPort;
+    if (parsedPort <= 0 || parsedPort > 65535) {
+      return null;
+    }
+    return (host, parsedPort);
   }
 
   void _log(String message) {
@@ -1876,6 +2670,14 @@ class DiscoveryController extends ChangeNotifier {
     _pendingRemoteDownloads.removeWhere(
       (_, pending) =>
           now.difference(pending.createdAt) > _pendingRemoteDownloadTtl,
+    );
+  }
+
+  void _purgeExpiredPendingFriendRequests() {
+    final now = DateTime.now();
+    _pendingOutgoingFriendRequestsByRequestId.removeWhere(
+      (_, pending) =>
+          now.difference(pending.createdAt) > _pendingFriendRequestTtl,
     );
   }
 

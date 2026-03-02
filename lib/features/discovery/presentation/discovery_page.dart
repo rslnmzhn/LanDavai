@@ -21,6 +21,7 @@ import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../data/device_alias_repository.dart';
+import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
@@ -49,6 +50,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       deviceAliasRepository: DeviceAliasRepository(
         database: AppDatabase.instance,
       ),
+      friendRepository: FriendRepository(database: AppDatabase.instance),
       appSettingsRepository: settingsRepository,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(
@@ -113,6 +115,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             title: const Text('Landa devices'),
             actions: [
               IconButton(
+                tooltip: 'Friends',
+                onPressed: _openFriendsSheet,
+                icon: const Icon(Icons.group_rounded),
+              ),
+              IconButton(
                 tooltip: 'Settings',
                 onPressed: _openSettingsSheet,
                 icon: const Icon(Icons.tune_rounded),
@@ -169,8 +176,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                 _controller.selectedDevice?.ip ==
                                 devices[index].ip,
                             onSelect: _controller.selectDeviceByIp,
-                            onRename: _showRenameDialog,
-                            onToggleFavorite: _controller.toggleTrustedDevice,
+                            onOpenActionsMenu: _openDeviceActionsMenu,
                           ),
                         ),
                 ),
@@ -182,6 +188,191 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             onReceive: _openReceivePanel,
             onAdd: _openAddShareMenu,
             onSend: _controller.sendFilesToSelectedDevice,
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openFriendsSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        return FractionallySizedBox(
+          heightFactor: 0.84,
+          child: DefaultTabController(
+            length: 2,
+            child: AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final friends = _controller.friendDevices;
+                final requests = _controller.incomingFriendRequests;
+                return SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Friends',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          'Friendship requires confirmation from both devices.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        TabBar(
+                          tabs: [
+                            Tab(text: 'Friends (${friends.length})'),
+                            Tab(text: 'Requests (${requests.length})'),
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        Expanded(
+                          child: TabBarView(
+                            children: [
+                              friends.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No friends yet.\\nOpen a device menu and send a friend request.',
+                                        textAlign: TextAlign.center,
+                                      ),
+                                    )
+                                  : ListView.separated(
+                                      itemCount: friends.length,
+                                      separatorBuilder: (_, index) =>
+                                          const SizedBox(height: AppSpacing.xs),
+                                      itemBuilder: (_, index) {
+                                        final friend = friends[index];
+                                        final subtitleParts = <String>[
+                                          friend.ip,
+                                          if (friend.macAddress != null)
+                                            'MAC ${friend.macAddress}',
+                                          if (friend.operatingSystem != null &&
+                                              friend
+                                                  .operatingSystem!
+                                                  .isNotEmpty)
+                                            'OS ${friend.operatingSystem}',
+                                        ];
+                                        return Card(
+                                          child: ListTile(
+                                            leading: const Icon(
+                                              Icons.star,
+                                              color: AppColors.warning,
+                                            ),
+                                            title: Text(friend.displayName),
+                                            subtitle: Text(
+                                              subtitleParts.join(' • '),
+                                            ),
+                                            trailing: IconButton(
+                                              tooltip: 'Remove from friends',
+                                              onPressed:
+                                                  _controller
+                                                      .isFriendMutationInProgress
+                                                  ? null
+                                                  : () {
+                                                      unawaited(
+                                                        _controller
+                                                            .removeDeviceFromFriends(
+                                                              friend,
+                                                            ),
+                                                      );
+                                                    },
+                                              icon: const Icon(
+                                                Icons
+                                                    .person_remove_alt_1_rounded,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                              requests.isEmpty
+                                  ? const Center(
+                                      child: Text(
+                                        'No pending friend requests.',
+                                      ),
+                                    )
+                                  : ListView.separated(
+                                      itemCount: requests.length,
+                                      separatorBuilder: (_, index) =>
+                                          const SizedBox(height: AppSpacing.xs),
+                                      itemBuilder: (_, index) {
+                                        final request = requests[index];
+                                        return Card(
+                                          child: ListTile(
+                                            leading: const Icon(
+                                              Icons.person_add_alt_1_rounded,
+                                            ),
+                                            title: Text(request.senderName),
+                                            subtitle: Text(
+                                              '${request.senderIp} • '
+                                              'MAC ${request.senderMacAddress}\n'
+                                              'Received ${_formatTime(request.createdAt)}',
+                                            ),
+                                            isThreeLine: true,
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                IconButton(
+                                                  tooltip: 'Decline',
+                                                  onPressed:
+                                                      _controller
+                                                          .isFriendMutationInProgress
+                                                      ? null
+                                                      : () {
+                                                          unawaited(
+                                                            _controller
+                                                                .respondToFriendRequest(
+                                                                  requestId: request
+                                                                      .requestId,
+                                                                  accept: false,
+                                                                ),
+                                                          );
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.close_rounded,
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  tooltip: 'Accept',
+                                                  onPressed:
+                                                      _controller
+                                                          .isFriendMutationInProgress
+                                                      ? null
+                                                      : () {
+                                                          unawaited(
+                                                            _controller
+                                                                .respondToFriendRequest(
+                                                                  requestId: request
+                                                                      .requestId,
+                                                                  accept: true,
+                                                                ),
+                                                          );
+                                                        },
+                                                  icon: const Icon(
+                                                    Icons.check_rounded,
+                                                    color: AppColors.success,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         );
       },
@@ -264,6 +455,99 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
+  }
+
+  Future<bool> _confirmSharedCacheRemoval({required String displayName}) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove shared folder?'),
+          content: Text(
+            '"$displayName" will be removed from shared access on this device.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  Future<void> _openDeviceActionsMenu(
+    DiscoveredDevice device,
+    Offset? globalPosition,
+  ) async {
+    final isFriend = device.isTrusted;
+    final hasPendingRequest = _controller.hasPendingFriendRequestForDevice(
+      device,
+    );
+
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final position = globalPosition == null || overlay == null
+        ? null
+        : RelativeRect.fromRect(
+            Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 1, 1),
+            Offset.zero & overlay.size,
+          );
+
+    final action = await showMenu<String>(
+      context: context,
+      position: position ?? const RelativeRect.fromLTRB(24, 180, 24, 0),
+      items: [
+        const PopupMenuItem<String>(
+          value: 'rename',
+          child: ListTile(
+            leading: Icon(Icons.edit_outlined),
+            title: Text('Rename device'),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: isFriend || hasPendingRequest ? null : 'friend',
+          enabled: !isFriend && !hasPendingRequest,
+          child: ListTile(
+            leading: Icon(
+              isFriend
+                  ? Icons.check_circle_outline
+                  : hasPendingRequest
+                  ? Icons.schedule_rounded
+                  : Icons.person_add_alt_1_rounded,
+            ),
+            title: Text(
+              isFriend
+                  ? 'Already friends'
+                  : hasPendingRequest
+                  ? 'Friend request pending'
+                  : 'Add to friends',
+            ),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+
+    if (!mounted || action == null) {
+      return;
+    }
+
+    if (action == 'rename') {
+      await _showRenameDialog(device);
+      return;
+    }
+    if (action == 'friend') {
+      await _controller.sendFriendRequest(device);
+    }
   }
 
   Future<void> _openAddShareMenu() async {
@@ -389,6 +673,31 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                                   style: Theme.of(
                                                     context,
                                                   ).textTheme.titleMedium,
+                                                ),
+                                              ),
+                                              IconButton(
+                                                tooltip: 'Remove from sharing',
+                                                onPressed:
+                                                    _controller.isAddingShare
+                                                    ? null
+                                                    : () async {
+                                                        final confirmed =
+                                                            await _confirmSharedCacheRemoval(
+                                                              displayName: cache
+                                                                  .displayName,
+                                                            );
+                                                        if (!mounted ||
+                                                            !confirmed) {
+                                                          return;
+                                                        }
+                                                        await _controller
+                                                            .removeSharedCache(
+                                                              cache,
+                                                            );
+                                                      },
+                                                icon: const Icon(
+                                                  Icons.delete_outline_rounded,
+                                                  color: AppColors.error,
                                                 ),
                                               ),
                                             ],
@@ -746,6 +1055,16 @@ class _TransferProgressCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
+              Text(
+                _formatRateAndEta(
+                  speedBytesPerSecond: controller.uploadSpeedBytesPerSecond,
+                  eta: controller.uploadEta,
+                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
                 value: controller.uploadProgress,
                 minHeight: 6,
@@ -760,6 +1079,16 @@ class _TransferProgressCard extends StatelessWidget {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
+              Text(
+                _formatRateAndEta(
+                  speedBytesPerSecond: controller.downloadSpeedBytesPerSecond,
+                  eta: controller.downloadEta,
+                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
                 value: controller.downloadProgress,
                 minHeight: 6,
@@ -772,6 +1101,44 @@ class _TransferProgressCard extends StatelessWidget {
       ),
     );
   }
+
+  String _formatRateAndEta({
+    required double speedBytesPerSecond,
+    required Duration? eta,
+  }) {
+    final speedText = speedBytesPerSecond > 0
+        ? _formatSpeed(speedBytesPerSecond)
+        : '-- B/s';
+    final etaText = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta)}';
+    return '$speedText • $etaText';
+  }
+
+  String _formatSpeed(double bytesPerSecond) {
+    if (bytesPerSecond < 1024) {
+      return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+    }
+    final kb = bytesPerSecond / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB/s';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB/s';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(2)} GB/s';
+  }
+
+  String _formatEta(Duration eta) {
+    final totalSeconds = eta.inSeconds.clamp(0, 359999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
 }
 
 class _DeviceTile extends StatelessWidget {
@@ -779,18 +1146,22 @@ class _DeviceTile extends StatelessWidget {
     required this.device,
     required this.selected,
     required this.onSelect,
-    required this.onRename,
-    required this.onToggleFavorite,
+    required this.onOpenActionsMenu,
   });
 
   final DiscoveredDevice device;
   final bool selected;
   final void Function(String ip) onSelect;
-  final Future<void> Function(DiscoveredDevice device) onRename;
-  final Future<void> Function(DiscoveredDevice device) onToggleFavorite;
+  final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
+  onOpenActionsMenu;
 
   @override
   Widget build(BuildContext context) {
+    final targetPlatform = Theme.of(context).platform;
+    final isDesktopPlatform =
+        targetPlatform == TargetPlatform.windows ||
+        targetPlatform == TargetPlatform.linux ||
+        targetPlatform == TargetPlatform.macOS;
     final isHighlighted = device.isAppDetected;
     final tileBackground = selected
         ? AppColors.brandAccent.withValues(alpha: 0.22)
@@ -805,9 +1176,16 @@ class _DeviceTile extends StatelessWidget {
     final iconColor = isHighlighted
         ? AppColors.brandPrimary
         : AppColors.mutedIcon;
+    final iconData = switch (device.deviceCategory) {
+      DeviceCategory.phone => Icons.smartphone_rounded,
+      DeviceCategory.pc => Icons.computer_rounded,
+      DeviceCategory.unknown => Icons.devices,
+    };
     final subtitle = [
       device.ip,
       if (device.macAddress != null) 'MAC ${device.macAddress}',
+      if (device.operatingSystem != null && device.operatingSystem!.isNotEmpty)
+        'OS ${device.operatingSystem}',
     ].join(' • ');
 
     return Container(
@@ -816,37 +1194,48 @@ class _DeviceTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.lg),
         border: Border.all(color: borderColor),
       ),
-      child: ListTile(
-        minTileHeight: 56,
-        onTap: () => onSelect(device.ip),
-        onLongPress: () => onRename(device),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
-        ),
-        leading: Icon(Icons.devices, color: iconColor),
-        title: Text(
-          device.displayName,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        subtitle: Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: device.isTrusted
-                  ? 'Убрать из избранного'
-                  : 'Добавить в избранное',
-              onPressed: () => onToggleFavorite(device),
-              icon: Icon(
-                device.isTrusted ? Icons.star : Icons.star_border,
-                color: device.isTrusted
-                    ? AppColors.warning
-                    : AppColors.textSecondary,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onLongPressStart: isDesktopPlatform
+            ? null
+            : (details) =>
+                  unawaited(onOpenActionsMenu(device, details.globalPosition)),
+        onSecondaryTapDown: isDesktopPlatform
+            ? (details) =>
+                  unawaited(onOpenActionsMenu(device, details.globalPosition))
+            : null,
+        child: ListTile(
+          minTileHeight: 56,
+          onTap: () => onSelect(device.ip),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.xs,
+          ),
+          leading: Icon(iconData, color: iconColor),
+          title: Text(
+            device.displayName,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          subtitle: Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: device.isTrusted ? 'Friend' : 'Not a friend yet',
+                child: Icon(
+                  device.isTrusted ? Icons.star : Icons.star_border,
+                  color: device.isTrusted
+                      ? AppColors.warning
+                      : AppColors.textSecondary,
+                ),
               ),
-            ),
-            _StatusChip(device: device, selected: selected),
-          ],
+              const SizedBox(width: AppSpacing.xs),
+              _StatusChip(device: device, selected: selected),
+            ],
+          ),
         ),
       ),
     );
@@ -968,6 +1357,7 @@ class _ReceivePanelSheet extends StatefulWidget {
 class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   String? _selectedOwnerIp;
   final Set<String> _selectedFileIds = <String>{};
+  final Set<String> _selectedFolderIds = <String>{};
 
   @override
   Widget build(BuildContext context) {
@@ -982,6 +1372,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
         if (selectedOwner == null && _selectedOwnerIp != null) {
           _selectedOwnerIp = null;
           _selectedFileIds.clear();
+          _selectedFolderIds.clear();
         }
 
         final fileChoices = _selectedOwnerIp == null
@@ -990,12 +1381,25 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                 remoteOptions: remoteOptions,
                 ownerIp: _selectedOwnerIp!,
               );
-        final validIds = fileChoices.map((file) => file.id).toSet();
-        _selectedFileIds.removeWhere((id) => !validIds.contains(id));
+        final folderChoices = _selectedOwnerIp == null
+            ? const <_RemoteFolderChoice>[]
+            : _buildFolderChoices(fileChoices);
 
-        final selectedCount = fileChoices
-            .where((file) => _selectedFileIds.contains(file.id))
-            .length;
+        final validFileIds = fileChoices.map((file) => file.id).toSet();
+        _selectedFileIds.removeWhere((id) => !validFileIds.contains(id));
+
+        final validFolderIds = folderChoices.map((folder) => folder.id).toSet();
+        _selectedFolderIds.removeWhere((id) => !validFolderIds.contains(id));
+
+        final selectedFolderPathsByCache = _buildSelectedFolderPathsByCache(
+          folderChoices,
+        );
+        final effectiveSelectedFileIds = _resolveEffectiveSelectedFileIds(
+          files: fileChoices,
+          selectedFolderPathsByCache: selectedFolderPathsByCache,
+        );
+
+        final selectedCount = effectiveSelectedFileIds.length;
         final requests = widget.controller.incomingRequests;
 
         return SafeArea(
@@ -1068,11 +1472,14 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                             const SizedBox(height: AppSpacing.xs),
-                            Row(
+                            Wrap(
+                              spacing: AppSpacing.xs,
+                              runSpacing: AppSpacing.xs,
                               children: [
                                 TextButton(
                                   onPressed: () {
                                     setState(() {
+                                      _selectedFolderIds.clear();
                                       _selectedFileIds
                                         ..clear()
                                         ..addAll(
@@ -1080,21 +1487,32 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                         );
                                     });
                                   },
-                                  child: const Text('Выбрать все'),
+                                  child: const Text('Выбрать все файлы'),
                                 ),
-                                const SizedBox(width: AppSpacing.xs),
                                 TextButton(
                                   onPressed: () {
-                                    setState(_selectedFileIds.clear);
+                                    setState(() {
+                                      _selectedFileIds.clear();
+                                      _selectedFolderIds.clear();
+                                    });
                                   },
                                   child: const Text('Очистить'),
                                 ),
-                                const Spacer(),
-                                Text(
-                                  'Выбрано: $selectedCount',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                                OutlinedButton.icon(
+                                  onPressed: folderChoices.isEmpty
+                                      ? null
+                                      : () => _pickFolders(folderChoices),
+                                  icon: const Icon(Icons.folder_copy_outlined),
+                                  label: Text(
+                                    'Папки целиком (${_selectedFolderIds.length})',
+                                  ),
                                 ),
                               ],
+                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            Text(
+                              'Выбрано файлов: $selectedCount',
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
                             const SizedBox(height: AppSpacing.xs),
                             Expanded(
@@ -1104,20 +1522,32 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     const SizedBox(height: AppSpacing.xs),
                                 itemBuilder: (_, index) {
                                   final file = fileChoices[index];
-                                  final checked = _selectedFileIds.contains(
-                                    file.id,
-                                  );
+                                  final coveredByFolder =
+                                      _isFileCoveredByFolderSelection(
+                                        file: file,
+                                        selectedFolderPathsByCache:
+                                            selectedFolderPathsByCache,
+                                      );
+                                  final checked = effectiveSelectedFileIds
+                                      .contains(file.id);
+                                  final subtitle =
+                                      '${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}'
+                                      '${coveredByFolder ? ' • из выбранной папки' : ''}';
                                   return CheckboxListTile(
                                     value: checked,
-                                    onChanged: (value) {
-                                      setState(() {
-                                        if (value == true) {
-                                          _selectedFileIds.add(file.id);
-                                        } else {
-                                          _selectedFileIds.remove(file.id);
-                                        }
-                                      });
-                                    },
+                                    onChanged: coveredByFolder
+                                        ? null
+                                        : (value) {
+                                            setState(() {
+                                              if (value == true) {
+                                                _selectedFileIds.add(file.id);
+                                              } else {
+                                                _selectedFileIds.remove(
+                                                  file.id,
+                                                );
+                                              }
+                                            });
+                                          },
                                     contentPadding: const EdgeInsets.symmetric(
                                       horizontal: AppSpacing.sm,
                                     ),
@@ -1127,7 +1557,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
-                                      '${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}',
+                                      subtitle,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
                                     ),
@@ -1147,6 +1577,8 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     : () => _requestSelectedFiles(
                                         owner: selectedOwner,
                                         files: fileChoices,
+                                        selectedFolderPathsByCache:
+                                            selectedFolderPathsByCache,
                                       ),
                                 icon: const Icon(Icons.download_rounded),
                                 label: Text(
@@ -1249,16 +1681,124 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     setState(() {
       _selectedOwnerIp = selectedIp;
       _selectedFileIds.clear();
+      _selectedFolderIds.clear();
+    });
+  }
+
+  Future<void> _pickFolders(List<_RemoteFolderChoice> folders) async {
+    final validIds = folders.map((folder) => folder.id).toSet();
+    final initialSelection = _selectedFolderIds
+        .where(validIds.contains)
+        .toSet();
+
+    final selectedIds = await showModalBottomSheet<Set<String>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        final draftSelection = <String>{...initialSelection};
+        return FractionallySizedBox(
+          heightFactor: 0.8,
+          child: StatefulBuilder(
+            builder: (context, setModalState) {
+              return SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Скачать папки целиком',
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Отметьте папки. Их содержимое будет скачано с сохранением структуры.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: folders.length,
+                          separatorBuilder: (_, index) =>
+                              const SizedBox(height: AppSpacing.xs),
+                          itemBuilder: (_, index) {
+                            final folder = folders[index];
+                            final checked = draftSelection.contains(folder.id);
+                            return CheckboxListTile(
+                              value: checked,
+                              onChanged: (value) {
+                                setModalState(() {
+                                  if (value == true) {
+                                    draftSelection.add(folder.id);
+                                  } else {
+                                    draftSelection.remove(folder.id);
+                                  }
+                                });
+                              },
+                              title: Text(folder.displayLabel),
+                              subtitle: Text(
+                                '${folder.fileCount} файлов • ${_formatBytes(folder.totalBytes)}',
+                              ),
+                              controlAffinity: ListTileControlAffinity.leading,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: AppSpacing.xs,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Отмена'),
+                          ),
+                          const Spacer(),
+                          FilledButton(
+                            onPressed: () =>
+                                Navigator.of(context).pop(draftSelection),
+                            child: const Text('Применить'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+
+    if (selectedIds == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _selectedFolderIds
+        ..clear()
+        ..addAll(selectedIds);
     });
   }
 
   Future<void> _requestSelectedFiles({
     required _RemoteOwnerChoice owner,
     required List<_RemoteFileChoice> files,
+    required Map<String, Set<String>> selectedFolderPathsByCache,
   }) async {
     final selectedByCache = <String, Set<String>>{};
     for (final file in files) {
-      if (!_selectedFileIds.contains(file.id)) {
+      final cacheKey = _cacheSelectionKey(
+        ownerIp: file.ownerIp,
+        cacheId: file.cacheId,
+      );
+      final pickedByFolder = _matchesFolderSelection(
+        relativePath: file.relativePath,
+        selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
+      );
+      if (!_selectedFileIds.contains(file.id) && !pickedByFolder) {
         continue;
       }
       selectedByCache
@@ -1275,7 +1815,10 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     if (!mounted) {
       return;
     }
-    setState(_selectedFileIds.clear);
+    setState(() {
+      _selectedFileIds.clear();
+      _selectedFolderIds.clear();
+    });
   }
 
   _RemoteOwnerChoice? _findOwnerByIp(
@@ -1361,6 +1904,175 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
       );
     });
     return files;
+  }
+
+  List<_RemoteFolderChoice> _buildFolderChoices(List<_RemoteFileChoice> files) {
+    final byId = <String, _RemoteFolderDraft>{};
+    for (final file in files) {
+      final folderPaths = <String>[
+        '',
+        ..._extractFolderPaths(file.relativePath),
+      ];
+      for (final folderPath in folderPaths) {
+        final id = _folderId(
+          ownerIp: file.ownerIp,
+          cacheId: file.cacheId,
+          folderPath: folderPath,
+        );
+        final draft = byId.putIfAbsent(
+          id,
+          () => _RemoteFolderDraft(
+            ownerIp: file.ownerIp,
+            cacheId: file.cacheId,
+            cacheDisplayName: file.cacheDisplayName,
+            folderPath: folderPath,
+          ),
+        );
+        if (draft.fileIds.add(file.id)) {
+          draft.fileCount += 1;
+          draft.totalBytes += file.sizeBytes;
+        }
+      }
+    }
+
+    final folders = byId.values
+        .map(
+          (draft) => _RemoteFolderChoice(
+            ownerIp: draft.ownerIp,
+            cacheId: draft.cacheId,
+            cacheDisplayName: draft.cacheDisplayName,
+            folderPath: draft.folderPath,
+            fileCount: draft.fileCount,
+            totalBytes: draft.totalBytes,
+          ),
+        )
+        .toList(growable: false);
+    folders.sort((a, b) {
+      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+        b.cacheDisplayName.toLowerCase(),
+      );
+      if (cacheCmp != 0) {
+        return cacheCmp;
+      }
+      final depthCmp = a.depth.compareTo(b.depth);
+      if (depthCmp != 0) {
+        return depthCmp;
+      }
+      return a.folderPath.toLowerCase().compareTo(b.folderPath.toLowerCase());
+    });
+    return folders;
+  }
+
+  Map<String, Set<String>> _buildSelectedFolderPathsByCache(
+    List<_RemoteFolderChoice> folders,
+  ) {
+    final byCache = <String, Set<String>>{};
+    for (final folder in folders) {
+      if (!_selectedFolderIds.contains(folder.id)) {
+        continue;
+      }
+      final cacheKey = _cacheSelectionKey(
+        ownerIp: folder.ownerIp,
+        cacheId: folder.cacheId,
+      );
+      byCache.putIfAbsent(cacheKey, () => <String>{}).add(folder.folderPath);
+    }
+    return byCache;
+  }
+
+  Set<String> _resolveEffectiveSelectedFileIds({
+    required List<_RemoteFileChoice> files,
+    required Map<String, Set<String>> selectedFolderPathsByCache,
+  }) {
+    final selected = <String>{};
+    for (final file in files) {
+      if (_selectedFileIds.contains(file.id)) {
+        selected.add(file.id);
+        continue;
+      }
+      final cacheKey = _cacheSelectionKey(
+        ownerIp: file.ownerIp,
+        cacheId: file.cacheId,
+      );
+      if (_matchesFolderSelection(
+        relativePath: file.relativePath,
+        selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
+      )) {
+        selected.add(file.id);
+      }
+    }
+    return selected;
+  }
+
+  bool _isFileCoveredByFolderSelection({
+    required _RemoteFileChoice file,
+    required Map<String, Set<String>> selectedFolderPathsByCache,
+  }) {
+    final cacheKey = _cacheSelectionKey(
+      ownerIp: file.ownerIp,
+      cacheId: file.cacheId,
+    );
+    return _matchesFolderSelection(
+      relativePath: file.relativePath,
+      selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
+    );
+  }
+
+  bool _matchesFolderSelection({
+    required String relativePath,
+    required Set<String>? selectedFolderPaths,
+  }) {
+    if (selectedFolderPaths == null || selectedFolderPaths.isEmpty) {
+      return false;
+    }
+    final normalizedPath = _normalizeRelativePath(relativePath);
+    for (final folderPath in selectedFolderPaths) {
+      final normalizedFolder = _normalizeRelativePath(folderPath);
+      if (normalizedFolder.isEmpty) {
+        return true;
+      }
+      if (normalizedPath == normalizedFolder ||
+          normalizedPath.startsWith('$normalizedFolder/')) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _cacheSelectionKey({
+    required String ownerIp,
+    required String cacheId,
+  }) {
+    return '$ownerIp|$cacheId';
+  }
+
+  String _folderId({
+    required String ownerIp,
+    required String cacheId,
+    required String folderPath,
+  }) {
+    return '$ownerIp|$cacheId|$folderPath';
+  }
+
+  List<String> _extractFolderPaths(String relativePath) {
+    final normalized = _normalizeRelativePath(relativePath);
+    final parts = normalized
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (parts.length < 2) {
+      return const <String>[];
+    }
+
+    final folders = <String>[];
+    for (var i = 1; i < parts.length; i++) {
+      folders.add(parts.take(i).join('/'));
+    }
+    return folders;
+  }
+
+  String _normalizeRelativePath(String value) {
+    return value.replaceAll('\\', '/').trim();
   }
 
   String _formatBytes(int bytes) {
@@ -1523,6 +2235,50 @@ class _RemoteOwnerDraft {
   final String macAddress;
   int shareCount = 0;
   final Set<String> uniqueFiles = <String>{};
+}
+
+class _RemoteFolderChoice {
+  const _RemoteFolderChoice({
+    required this.ownerIp,
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.folderPath,
+    required this.fileCount,
+    required this.totalBytes,
+  });
+
+  final String ownerIp;
+  final String cacheId;
+  final String cacheDisplayName;
+  final String folderPath;
+  final int fileCount;
+  final int totalBytes;
+
+  String get id => '$ownerIp|$cacheId|$folderPath';
+
+  int get depth =>
+      folderPath.isEmpty ? 0 : '/'.allMatches(folderPath).length + 1;
+
+  String get displayLabel => folderPath.isEmpty
+      ? '$cacheDisplayName (вся расшаренная папка)'
+      : '$cacheDisplayName / $folderPath';
+}
+
+class _RemoteFolderDraft {
+  _RemoteFolderDraft({
+    required this.ownerIp,
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.folderPath,
+  });
+
+  final String ownerIp;
+  final String cacheId;
+  final String cacheDisplayName;
+  final String folderPath;
+  int fileCount = 0;
+  int totalBytes = 0;
+  final Set<String> fileIds = <String>{};
 }
 
 class _RemoteFileChoice {
