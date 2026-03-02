@@ -457,6 +457,32 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
   }
 
+  Future<bool> _confirmSharedCacheRemoval({required String displayName}) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove shared folder?'),
+          content: Text(
+            '"$displayName" will be removed from shared access on this device.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
   Future<void> _openDeviceActionsMenu(
     DiscoveredDevice device,
     Offset? globalPosition,
@@ -647,6 +673,31 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                                   style: Theme.of(
                                                     context,
                                                   ).textTheme.titleMedium,
+                                                ),
+                                              ),
+                                              IconButton(
+                                                tooltip: 'Remove from sharing',
+                                                onPressed:
+                                                    _controller.isAddingShare
+                                                    ? null
+                                                    : () async {
+                                                        final confirmed =
+                                                            await _confirmSharedCacheRemoval(
+                                                              displayName: cache
+                                                                  .displayName,
+                                                            );
+                                                        if (!mounted ||
+                                                            !confirmed) {
+                                                          return;
+                                                        }
+                                                        await _controller
+                                                            .removeSharedCache(
+                                                              cache,
+                                                            );
+                                                      },
+                                                icon: const Icon(
+                                                  Icons.delete_outline_rounded,
+                                                  color: AppColors.error,
                                                 ),
                                               ),
                                             ],

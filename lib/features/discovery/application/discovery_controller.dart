@@ -368,6 +368,23 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> removeSharedCache(SharedFolderCacheRecord cache) async {
+    _isAddingShare = true;
+    notifyListeners();
+    try {
+      await _sharedFolderCacheRepository.deleteCache(cache.cacheId);
+      await _loadOwnerCaches();
+      _errorMessage = null;
+      _infoMessage = 'Removed from sharing: ${cache.displayName}';
+    } catch (error) {
+      _errorMessage = 'Failed to remove shared folder: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
   void clearInfoMessage() {
     _infoMessage = null;
     notifyListeners();
