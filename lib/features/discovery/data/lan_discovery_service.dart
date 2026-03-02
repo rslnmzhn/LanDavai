@@ -281,6 +281,7 @@ class DownloadRequestEvent {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.previewMode,
     required this.observedAt,
   });
 
@@ -290,6 +291,8 @@ class DownloadRequestEvent {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final bool previewMode;
+
   final DateTime observedAt;
 }
 
@@ -659,6 +662,7 @@ class LanDiscoveryService {
               requesterMacAddress: downloadRequest.requesterMacAddress,
               cacheId: downloadRequest.cacheId,
               selectedRelativePaths: downloadRequest.selectedRelativePaths,
+              previewMode: downloadRequest.previewMode,
               observedAt: DateTime.now(),
             ),
           );
@@ -898,6 +902,7 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required String cacheId,
     List<String> selectedRelativePaths = const <String>[],
+    bool previewMode = false,
   }) async {
     final payload = <String, Object?>{
       'instanceId': _instanceId,
@@ -906,6 +911,7 @@ class LanDiscoveryService {
       'requesterMacAddress': requesterMacAddress,
       'cacheId': cacheId,
       'selectedRelativePaths': selectedRelativePaths,
+      'previewMode': previewMode,
       'createdAtMs': DateTime.now().millisecondsSinceEpoch,
     };
     await _sendEncodedPacket(
@@ -1362,6 +1368,7 @@ class LanDiscoveryService {
     final requesterMacAddress = decoded['requesterMacAddress'] as String?;
     final cacheId = decoded['cacheId'] as String?;
     final selectedRelativePathsRaw = decoded['selectedRelativePaths'];
+    final previewMode = decoded['previewMode'] as bool? ?? false;
     if (instanceId == null ||
         requestId == null ||
         requesterName == null ||
@@ -1391,6 +1398,7 @@ class LanDiscoveryService {
       requesterMacAddress: requesterMacAddress,
       cacheId: cacheId,
       selectedRelativePaths: selectedRelativePaths,
+      previewMode: previewMode,
     );
   }
 
@@ -1742,6 +1750,7 @@ class _DownloadRequestPacket {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.previewMode,
   });
 
   final String instanceId;
@@ -1750,6 +1759,7 @@ class _DownloadRequestPacket {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final bool previewMode;
 }
 
 class _ThumbnailSyncRequestPacket {

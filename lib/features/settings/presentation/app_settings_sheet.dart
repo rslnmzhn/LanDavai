@@ -1,17 +1,20 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../domain/app_settings.dart';
 
-class AppSettingsSheet extends StatelessWidget {
+class AppSettingsSheet extends StatefulWidget {
   const AppSettingsSheet({
     required this.settings,
     required this.onBackgroundIntervalChanged,
     required this.onDownloadAttemptNotificationsChanged,
     required this.onMinimizeToTrayChanged,
+    required this.onPreviewCacheMaxSizeGbChanged,
+    required this.onPreviewCacheMaxAgeDaysChanged,
     super.key,
   });
 
@@ -19,6 +22,74 @@ class AppSettingsSheet extends StatelessWidget {
   final ValueChanged<BackgroundScanIntervalOption> onBackgroundIntervalChanged;
   final ValueChanged<bool> onDownloadAttemptNotificationsChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
+  final ValueChanged<int> onPreviewCacheMaxSizeGbChanged;
+  final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
+
+  @override
+  State<AppSettingsSheet> createState() => _AppSettingsSheetState();
+}
+
+class _AppSettingsSheetState extends State<AppSettingsSheet> {
+  late final TextEditingController _cacheSizeController;
+  late final TextEditingController _cacheAgeController;
+
+  @override
+  void initState() {
+    super.initState();
+    _cacheSizeController = TextEditingController(
+      text: widget.settings.previewCacheMaxSizeGb.toString(),
+    );
+    _cacheAgeController = TextEditingController(
+      text: widget.settings.previewCacheMaxAgeDays.toString(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant AppSettingsSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.settings.previewCacheMaxSizeGb !=
+        widget.settings.previewCacheMaxSizeGb) {
+      _cacheSizeController.text = widget.settings.previewCacheMaxSizeGb
+          .toString();
+    }
+    if (oldWidget.settings.previewCacheMaxAgeDays !=
+        widget.settings.previewCacheMaxAgeDays) {
+      _cacheAgeController.text = widget.settings.previewCacheMaxAgeDays
+          .toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cacheSizeController.dispose();
+    _cacheAgeController.dispose();
+    super.dispose();
+  }
+
+  void _showValidationMessage(String message) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _saveCacheSize() {
+    final parsed = int.tryParse(_cacheSizeController.text.trim());
+    if (parsed == null || parsed < 0) {
+      _showValidationMessage('Введите неотрицательное число (ГБ).');
+      return;
+    }
+    widget.onPreviewCacheMaxSizeGbChanged(parsed);
+  }
+
+  void _saveCacheAge() {
+    final parsed = int.tryParse(_cacheAgeController.text.trim());
+    if (parsed == null || parsed < 0) {
+      _showValidationMessage('Введите неотрицательное число (дни).');
+      return;
+    }
+    widget.onPreviewCacheMaxAgeDaysChanged(parsed);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,74 +101,140 @@ class AppSettingsSheet extends StatelessWidget {
           AppSpacing.md,
           AppSpacing.lg,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Настройки', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              'Фоновое сканирование сети',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-              decoration: BoxDecoration(
-                color: AppColors.surfaceSoft,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: AppColors.mutedBorder),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Настройки', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Фоновое сканирование сети',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<BackgroundScanIntervalOption>(
-                  isExpanded: true,
-                  value: settings.backgroundScanInterval,
-                  items: BackgroundScanIntervalOption.values
-                      .map(
-                        (option) => DropdownMenuItem(
-                          value: option,
-                          child: Text(option.label),
-                        ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (next) {
-                    if (next == null) {
-                      return;
-                    }
-                    onBackgroundIntervalChanged(next);
-                  },
+              const SizedBox(height: AppSpacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceSoft,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: AppColors.mutedBorder),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<BackgroundScanIntervalOption>(
+                    isExpanded: true,
+                    value: widget.settings.backgroundScanInterval,
+                    items: BackgroundScanIntervalOption.values
+                        .map(
+                          (option) => DropdownMenuItem(
+                            value: option,
+                            child: Text(option.label),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (next) {
+                      if (next == null) {
+                        return;
+                      }
+                      widget.onBackgroundIntervalChanged(next);
+                    },
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Интервал управляет авто-сканированием. Для немедленного обновления используйте кнопку Refresh.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            SwitchListTile.adaptive(
-              value: settings.downloadAttemptNotificationsEnabled,
-              title: const Text('Уведомлять о попытках скачивания'),
-              subtitle: const Text(
-                'Показывать системное уведомление, когда устройство просит ваши файлы.',
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Интервал управляет авто-сканированием. Для немедленного обновления используйте кнопку Refresh.',
+                style: Theme.of(context).textTheme.bodySmall,
               ),
-              contentPadding: EdgeInsets.zero,
-              onChanged: onDownloadAttemptNotificationsChanged,
-            ),
-            if (defaultTargetPlatform == TargetPlatform.windows ||
-                defaultTargetPlatform == TargetPlatform.linux)
+              const SizedBox(height: AppSpacing.md),
               SwitchListTile.adaptive(
-                value: settings.minimizeToTrayOnClose,
-                title: const Text('Сворачивать в трей при закрытии'),
+                value: widget.settings.downloadAttemptNotificationsEnabled,
+                title: const Text('Уведомлять о попытках скачивания'),
                 subtitle: const Text(
-                  'Окно скрывается в трей, приложение продолжает работу в фоне.',
+                  'Показывать системное уведомление, когда устройство просит ваши файлы.',
                 ),
                 contentPadding: EdgeInsets.zero,
-                onChanged: onMinimizeToTrayChanged,
+                onChanged: widget.onDownloadAttemptNotificationsChanged,
               ),
-          ],
+              if (defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.linux)
+                SwitchListTile.adaptive(
+                  value: widget.settings.minimizeToTrayOnClose,
+                  title: const Text('Сворачивать в трей при закрытии'),
+                  subtitle: const Text(
+                    'Окно скрывается в трей, приложение продолжает работу в фоне.',
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: widget.onMinimizeToTrayChanged,
+                ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Ограничения preview-кэша',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '0 = без ограничений. Если срок = 0, файлы живут бессрочно и удаляются только по лимиту размера.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _IntegerSettingField(
+                controller: _cacheSizeController,
+                label: 'Максимальный размер кэша (ГБ)',
+                onSave: _saveCacheSize,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _IntegerSettingField(
+                controller: _cacheAgeController,
+                label: 'Максимальный срок хранения (дни)',
+                onSave: _saveCacheAge,
+              ),
+            ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+class _IntegerSettingField extends StatelessWidget {
+  const _IntegerSettingField({
+    required this.controller,
+    required this.label,
+    required this.onSave,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: InputDecoration(
+              labelText: label,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (_) => onSave(),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            onPressed: onSave,
+            child: const Text('Сохранить'),
+          ),
+        ),
+      ],
     );
   }
 }

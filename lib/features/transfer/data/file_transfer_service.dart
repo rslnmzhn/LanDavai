@@ -16,12 +16,14 @@ class TransferSourceFile {
     required this.fileName,
     required this.sizeBytes,
     required this.sha256,
+    this.deleteAfterTransfer = false,
   });
 
   final String sourcePath;
   final String fileName;
   final int sizeBytes;
   final String sha256;
+  final bool deleteAfterTransfer;
 }
 
 class TransferReceiveSession {

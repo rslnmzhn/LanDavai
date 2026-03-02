@@ -12,6 +12,7 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/data/transfer_history_repository.dart';
+import '../../files/presentation/file_explorer_page.dart';
 import '../../settings/data/app_settings_repository.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
@@ -128,6 +129,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 tooltip: 'Download history',
                 onPressed: _openHistorySheet,
                 icon: const Icon(Icons.history),
+              ),
+              IconButton(
+                tooltip: 'Files',
+                onPressed: _openFileExplorer,
+                icon: const Icon(Icons.folder_open_rounded),
               ),
               IconButton(
                 tooltip: 'Refresh',
@@ -402,6 +408,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 unawaited(
                   _desktopWindowService.setMinimizeToTrayEnabled(enabled),
                 );
+              },
+              onPreviewCacheMaxSizeGbChanged: (value) {
+                unawaited(_controller.setPreviewCacheMaxSizeGb(value));
+              },
+              onPreviewCacheMaxAgeDaysChanged: (value) {
+                unawaited(_controller.setPreviewCacheMaxAgeDays(value));
               },
             );
           },
@@ -770,6 +782,68 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         );
       },
     );
+  }
+
+  Future<void> _openFileExplorer() async {
+    final storageService = TransferStorageService();
+    final receiveDirectory = await storageService.resolveReceiveDirectory();
+    Directory? publicDownloadsDirectory;
+    if (Platform.isAndroid) {
+      final basePublic = await storageService
+          .resolveAndroidPublicDownloadsDirectory();
+      if (basePublic != null) {
+        publicDownloadsDirectory = Directory(p.join(basePublic.path, 'Landa'));
+      }
+    }
+    await _controller.reloadOwnerSharedCaches();
+
+    final roots = <FileExplorerRoot>[];
+    final seenPaths = <String>{};
+
+    void addRoot({required String label, required String path}) {
+      final normalized = _normalizePathKey(path);
+      if (normalized.isEmpty || seenPaths.contains(normalized)) {
+        return;
+      }
+      if (!Directory(path).existsSync()) {
+        return;
+      }
+      seenPaths.add(normalized);
+      roots.add(FileExplorerRoot(label: label, path: path));
+    }
+
+    if (publicDownloadsDirectory != null) {
+      addRoot(label: 'Landa Downloads', path: publicDownloadsDirectory.path);
+    }
+    addRoot(label: 'Incoming', path: receiveDirectory.path);
+    for (final cache in _controller.ownerSharedCaches) {
+      if (cache.rootPath.startsWith('selection://')) {
+        continue;
+      }
+      addRoot(label: 'Shared: ${cache.displayName}', path: cache.rootPath);
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (roots.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No local folders available for viewer.')),
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(builder: (_) => FileExplorerPage(roots: roots)),
+    );
+  }
+
+  String _normalizePathKey(String value) {
+    var normalized = p.normalize(value).replaceAll('\\\\', '/').trim();
+    if (Platform.isWindows) {
+      normalized = normalized.toLowerCase();
+    }
+    return normalized;
   }
 
   Future<void> _openHistorySheet() async {
@@ -1358,6 +1432,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   String? _selectedOwnerIp;
   final Set<String> _selectedFileIds = <String>{};
   final Set<String> _selectedFolderIds = <String>{};
+  String? _previewingFileId;
 
   @override
   Widget build(BuildContext context) {
@@ -1563,7 +1638,30 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     ),
                                     controlAffinity:
                                         ListTileControlAffinity.leading,
-                                    secondary: _RemoteFilePreview(file: file),
+                                    secondary: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Preview before download',
+                                          onPressed: _previewingFileId == null
+                                              ? () => _previewRemoteFile(file)
+                                              : null,
+                                          icon: _previewingFileId == file.id
+                                              ? const SizedBox(
+                                                  width: 18,
+                                                  height: 18,
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                      ),
+                                                )
+                                              : const Icon(
+                                                  Icons.visibility_outlined,
+                                                ),
+                                        ),
+                                        _RemoteFilePreview(file: file),
+                                      ],
+                                    ),
                                   );
                                 },
                               ),
@@ -1781,6 +1879,36 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
         ..clear()
         ..addAll(selectedIds);
     });
+  }
+
+  Future<void> _previewRemoteFile(_RemoteFileChoice file) async {
+    setState(() {
+      _previewingFileId = file.id;
+    });
+
+    try {
+      final previewPath = await widget.controller.requestRemoteFilePreview(
+        ownerIp: file.ownerIp,
+        ownerName: _selectedOwnerIp ?? file.ownerIp,
+        cacheId: file.cacheId,
+        relativePath: file.relativePath,
+      );
+      if (!mounted || previewPath == null || previewPath.trim().isEmpty) {
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LocalFileViewerPage(filePath: previewPath),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _previewingFileId = null;
+        });
+      }
+    }
   }
 
   Future<void> _requestSelectedFiles({
