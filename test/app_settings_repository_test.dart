@@ -49,6 +49,14 @@ void main() {
       settings.minimizeToTrayOnClose,
       AppSettings.defaults.minimizeToTrayOnClose,
     );
+    expect(
+      settings.previewCacheMaxSizeGb,
+      AppSettings.defaults.previewCacheMaxSizeGb,
+    );
+    expect(
+      settings.previewCacheMaxAgeDays,
+      AppSettings.defaults.previewCacheMaxAgeDays,
+    );
   });
 
   test('persists and restores all app settings', () async {
@@ -56,6 +64,8 @@ void main() {
       backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
       downloadAttemptNotificationsEnabled: false,
       minimizeToTrayOnClose: false,
+      previewCacheMaxSizeGb: 4,
+      previewCacheMaxAgeDays: 10,
     );
 
     await repository.save(expected);
@@ -67,5 +77,7 @@ void main() {
       expected.downloadAttemptNotificationsEnabled,
     );
     expect(restored.minimizeToTrayOnClose, expected.minimizeToTrayOnClose);
+    expect(restored.previewCacheMaxSizeGb, expected.previewCacheMaxSizeGb);
+    expect(restored.previewCacheMaxAgeDays, expected.previewCacheMaxAgeDays);
   });
 }

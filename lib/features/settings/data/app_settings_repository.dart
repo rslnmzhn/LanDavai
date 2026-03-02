@@ -17,6 +17,8 @@ class AppSettingsRepository {
   static const String _downloadNotificationsKey =
       'download_attempt_notifications_enabled';
   static const String _minimizeToTrayKey = 'minimize_to_tray_on_close';
+  static const String _previewCacheMaxSizeGbKey = 'preview_cache_max_size_gb';
+  static const String _previewCacheMaxAgeDaysKey = 'preview_cache_max_age_days';
 
   Future<AppSettings> load() async {
     final db = await _databaseProvider();
@@ -52,6 +54,14 @@ class AppSettingsRepository {
         values[_minimizeToTrayKey],
         fallback: defaults.minimizeToTrayOnClose,
       ),
+      previewCacheMaxSizeGb: _parseNonNegativeInt(
+        values[_previewCacheMaxSizeGbKey],
+        fallback: defaults.previewCacheMaxSizeGb,
+      ),
+      previewCacheMaxAgeDays: _parseNonNegativeInt(
+        values[_previewCacheMaxAgeDaysKey],
+        fallback: defaults.previewCacheMaxAgeDays,
+      ),
     );
   }
 
@@ -77,6 +87,18 @@ class AppSettingsRepository {
         value: settings.minimizeToTrayOnClose ? '1' : '0',
         updatedAtMs: now,
       );
+      await _upsertSetting(
+        txn: txn,
+        key: _previewCacheMaxSizeGbKey,
+        value: settings.previewCacheMaxSizeGb.toString(),
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _previewCacheMaxAgeDaysKey,
+        value: settings.previewCacheMaxAgeDays.toString(),
+        updatedAtMs: now,
+      );
     });
   }
 
@@ -98,5 +120,13 @@ class AppSettingsRepository {
       return fallback;
     }
     return raw == '1';
+  }
+
+  int _parseNonNegativeInt(String? raw, {required int fallback}) {
+    final parsed = int.tryParse(raw ?? '');
+    if (parsed == null || parsed < 0) {
+      return fallback;
+    }
+    return parsed;
   }
 }
