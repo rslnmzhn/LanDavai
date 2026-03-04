@@ -49,6 +49,8 @@ void main() {
       settings.minimizeToTrayOnClose,
       AppSettings.defaults.minimizeToTrayOnClose,
     );
+    expect(settings.isLeftHandedMode, AppSettings.defaults.isLeftHandedMode);
+    expect(settings.videoLinkPassword, AppSettings.defaults.videoLinkPassword);
     expect(
       settings.previewCacheMaxSizeGb,
       AppSettings.defaults.previewCacheMaxSizeGb,
@@ -68,6 +70,8 @@ void main() {
       backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
       downloadAttemptNotificationsEnabled: false,
       minimizeToTrayOnClose: false,
+      isLeftHandedMode: true,
+      videoLinkPassword: 'secret123',
       previewCacheMaxSizeGb: 4,
       previewCacheMaxAgeDays: 10,
       clipboardHistoryMaxEntries: 42,
@@ -82,6 +86,8 @@ void main() {
       expected.downloadAttemptNotificationsEnabled,
     );
     expect(restored.minimizeToTrayOnClose, expected.minimizeToTrayOnClose);
+    expect(restored.isLeftHandedMode, expected.isLeftHandedMode);
+    expect(restored.videoLinkPassword, expected.videoLinkPassword);
     expect(restored.previewCacheMaxSizeGb, expected.previewCacheMaxSizeGb);
     expect(restored.previewCacheMaxAgeDays, expected.previewCacheMaxAgeDays);
     expect(

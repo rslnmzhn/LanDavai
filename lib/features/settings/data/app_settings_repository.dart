@@ -17,6 +17,8 @@ class AppSettingsRepository {
   static const String _downloadNotificationsKey =
       'download_attempt_notifications_enabled';
   static const String _minimizeToTrayKey = 'minimize_to_tray_on_close';
+  static const String _leftHandedModeKey = 'left_handed_mode_enabled';
+  static const String _videoLinkPasswordKey = 'video_link_password';
   static const String _previewCacheMaxSizeGbKey = 'preview_cache_max_size_gb';
   static const String _previewCacheMaxAgeDaysKey = 'preview_cache_max_age_days';
   static const String _clipboardHistoryMaxEntriesKey =
@@ -56,6 +58,11 @@ class AppSettingsRepository {
         values[_minimizeToTrayKey],
         fallback: defaults.minimizeToTrayOnClose,
       ),
+      isLeftHandedMode: _parseBool(
+        values[_leftHandedModeKey],
+        fallback: defaults.isLeftHandedMode,
+      ),
+      videoLinkPassword: values[_videoLinkPasswordKey] ?? '',
       previewCacheMaxSizeGb: _parseNonNegativeInt(
         values[_previewCacheMaxSizeGbKey],
         fallback: defaults.previewCacheMaxSizeGb,
@@ -91,6 +98,18 @@ class AppSettingsRepository {
         txn: txn,
         key: _minimizeToTrayKey,
         value: settings.minimizeToTrayOnClose ? '1' : '0',
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _leftHandedModeKey,
+        value: settings.isLeftHandedMode ? '1' : '0',
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _videoLinkPasswordKey,
+        value: settings.videoLinkPassword,
         updatedAtMs: now,
       );
       await _upsertSetting(

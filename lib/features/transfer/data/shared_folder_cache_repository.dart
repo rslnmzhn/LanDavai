@@ -339,6 +339,15 @@ class SharedFolderCacheRepository {
     return rows.map(SharedFolderCacheRecord.fromDbMap).toList(growable: false);
   }
 
+  Future<SharedFolderCacheRecord> refreshOwnerSelectionCacheEntries(
+    SharedFolderCacheRecord cache,
+  ) async {
+    if (!cache.rootPath.startsWith('selection://')) {
+      return cache;
+    }
+    return _refreshSelectionCacheEntries(cache);
+  }
+
   Future<List<SharedFolderIndexEntry>> readIndexEntries(String cacheId) async {
     final db = await _database.database;
     final rows = await db.query(

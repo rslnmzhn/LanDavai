@@ -12,16 +12,34 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 
 class FileExplorerRoot {
-  const FileExplorerRoot({required this.label, required this.path});
+  const FileExplorerRoot({
+    required this.label,
+    required this.path,
+    this.isSharedFolder = false,
+  });
 
   final String label;
   final String path;
+  final bool isSharedFolder;
 }
 
+enum SharedRecacheActionResult { started, refreshedOnly, cancelled }
+
 class FileExplorerPage extends StatefulWidget {
-  const FileExplorerPage({required this.roots, super.key});
+  const FileExplorerPage({
+    required this.roots,
+    this.onRecacheSharedFolders,
+    this.recacheStateListenable,
+    this.isSharedRecacheInProgress,
+    this.sharedRecacheProgress,
+    super.key,
+  });
 
   final List<FileExplorerRoot> roots;
+  final Future<SharedRecacheActionResult> Function()? onRecacheSharedFolders;
+  final Listenable? recacheStateListenable;
+  final bool Function()? isSharedRecacheInProgress;
+  final double? Function()? sharedRecacheProgress;
 
   @override
   State<FileExplorerPage> createState() => _FileExplorerPageState();
@@ -38,9 +56,26 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
   FileExplorerRoot get _selectedRoot => _roots[_selectedRootIndex];
 
+  bool get _isSharedRecacheRunning {
+    final resolver = widget.isSharedRecacheInProgress;
+    if (resolver == null) {
+      return false;
+    }
+    return resolver();
+  }
+
+  double? get _sharedRecacheProgressValue {
+    final resolver = widget.sharedRecacheProgress;
+    if (resolver == null) {
+      return null;
+    }
+    return resolver();
+  }
+
   @override
   void initState() {
     super.initState();
+    widget.recacheStateListenable?.addListener(_handleRecacheStateChanged);
     _roots = widget.roots.where((root) => root.path.trim().isNotEmpty).toList();
     if (_roots.isEmpty) {
       _errorMessage = 'No local folders available.';
@@ -51,6 +86,30 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     _selectedRootIndex = 0;
     _currentPath = _roots.first.path;
     _loadDirectory(_currentPath);
+  }
+
+  @override
+  void didUpdateWidget(covariant FileExplorerPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.recacheStateListenable != widget.recacheStateListenable) {
+      oldWidget.recacheStateListenable?.removeListener(
+        _handleRecacheStateChanged,
+      );
+      widget.recacheStateListenable?.addListener(_handleRecacheStateChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.recacheStateListenable?.removeListener(_handleRecacheStateChanged);
+    super.dispose();
+  }
+
+  void _handleRecacheStateChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {});
   }
 
   @override
@@ -65,9 +124,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
             icon: const Icon(Icons.source_outlined),
           ),
           IconButton(
-            tooltip: 'Refresh',
-            onPressed: () => _loadDirectory(_currentPath),
-            icon: const Icon(Icons.refresh_rounded),
+            tooltip: _refreshActionTooltip,
+            onPressed: _handleRefreshAction,
+            icon: _buildRefreshActionIcon(),
           ),
         ],
       ),
@@ -128,6 +187,31 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return false;
     }
     return _isWithinRoot(current, root);
+  }
+
+  bool get _canRecacheSelectedRoot =>
+      _selectedRoot.isSharedFolder && widget.onRecacheSharedFolders != null;
+
+  String get _refreshActionTooltip =>
+      _canRecacheSelectedRoot ? 'Re-cache shared folders/files' : 'Refresh';
+
+  IconData get _refreshActionIcon =>
+      _canRecacheSelectedRoot ? Icons.cached_rounded : Icons.refresh_rounded;
+
+  Widget _buildRefreshActionIcon() {
+    if (_canRecacheSelectedRoot && _isSharedRecacheRunning) {
+      return SizedBox(
+        width: 22,
+        height: 22,
+        child: CircularProgressIndicator(
+          strokeWidth: 2.4,
+          value: _sharedRecacheProgressValue,
+          color: AppColors.brandPrimary,
+          backgroundColor: AppColors.mutedBorder,
+        ),
+      );
+    }
+    return Icon(_refreshActionIcon);
   }
 
   Future<void> _pickRoot() async {
@@ -211,6 +295,18 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
         _errorMessage = 'Cannot open folder: $error';
       });
     }
+  }
+
+  Future<void> _handleRefreshAction() async {
+    if (!_canRecacheSelectedRoot) {
+      await _loadDirectory(_currentPath);
+      return;
+    }
+    final action = await widget.onRecacheSharedFolders!.call();
+    if (action == SharedRecacheActionResult.cancelled) {
+      return;
+    }
+    await _loadDirectory(_currentPath);
   }
 
   Future<void> _goUp() async {

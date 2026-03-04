@@ -13,6 +13,8 @@ class AppSettingsSheet extends StatefulWidget {
     required this.onBackgroundIntervalChanged,
     required this.onDownloadAttemptNotificationsChanged,
     required this.onMinimizeToTrayChanged,
+    required this.onLeftHandedModeChanged,
+    required this.onVideoLinkPasswordChanged,
     required this.onPreviewCacheMaxSizeGbChanged,
     required this.onPreviewCacheMaxAgeDaysChanged,
     required this.onClipboardHistoryMaxEntriesChanged,
@@ -23,6 +25,8 @@ class AppSettingsSheet extends StatefulWidget {
   final ValueChanged<BackgroundScanIntervalOption> onBackgroundIntervalChanged;
   final ValueChanged<bool> onDownloadAttemptNotificationsChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
+  final ValueChanged<bool> onLeftHandedModeChanged;
+  final ValueChanged<String> onVideoLinkPasswordChanged;
   final ValueChanged<int> onPreviewCacheMaxSizeGbChanged;
   final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
   final ValueChanged<int> onClipboardHistoryMaxEntriesChanged;
@@ -35,6 +39,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _cacheSizeController;
   late final TextEditingController _cacheAgeController;
   late final TextEditingController _clipboardLimitController;
+  late final TextEditingController _videoLinkPasswordController;
 
   @override
   void initState() {
@@ -47,6 +52,9 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     );
     _clipboardLimitController = TextEditingController(
       text: widget.settings.clipboardHistoryMaxEntries.toString(),
+    );
+    _videoLinkPasswordController = TextEditingController(
+      text: widget.settings.videoLinkPassword,
     );
   }
 
@@ -70,6 +78,10 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
           .clipboardHistoryMaxEntries
           .toString();
     }
+    if (oldWidget.settings.videoLinkPassword !=
+        widget.settings.videoLinkPassword) {
+      _videoLinkPasswordController.text = widget.settings.videoLinkPassword;
+    }
   }
 
   @override
@@ -77,6 +89,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     _cacheSizeController.dispose();
     _cacheAgeController.dispose();
     _clipboardLimitController.dispose();
+    _videoLinkPasswordController.dispose();
     super.dispose();
   }
 
@@ -112,6 +125,10 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onClipboardHistoryMaxEntriesChanged(parsed);
+  }
+
+  void _saveVideoLinkPassword() {
+    widget.onVideoLinkPasswordChanged(_videoLinkPasswordController.text.trim());
   }
 
   @override
@@ -190,6 +207,15 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                   contentPadding: EdgeInsets.zero,
                   onChanged: widget.onMinimizeToTrayChanged,
                 ),
+              SwitchListTile.adaptive(
+                value: widget.settings.isLeftHandedMode,
+                title: const Text('Режим для левшей'),
+                subtitle: const Text(
+                  'Меню с тремя полосками и боковая панель переедут на левую сторону.',
+                ),
+                contentPadding: EdgeInsets.zero,
+                onChanged: widget.onLeftHandedModeChanged,
+              ),
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'Ограничения preview-кэша',
@@ -228,6 +254,23 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 label: 'Максимум записей истории',
                 onSave: _saveClipboardLimit,
               ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'Пароль веб-ссылки',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Используется для доступа к видео по ссылке из меню.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _TextSettingField(
+                controller: _videoLinkPasswordController,
+                label: 'Пароль для веб-сервера',
+                obscureText: true,
+                onSave: _saveVideoLinkPassword,
+              ),
             ],
           ),
         ),
@@ -257,6 +300,49 @@ class _IntegerSettingField extends StatelessWidget {
             controller: controller,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: InputDecoration(
+              labelText: label,
+              border: const OutlineInputBorder(),
+              isDense: true,
+            ),
+            onSubmitted: (_) => onSave(),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        SizedBox(
+          height: 48,
+          child: FilledButton(
+            onPressed: onSave,
+            child: const Text('Сохранить'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TextSettingField extends StatelessWidget {
+  const _TextSettingField({
+    required this.controller,
+    required this.label,
+    required this.onSave,
+    this.obscureText = false,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final VoidCallback onSave;
+  final bool obscureText;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: controller,
+            obscureText: obscureText,
             decoration: InputDecoration(
               labelText: label,
               border: const OutlineInputBorder(),
