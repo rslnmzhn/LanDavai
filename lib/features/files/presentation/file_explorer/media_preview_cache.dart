@@ -107,7 +107,11 @@ class _MediaPreviewCache {
       extraKey: extraKey,
     );
     if (_memoryByKey.containsKey(key)) {
-      return _memoryByKey[key];
+      final cached = _memoryByKey[key];
+      if (cached != null && cached.isNotEmpty) {
+        return cached;
+      }
+      _memoryByKey.remove(key);
     }
     final pending = _pendingByKey[key];
     if (pending != null) {
@@ -120,13 +124,16 @@ class _MediaPreviewCache {
         final cacheFile = File(p.join(cacheDir.path, '$kind-$key.jpg'));
         if (await cacheFile.exists()) {
           final cachedBytes = await cacheFile.readAsBytes();
-          _rememberInMemory(key, cachedBytes);
-          return cachedBytes;
+          if (cachedBytes.isEmpty) {
+            await cacheFile.delete();
+          } else {
+            _rememberInMemory(key, cachedBytes);
+            return cachedBytes;
+          }
         }
 
         final generated = await builder();
         if (generated == null || generated.isEmpty) {
-          _rememberInMemory(key, null);
           return null;
         }
 
@@ -210,18 +217,76 @@ class _MediaPreviewCache {
     required int timeMs,
   }) async {
     final player = Player();
+    final videoController = VideoController(player);
     try {
-      await player.open(Media(_mediaUriFromFilePath(filePath)), play: false);
-      if (timeMs > 0) {
-        await player.seek(Duration(milliseconds: timeMs));
+      try {
+        await player.open(Media(_mediaUriFromFilePath(filePath)), play: true);
+      } catch (_) {
+        await player.open(Media(filePath), play: true);
       }
-      await Future<void>.delayed(const Duration(milliseconds: 120));
-      return player.screenshot(format: 'image/jpeg');
+      await player.setVolume(0);
+      try {
+        await videoController.waitUntilFirstFrameRendered.timeout(
+          const Duration(seconds: 2),
+        );
+      } catch (_) {
+        // Continue with best-effort capture fallback below.
+      }
+      await _waitForVideoFrame(player);
+
+      final targetMs = timeMs <= 0 ? 700 : timeMs;
+      final candidateMs = <int>[targetMs, 0, 1200];
+      for (final ms in candidateMs) {
+        if (ms > 0) {
+          await player.seek(Duration(milliseconds: ms));
+          await Future<void>.delayed(const Duration(milliseconds: 240));
+        } else {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        }
+        for (var attempt = 0; attempt < 3; attempt++) {
+          final bytes = await player.screenshot(format: 'image/jpeg');
+          if (bytes != null && bytes.isNotEmpty) {
+            return bytes;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 180));
+        }
+      }
+      return null;
     } catch (_) {
       return null;
     } finally {
       await player.dispose();
     }
+  }
+
+  static Future<void> _waitForVideoFrame(Player player) async {
+    if (_hasVideoFrame(player.state)) {
+      return;
+    }
+    final completer = Completer<void>();
+    late final StreamSubscription<VideoParams> subscription;
+    subscription = player.stream.videoParams.listen((params) {
+      final width = params.dw ?? params.w ?? 0;
+      final height = params.dh ?? params.h ?? 0;
+      if (width > 0 && height > 0 && !completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    try {
+      await completer.future.timeout(const Duration(seconds: 2));
+    } catch (_) {
+      // timeout; continue and let screenshot retry logic handle it
+    } finally {
+      await subscription.cancel();
+    }
+  }
+
+  static bool _hasVideoFrame(PlayerState state) {
+    final width =
+        state.width ?? state.videoParams.dw ?? state.videoParams.w ?? 0;
+    final height =
+        state.height ?? state.videoParams.dh ?? state.videoParams.h ?? 0;
+    return width > 0 && height > 0;
   }
 
   static Uint8List? _normalizeArtworkBytesSync({
