@@ -23,6 +23,7 @@ import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
+import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../data/device_alias_repository.dart';
@@ -133,6 +134,26 @@ class _PendingOutgoingFriendRequest {
   final DateTime createdAt;
 }
 
+class ShareableVideoFile {
+  const ShareableVideoFile({
+    required this.id,
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.relativePath,
+    required this.absolutePath,
+    required this.sizeBytes,
+  });
+
+  final String id;
+  final String cacheId;
+  final String cacheDisplayName;
+  final String relativePath;
+  final String absolutePath;
+  final int sizeBytes;
+
+  String get fileName => p.basename(relativePath);
+}
+
 class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
@@ -148,6 +169,7 @@ class DiscoveryController extends ChangeNotifier {
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
+    required VideoLinkShareService videoLinkShareService,
     required PathOpener pathOpener,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
@@ -162,6 +184,7 @@ class DiscoveryController extends ChangeNotifier {
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
+       _videoLinkShareService = videoLinkShareService,
        _pathOpener = pathOpener;
 
   static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
@@ -181,6 +204,7 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
+  final VideoLinkShareService _videoLinkShareService;
   final PathOpener _pathOpener;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
@@ -245,6 +269,7 @@ class DiscoveryController extends ChangeNotifier {
   final String _localName = Platform.localHostname;
   String _localDeviceMac = '02:00:00:00:00:01';
   String _localPeerId = '';
+  VideoLinkShareSession? _videoLinkShareSession;
   bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
   String? _lastCapturedClipboardHash;
@@ -1174,6 +1199,104 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
     } finally {
       _isAddingShare = false;
+      notifyListeners();
+    }
+  }
+
+  Future<List<ShareableVideoFile>> listShareableVideoFiles({
+    String? cacheId,
+  }) async {
+    await _loadOwnerCaches();
+    final files = <ShareableVideoFile>[];
+    for (final cache in _ownerSharedCaches) {
+      if (cacheId != null && cache.cacheId != cacheId) {
+        continue;
+      }
+      final entries = await _sharedFolderCacheRepository.readIndexEntries(
+        cache.cacheId,
+      );
+      for (final entry in entries) {
+        if (!_sharedFolderCacheRepository.isVideoPath(entry.relativePath)) {
+          continue;
+        }
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+        final file = File(absolutePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+        files.add(
+          ShareableVideoFile(
+            id: '${cache.cacheId}|${entry.relativePath}',
+            cacheId: cache.cacheId,
+            cacheDisplayName: cache.displayName,
+            relativePath: entry.relativePath,
+            absolutePath: absolutePath,
+            sizeBytes: stat.size,
+          ),
+        );
+      }
+    }
+    files.sort((a, b) {
+      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+        b.cacheDisplayName.toLowerCase(),
+      );
+      if (cacheCmp != 0) {
+        return cacheCmp;
+      }
+      return a.relativePath.toLowerCase().compareTo(
+        b.relativePath.toLowerCase(),
+      );
+    });
+    return files;
+  }
+
+  Future<void> publishVideoLinkShare({
+    required ShareableVideoFile file,
+    required String password,
+  }) async {
+    final normalizedPassword = password.trim();
+    if (normalizedPassword.isEmpty) {
+      _errorMessage = 'Password is required for video link sharing.';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      _videoLinkShareSession = await _videoLinkShareService.publish(
+        filePath: file.absolutePath,
+        displayName: file.fileName,
+        password: normalizedPassword,
+      );
+      final link = videoLinkWatchUrl;
+      _errorMessage = null;
+      _infoMessage = link == null
+          ? 'Video link updated for ${file.fileName}.'
+          : 'Video link updated: $link';
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to publish video link: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> stopVideoLinkShare() async {
+    try {
+      await _videoLinkShareService.stop();
+      _videoLinkShareSession = null;
+      _errorMessage = null;
+      _infoMessage = 'Video link sharing stopped.';
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to stop video link sharing: $error';
+      _log(_errorMessage!);
       notifyListeners();
     }
   }
@@ -3445,6 +3568,7 @@ class DiscoveryController extends ChangeNotifier {
     }
     _previewResultCompletersByRequestId.clear();
     _lanDiscoveryService.stop();
+    unawaited(_videoLinkShareService.stop());
     super.dispose();
   }
 

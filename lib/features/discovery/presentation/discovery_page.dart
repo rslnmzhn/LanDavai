@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
@@ -23,6 +24,8 @@ import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
+import '../../transfer/data/video_link_share_service.dart';
+import '../../transfer/domain/shared_folder_cache.dart';
 import '../application/discovery_controller.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
@@ -41,6 +44,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     with WidgetsBindingObserver {
   late final DiscoveryController _controller;
   final DesktopWindowService _desktopWindowService = DesktopWindowService();
+  final TextEditingController _videoLinkPasswordController =
+      TextEditingController();
+  List<ShareableVideoFile> _shareableVideoFiles = const <ShareableVideoFile>[];
+  String? _selectedShareableVideoId;
+  bool _isLoadingShareableVideoFiles = false;
+  bool _isPublishingVideoLink = false;
   String? _lastInfoMessage;
 
   @override
@@ -70,6 +79,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       fileHashService: FileHashService(),
       fileTransferService: FileTransferService(),
       transferStorageService: TransferStorageService(),
+      videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(),
@@ -81,6 +91,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _videoLinkPasswordController.dispose();
     _controller.removeListener(_handleInfoMessages);
     _controller.dispose();
     super.dispose();
@@ -97,6 +108,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     if (!mounted) {
       return;
     }
+    await _reloadShareableVideoFiles();
     await _desktopWindowService.setMinimizeToTrayEnabled(
       _controller.settings.minimizeToTrayOnClose,
     );
@@ -163,6 +175,29 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 _NetworkSummaryCard(
                   controller: _controller,
                   total: devices.length,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _VideoLinkServerCard(
+                  controller: _controller,
+                  videos: _shareableVideoFiles,
+                  selectedVideoId: _selectedShareableVideoId,
+                  isLoadingVideos: _isLoadingShareableVideoFiles,
+                  isPublishing: _isPublishingVideoLink,
+                  passwordController: _videoLinkPasswordController,
+                  onSelectedVideoChanged: (next) {
+                    setState(() {
+                      _selectedShareableVideoId = next;
+                    });
+                  },
+                  onRefreshVideos: () =>
+                      unawaited(_reloadShareableVideoFiles()),
+                  onPublish: () => unawaited(_publishSelectedVideoLink()),
+                  onToggle: _toggleVideoLinkServer,
+                  onCopyLink: _controller.videoLinkWatchUrl == null
+                      ? null
+                      : () => unawaited(
+                          _copyToClipboard(_controller.videoLinkWatchUrl!),
+                        ),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 if (_controller.errorMessage != null) ...[
@@ -523,6 +558,344 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     return result ?? false;
   }
 
+  Future<void> _copyToClipboard(String value) async {
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+  }
+
+  ShareableVideoFile? get _selectedShareableVideoFile {
+    final selectedId = _selectedShareableVideoId;
+    if (selectedId == null) {
+      return null;
+    }
+    for (final file in _shareableVideoFiles) {
+      if (file.id == selectedId) {
+        return file;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _reloadShareableVideoFiles({bool notifyIfEmpty = false}) async {
+    if (_isLoadingShareableVideoFiles) {
+      return;
+    }
+    setState(() {
+      _isLoadingShareableVideoFiles = true;
+    });
+    try {
+      final files = await _controller.listShareableVideoFiles();
+      if (!mounted) {
+        return;
+      }
+      var selectedId = _selectedShareableVideoId;
+      if (selectedId == null || files.every((file) => file.id != selectedId)) {
+        selectedId = files.isEmpty ? null : files.first.id;
+      }
+      setState(() {
+        _shareableVideoFiles = files;
+        _selectedShareableVideoId = selectedId;
+      });
+      if (notifyIfEmpty && files.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No shared video files available. Add shared files first.',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingShareableVideoFiles = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _publishSelectedVideoLink() async {
+    final selected = _selectedShareableVideoFile;
+    if (selected == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Select a video file first.')),
+      );
+      return;
+    }
+    final password = _videoLinkPasswordController.text.trim();
+    if (password.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter a password first.')));
+      return;
+    }
+
+    setState(() {
+      _isPublishingVideoLink = true;
+    });
+    try {
+      await _controller.publishVideoLinkShare(
+        file: selected,
+        password: password,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isPublishingVideoLink = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _toggleVideoLinkServer(bool enabled) async {
+    if (enabled) {
+      if (_shareableVideoFiles.isEmpty) {
+        await _reloadShareableVideoFiles(notifyIfEmpty: true);
+      }
+      if (_shareableVideoFiles.isEmpty) {
+        return;
+      }
+      await _publishSelectedVideoLink();
+      return;
+    }
+
+    final activeSession = _controller.videoLinkShareSession;
+    if (activeSession == null) {
+      return;
+    }
+    final shouldStop = await _confirmStopVideoLinkShare();
+    if (!shouldStop) {
+      return;
+    }
+    await _controller.stopVideoLinkShare();
+  }
+
+  Future<bool> _confirmStopVideoLinkShare() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Stop video link sharing?'),
+          content: const Text(
+            'The active video link will stop working until you publish a file again.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              child: const Text('Stop'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
+  }
+
+  Future<void> _openVideoLinkShareDialog({
+    SharedFolderCacheRecord? cache,
+  }) async {
+    final files = await _controller.listShareableVideoFiles(
+      cacheId: cache?.cacheId,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (files.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            cache == null
+                ? 'No shared video files available. Add shared files first.'
+                : 'No video files found in this shared cache.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final passwordController = TextEditingController();
+    var selectedId = files.first.id;
+    String? dialogError;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final selected = files.firstWhere((file) => file.id == selectedId);
+            final activeUrl = _controller.videoLinkWatchUrl;
+            final activeSession = _controller.videoLinkShareSession;
+            return AlertDialog(
+              title: const Text('Share Video By Link'),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      cache == null
+                          ? 'Source: all shared caches'
+                          : 'Cache: ${cache.displayName}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedId,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Video file',
+                      ),
+                      items: files
+                          .map(
+                            (file) => DropdownMenuItem<String>(
+                              value: file.id,
+                              child: Text(
+                                cache == null
+                                    ? '${file.cacheDisplayName} • ${file.relativePath} • ${_formatBytes(file.sizeBytes)}'
+                                    : '${file.relativePath} • ${_formatBytes(file.sizeBytes)}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
+                      onChanged: (next) {
+                        if (next == null) {
+                          return;
+                        }
+                        setDialogState(() {
+                          selectedId = next;
+                          dialogError = null;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    TextField(
+                      controller: passwordController,
+                      obscureText: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: 'Password',
+                        helperText: 'Password is required to open the link.',
+                      ),
+                    ),
+                    if (dialogError != null) ...[
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        dialogError!,
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: AppColors.error),
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.sm),
+                    if (activeSession != null && activeUrl != null) ...[
+                      Text(
+                        'Current link',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      SelectableText(
+                        activeUrl,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          fontFamily: 'JetBrainsMono',
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Current file: ${activeSession.fileName}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'Publishing a new file replaces the previous one on the same link and port.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      cache == null
+                          ? 'Selected: ${selected.cacheDisplayName} • ${selected.fileName}'
+                          : 'Selected: ${selected.fileName}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                if (activeUrl != null)
+                  TextButton(
+                    onPressed: () => unawaited(_copyToClipboard(activeUrl)),
+                    child: const Text('Copy link'),
+                  ),
+                if (activeSession != null)
+                  TextButton(
+                    onPressed: () async {
+                      final navigator = Navigator.of(dialogContext);
+                      final shouldStop = await _confirmStopVideoLinkShare();
+                      if (shouldStop != true) {
+                        return;
+                      }
+                      await _controller.stopVideoLinkShare();
+                      if (!mounted) {
+                        return;
+                      }
+                      if (_controller.errorMessage == null) {
+                        navigator.pop();
+                      }
+                    },
+                    child: const Text('Stop link'),
+                  ),
+                FilledButton(
+                  onPressed: () async {
+                    final navigator = Navigator.of(dialogContext);
+                    final password = passwordController.text.trim();
+                    if (password.isEmpty) {
+                      setDialogState(() {
+                        dialogError = 'Enter a password.';
+                      });
+                      return;
+                    }
+                    await _controller.publishVideoLinkShare(
+                      file: selected,
+                      password: password,
+                    );
+                    if (!mounted) {
+                      return;
+                    }
+                    if (_controller.errorMessage == null) {
+                      navigator.pop();
+                    } else {
+                      setDialogState(() {
+                        dialogError = _controller.errorMessage;
+                      });
+                    }
+                  },
+                  child: const Text('Publish'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    passwordController.dispose();
+  }
+
   Future<void> _openDeviceActionsMenu(
     DiscoveredDevice device,
     Offset? globalPosition,
@@ -606,6 +979,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 onTap: () async {
                   Navigator.of(context).pop();
                   await _controller.addSharedFolder();
+                  if (!mounted) {
+                    return;
+                  }
+                  await _reloadShareableVideoFiles();
                 },
               ),
               ListTile(
@@ -617,6 +994,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 onTap: () async {
                   Navigator.of(context).pop();
                   await _controller.recacheSharedFolders();
+                  if (!mounted) {
+                    return;
+                  }
+                  await _reloadShareableVideoFiles();
                 },
               ),
               ListTile(
@@ -637,6 +1018,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 onTap: () async {
                   Navigator.of(context).pop();
                   await _controller.addSharedFiles();
+                  if (!mounted) {
+                    return;
+                  }
+                  await _reloadShareableVideoFiles();
                 },
               ),
             ],
@@ -662,6 +1047,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             animation: _controller,
             builder: (context, _) {
               final sharedCaches = _controller.ownerSharedCaches;
+              final activeVideoSession = _controller.videoLinkShareSession;
+              final activeVideoUrl = _controller.videoLinkWatchUrl;
               return SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(AppSpacing.md),
@@ -673,6 +1060,61 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       const SizedBox(height: AppSpacing.sm),
+                      if (activeVideoSession != null &&
+                          activeVideoUrl != null) ...[
+                        Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Active video link',
+                                  style: Theme.of(context).textTheme.titleSmall,
+                                ),
+                                const SizedBox(height: AppSpacing.xs),
+                                SelectableText(
+                                  activeVideoUrl,
+                                  style: Theme.of(context).textTheme.bodySmall
+                                      ?.copyWith(fontFamily: 'JetBrainsMono'),
+                                ),
+                                const SizedBox(height: AppSpacing.xs),
+                                Text(
+                                  'File: ${activeVideoSession.fileName}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                const SizedBox(height: AppSpacing.sm),
+                                Wrap(
+                                  spacing: AppSpacing.sm,
+                                  runSpacing: AppSpacing.xs,
+                                  children: [
+                                    OutlinedButton.icon(
+                                      onPressed: () => unawaited(
+                                        _copyToClipboard(activeVideoUrl),
+                                      ),
+                                      icon: const Icon(Icons.copy_rounded),
+                                      label: const Text('Copy link'),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed: () async {
+                                        final shouldStop =
+                                            await _confirmStopVideoLinkShare();
+                                        if (!shouldStop) {
+                                          return;
+                                        }
+                                        await _controller.stopVideoLinkShare();
+                                      },
+                                      icon: const Icon(Icons.link_off_rounded),
+                                      label: const Text('Stop link'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                      ],
                       Expanded(
                         child: sharedCaches.isEmpty
                             ? const Center(
@@ -734,6 +1176,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                                             .removeSharedCache(
                                                               cache,
                                                             );
+                                                        if (!mounted) {
+                                                          return;
+                                                        }
+                                                        await _reloadShareableVideoFiles();
                                                       },
                                                 icon: const Icon(
                                                   Icons.delete_outline_rounded,
@@ -772,28 +1218,41 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                                               context,
                                             ).textTheme.bodySmall,
                                           ),
-                                          if (!isSelection) ...[
-                                            const SizedBox(
-                                              height: AppSpacing.sm,
-                                            ),
-                                            Align(
-                                              alignment: Alignment.centerLeft,
-                                              child: OutlinedButton.icon(
+                                          const SizedBox(height: AppSpacing.sm),
+                                          Wrap(
+                                            spacing: AppSpacing.sm,
+                                            runSpacing: AppSpacing.xs,
+                                            children: [
+                                              OutlinedButton.icon(
                                                 onPressed: () async {
-                                                  await _controller
-                                                      .openHistoryPath(
-                                                        cache.rootPath,
-                                                      );
+                                                  await _openVideoLinkShareDialog(
+                                                    cache: cache,
+                                                  );
                                                 },
                                                 icon: const Icon(
-                                                  Icons.folder_open,
+                                                  Icons.link_rounded,
                                                 ),
                                                 label: const Text(
-                                                  'Open folder',
+                                                  'Share video link',
                                                 ),
                                               ),
-                                            ),
-                                          ],
+                                              if (!isSelection)
+                                                OutlinedButton.icon(
+                                                  onPressed: () async {
+                                                    await _controller
+                                                        .openHistoryPath(
+                                                          cache.rootPath,
+                                                        );
+                                                  },
+                                                  icon: const Icon(
+                                                    Icons.folder_open,
+                                                  ),
+                                                  label: const Text(
+                                                    'Open folder',
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -1101,6 +1560,181 @@ class _NetworkSummaryCard extends StatelessWidget {
                 ],
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoLinkServerCard extends StatelessWidget {
+  const _VideoLinkServerCard({
+    required this.controller,
+    required this.videos,
+    required this.selectedVideoId,
+    required this.isLoadingVideos,
+    required this.isPublishing,
+    required this.passwordController,
+    required this.onSelectedVideoChanged,
+    required this.onRefreshVideos,
+    required this.onPublish,
+    required this.onToggle,
+    this.onCopyLink,
+  });
+
+  final DiscoveryController controller;
+  final List<ShareableVideoFile> videos;
+  final String? selectedVideoId;
+  final bool isLoadingVideos;
+  final bool isPublishing;
+  final TextEditingController passwordController;
+  final ValueChanged<String?> onSelectedVideoChanged;
+  final VoidCallback onRefreshVideos;
+  final VoidCallback onPublish;
+  final ValueChanged<bool> onToggle;
+  final VoidCallback? onCopyLink;
+
+  @override
+  Widget build(BuildContext context) {
+    final activeSession = controller.videoLinkShareSession;
+    final activeUrl = controller.videoLinkWatchUrl;
+    final enabled = activeSession != null;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  height: 40,
+                  width: 40,
+                  decoration: BoxDecoration(
+                    color: (enabled ? AppColors.success : AppColors.mutedIcon)
+                        .withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  child: Icon(
+                    enabled ? Icons.language_rounded : Icons.link_off_rounded,
+                    color: enabled ? AppColors.success : AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Web server for video',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        enabled
+                            ? 'Enabled'
+                            : 'Disabled. Toggle on to pick video and password.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                Switch.adaptive(value: enabled, onChanged: onToggle),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            DropdownButtonFormField<String>(
+              initialValue: selectedVideoId,
+              items: videos
+                  .map(
+                    (file) => DropdownMenuItem<String>(
+                      value: file.id,
+                      child: Text(
+                        '${file.cacheDisplayName} • ${file.relativePath}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+              onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
+              decoration: InputDecoration(
+                border: const OutlineInputBorder(),
+                isDense: true,
+                labelText: 'Video from shared files',
+                helperText: videos.isEmpty
+                    ? 'No shared videos. Add files/folders first.'
+                    : null,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                labelText: 'Password',
+                helperText: 'Required for opening the web link.',
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: isLoadingVideos ? null : onRefreshVideos,
+                  icon: isLoadingVideos
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh_rounded),
+                  label: const Text('Refresh videos'),
+                ),
+                FilledButton.icon(
+                  onPressed: videos.isEmpty || isPublishing ? null : onPublish,
+                  icon: isPublishing
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.surface,
+                          ),
+                        )
+                      : const Icon(Icons.publish_rounded),
+                  label: Text(enabled ? 'Update link' : 'Publish link'),
+                ),
+              ],
+            ),
+            if (activeSession != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'File: ${activeSession.fileName}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+            if (activeUrl != null) ...[
+              const SizedBox(height: AppSpacing.xxs),
+              SelectableText(
+                activeUrl,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrainsMono'),
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: onCopyLink,
+                  icon: const Icon(Icons.copy_rounded),
+                  label: const Text('Copy link'),
+                ),
+              ),
+            ],
           ],
         ),
       ),
