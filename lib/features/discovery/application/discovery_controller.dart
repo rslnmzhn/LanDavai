@@ -154,6 +154,22 @@ class ShareableVideoFile {
   String get fileName => p.basename(relativePath);
 }
 
+class ShareableLocalFile {
+  const ShareableLocalFile({
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.relativePath,
+    required this.absolutePath,
+    required this.isSelectionCache,
+  });
+
+  final String cacheId;
+  final String cacheDisplayName;
+  final String relativePath;
+  final String absolutePath;
+  final bool isSelectionCache;
+}
+
 class SharedCacheSummary {
   const SharedCacheSummary({
     required this.totalCaches,
@@ -1421,6 +1437,70 @@ class DiscoveryController extends ChangeNotifier {
       }
     }
     files.sort((a, b) {
+      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+        b.cacheDisplayName.toLowerCase(),
+      );
+      if (cacheCmp != 0) {
+        return cacheCmp;
+      }
+      return a.relativePath.toLowerCase().compareTo(
+        b.relativePath.toLowerCase(),
+      );
+    });
+    return files;
+  }
+
+  Future<List<ShareableLocalFile>> listShareableLocalFiles() async {
+    await _loadOwnerCaches();
+    final files = <ShareableLocalFile>[];
+    final seenPaths = <String>{};
+
+    for (final cache in _ownerSharedCaches) {
+      final entries = await _sharedFolderCacheRepository.readIndexEntries(
+        cache.cacheId,
+      );
+      for (final entry in entries) {
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
+        final dedupeKey = Platform.isWindows
+            ? normalizedPath.toLowerCase()
+            : normalizedPath;
+        if (!seenPaths.add(dedupeKey)) {
+          continue;
+        }
+
+        final file = File(absolutePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+
+        files.add(
+          ShareableLocalFile(
+            cacheId: cache.cacheId,
+            cacheDisplayName: cache.displayName,
+            relativePath: entry.relativePath,
+            absolutePath: absolutePath,
+            isSelectionCache: cache.rootPath.startsWith('selection://'),
+          ),
+        );
+      }
+    }
+
+    files.sort((a, b) {
+      final nameCmp = p
+          .basename(a.relativePath)
+          .toLowerCase()
+          .compareTo(p.basename(b.relativePath).toLowerCase());
+      if (nameCmp != 0) {
+        return nameCmp;
+      }
       final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
         b.cacheDisplayName.toLowerCase(),
       );

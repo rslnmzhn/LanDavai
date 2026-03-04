@@ -919,6 +919,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       }
     }
     await _controller.reloadOwnerSharedCaches();
+    final sharedFiles = await _controller.listShareableLocalFiles();
 
     final roots = <FileExplorerRoot>[];
     final seenPaths = <String>{};
@@ -927,7 +928,20 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       required String label,
       required String path,
       bool isSharedFolder = false,
+      List<FileExplorerVirtualFile> virtualFiles =
+          const <FileExplorerVirtualFile>[],
     }) {
+      if (virtualFiles.isNotEmpty) {
+        roots.add(
+          FileExplorerRoot(
+            label: label,
+            path: path,
+            isSharedFolder: isSharedFolder,
+            virtualFiles: virtualFiles,
+          ),
+        );
+        return;
+      }
       final normalized = _normalizePathKey(path);
       if (normalized.isEmpty || seenPaths.contains(normalized)) {
         return;
@@ -941,6 +955,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           label: label,
           path: path,
           isSharedFolder: isSharedFolder,
+          virtualFiles: virtualFiles,
         ),
       );
     }
@@ -949,14 +964,22 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       addRoot(label: 'Landa Downloads', path: publicDownloadsDirectory.path);
     }
     addRoot(label: 'Incoming', path: receiveDirectory.path);
-    for (final cache in _controller.ownerSharedCaches) {
-      if (cache.rootPath.startsWith('selection://')) {
-        continue;
-      }
+    if (sharedFiles.isNotEmpty) {
       addRoot(
-        label: 'Shared: ${cache.displayName}',
-        path: cache.rootPath,
+        label: 'My files',
+        path: 'virtual://my-files',
         isSharedFolder: true,
+        virtualFiles: sharedFiles
+            .map(
+              (file) => FileExplorerVirtualFile(
+                path: file.absolutePath,
+                subtitle: '${file.cacheDisplayName} / ${file.relativePath}',
+                virtualPath: file.isSelectionCache
+                    ? p.basename(file.relativePath.replaceAll('\\', '/'))
+                    : '${file.cacheDisplayName}/${file.relativePath.replaceAll('\\', '/')}',
+              ),
+            )
+            .toList(growable: false),
       );
     }
 
