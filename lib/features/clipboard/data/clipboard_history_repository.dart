@@ -103,6 +103,34 @@ class ClipboardHistoryRepository {
     return _mapRow(rows.first);
   }
 
+  Future<ClipboardHistoryEntry?> deleteById(String id) async {
+    final normalized = id.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+
+    final db = await _databaseProvider();
+    return db.transaction((txn) async {
+      final rows = await txn.query(
+        AppDatabase.clipboardHistoryTable,
+        where: 'id = ?',
+        whereArgs: <Object>[normalized],
+        limit: 1,
+      );
+      if (rows.isEmpty) {
+        return null;
+      }
+
+      final mapped = _mapRow(rows.first);
+      await txn.delete(
+        AppDatabase.clipboardHistoryTable,
+        where: 'id = ?',
+        whereArgs: <Object>[normalized],
+      );
+      return mapped;
+    });
+  }
+
   ClipboardHistoryEntry _mapRow(Map<String, Object?> row) {
     return ClipboardHistoryEntry(
       id: row['id']! as String,

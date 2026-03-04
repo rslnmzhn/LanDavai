@@ -778,6 +778,31 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  Future<void> removeClipboardHistoryEntry(String entryId) async {
+    final normalizedId = entryId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    try {
+      final removed = await _clipboardHistoryRepository.deleteById(
+        normalizedId,
+      );
+      if (removed == null) {
+        return;
+      }
+      await _deleteClipboardImageFileIfExists(removed.imagePath);
+      await _loadClipboardHistory(notify: false, updateLastCapturedHash: false);
+      _errorMessage = null;
+      _infoMessage = 'Clipboard entry removed.';
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to remove clipboard entry: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
   Future<void> loadRemoteShareOptions() async {
     final targets = devices.where((device) => device.isAppDetected).toList();
     if (targets.isEmpty) {
@@ -2274,33 +2299,43 @@ class DiscoveryController extends ChangeNotifier {
       _settings.clipboardHistoryMaxEntries,
     );
     for (final entry in removed) {
-      final path = entry.imagePath;
-      if (path == null || path.trim().isEmpty) {
-        continue;
-      }
-      try {
-        final file = File(path);
-        if (await file.exists()) {
-          await file.delete();
-        }
-      } catch (_) {}
+      await _deleteClipboardImageFileIfExists(entry.imagePath);
     }
   }
 
-  Future<void> _loadClipboardHistory({bool notify = false}) async {
+  Future<void> _loadClipboardHistory({
+    bool notify = false,
+    bool updateLastCapturedHash = true,
+  }) async {
     try {
       final rows = await _clipboardHistoryRepository.listRecent(limit: 300);
       _clipboardHistory
         ..clear()
         ..addAll(rows);
-      final latest = rows.isEmpty ? null : rows.first;
-      _lastCapturedClipboardHash = latest?.contentHash;
+      if (updateLastCapturedHash) {
+        final latest = rows.isEmpty ? null : rows.first;
+        _lastCapturedClipboardHash = latest?.contentHash;
+      }
       if (notify) {
         notifyListeners();
       }
     } catch (error) {
       _log('Failed to load clipboard history: $error');
     }
+  }
+
+  Future<void> _deleteClipboardImageFileIfExists(String? imagePath) async {
+    final path = imagePath?.trim();
+    if (path == null || path.isEmpty) {
+      return;
+    }
+
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
   }
 
   void _onShareQuery(ShareQueryEvent event) {

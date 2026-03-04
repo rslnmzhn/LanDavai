@@ -45,6 +45,35 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
   }
 
+  Future<void> _confirmAndDeleteLocalEntry(ClipboardHistoryEntry entry) async {
+    final shouldDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final message = entry.type == ClipboardEntryType.text
+            ? 'Delete this text entry from history?'
+            : 'Delete this image entry from history?';
+        return AlertDialog(
+          title: const Text('Remove from history'),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+    if (shouldDelete != true) {
+      return;
+    }
+    await widget.controller.removeClipboardHistoryEntry(entry.id);
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -82,12 +111,15 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       if (localEntries.isEmpty)
-                        const Text('History is empty.')
+                        const Text(
+                          'History is empty. Copy text or image to start.',
+                        )
                       else
                         ...localEntries.map(
                           (entry) => _LocalEntryTile(
                             entry: entry,
                             onCopyText: _copyText,
+                            onDeleteEntry: _confirmAndDeleteLocalEntry,
                           ),
                         ),
                       const SizedBox(height: AppSpacing.md),
@@ -176,10 +208,15 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
 }
 
 class _LocalEntryTile extends StatelessWidget {
-  const _LocalEntryTile({required this.entry, required this.onCopyText});
+  const _LocalEntryTile({
+    required this.entry,
+    required this.onCopyText,
+    required this.onDeleteEntry,
+  });
 
   final ClipboardHistoryEntry entry;
   final Future<void> Function(String value) onCopyText;
+  final Future<void> Function(ClipboardHistoryEntry entry) onDeleteEntry;
 
   @override
   Widget build(BuildContext context) {
@@ -194,10 +231,20 @@ class _LocalEntryTile extends StatelessWidget {
         leading: const Icon(Icons.text_fields_rounded),
         title: Text(text, maxLines: 3, overflow: TextOverflow.ellipsis),
         subtitle: Text(created),
-        trailing: IconButton(
-          tooltip: 'Copy',
-          icon: const Icon(Icons.copy_rounded),
-          onPressed: text.isEmpty ? null : () => onCopyText(text),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: 'Copy',
+              icon: const Icon(Icons.copy_rounded),
+              onPressed: text.isEmpty ? null : () => onCopyText(text),
+            ),
+            IconButton(
+              tooltip: 'Delete',
+              icon: const Icon(Icons.delete_outline_rounded),
+              onPressed: () => onDeleteEntry(entry),
+            ),
+          ],
         ),
       );
     }
@@ -218,6 +265,11 @@ class _LocalEntryTile extends StatelessWidget {
       ),
       title: const Text('Image from clipboard'),
       subtitle: Text(created),
+      trailing: IconButton(
+        tooltip: 'Delete',
+        icon: const Icon(Icons.delete_outline_rounded),
+        onPressed: () => onDeleteEntry(entry),
+      ),
     );
   }
 }
