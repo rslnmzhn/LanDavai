@@ -168,6 +168,40 @@ void FlutterWindow::ConfigureMethodChannel() {
           result->Success(flutter::EncodableValue());
           return;
         }
+
+        if (call.method_name() == "showSharedRecacheCompletedNotification") {
+          int before_files = 0;
+          int after_files = 0;
+
+          if (args != nullptr) {
+            const auto before_it = args->find(flutter::EncodableValue("beforeFiles"));
+            if (before_it != args->end()) {
+              if (const auto* value = std::get_if<int32_t>(&before_it->second)) {
+                before_files = *value;
+              } else if (const auto* wide_value =
+                             std::get_if<int64_t>(&before_it->second)) {
+                before_files = static_cast<int>(*wide_value);
+              }
+            }
+
+            const auto after_it = args->find(flutter::EncodableValue("afterFiles"));
+            if (after_it != args->end()) {
+              if (const auto* value = std::get_if<int32_t>(&after_it->second)) {
+                after_files = *value;
+              } else if (const auto* wide_value =
+                             std::get_if<int64_t>(&after_it->second)) {
+                after_files = static_cast<int>(*wide_value);
+              }
+            }
+          }
+
+          std::wstringstream stream;
+          stream << L"Before cache: " << before_files << L" files, after re-cache: "
+                 << after_files << L" files.";
+          ShowDownloadAttemptBalloon(stream.str());
+          result->Success(flutter::EncodableValue());
+          return;
+        }
         result->NotImplemented();
       });
 }

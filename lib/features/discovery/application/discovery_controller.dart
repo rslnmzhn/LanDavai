@@ -154,6 +154,62 @@ class ShareableVideoFile {
   String get fileName => p.basename(relativePath);
 }
 
+class ShareableLocalFile {
+  const ShareableLocalFile({
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.relativePath,
+    required this.absolutePath,
+    required this.isSelectionCache,
+  });
+
+  final String cacheId;
+  final String cacheDisplayName;
+  final String relativePath;
+  final String absolutePath;
+  final bool isSelectionCache;
+}
+
+class SharedCacheSummary {
+  const SharedCacheSummary({
+    required this.totalCaches,
+    required this.folderCaches,
+    required this.selectionCaches,
+    required this.totalFiles,
+  });
+
+  final int totalCaches;
+  final int folderCaches;
+  final int selectionCaches;
+  final int totalFiles;
+}
+
+class SharedRecacheProgress {
+  const SharedRecacheProgress({
+    required this.processedCaches,
+    required this.totalCaches,
+    required this.currentCacheLabel,
+  });
+
+  final int processedCaches;
+  final int totalCaches;
+  final String currentCacheLabel;
+}
+
+class SharedRecacheReport {
+  const SharedRecacheReport({
+    required this.before,
+    required this.after,
+    required this.updatedCaches,
+    required this.failedCaches,
+  });
+
+  final SharedCacheSummary before;
+  final SharedCacheSummary after;
+  final int updatedCaches;
+  final int failedCaches;
+}
+
 class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
@@ -190,6 +246,7 @@ class DiscoveryController extends ChangeNotifier {
   static const Duration _pendingRemoteDownloadTtl = Duration(minutes: 3);
   static const Duration _pendingRemotePreviewTtl = Duration(minutes: 1);
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
+  static const Duration _sharedRecacheCooldown = Duration(minutes: 5);
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
@@ -248,6 +305,9 @@ class DiscoveryController extends ChangeNotifier {
   bool _isRefreshInProgress = false;
   bool _isManualRefreshInProgress = false;
   bool _isAddingShare = false;
+  bool _isSharedRecacheInProgress = false;
+  double? _sharedRecacheProgress;
+  DateTime? _sharedRecacheCooldownUntil;
   bool _isSendingTransfer = false;
   bool _isLoadingRemoteShares = false;
   bool _isLoadingRemoteClipboard = false;
@@ -279,6 +339,25 @@ class DiscoveryController extends ChangeNotifier {
   DiscoveryFlowState get state => _state;
   bool get isManualRefreshInProgress => _isManualRefreshInProgress;
   bool get isAddingShare => _isAddingShare;
+  bool get isSharedRecacheInProgress => _isSharedRecacheInProgress;
+  double? get sharedRecacheProgress => _sharedRecacheProgress;
+  bool get isSharedRecacheCooldownActive {
+    final until = _sharedRecacheCooldownUntil;
+    return until != null && DateTime.now().isBefore(until);
+  }
+
+  Duration? get sharedRecacheCooldownRemaining {
+    final until = _sharedRecacheCooldownUntil;
+    if (until == null) {
+      return null;
+    }
+    final remaining = until.difference(DateTime.now());
+    if (remaining.isNegative || remaining == Duration.zero) {
+      return null;
+    }
+    return remaining;
+  }
+
   bool get isSendingTransfer => _isSendingTransfer;
   bool get isLoadingRemoteShares => _isLoadingRemoteShares;
   bool get isUploading =>
@@ -595,6 +674,21 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
     await _saveSettings(_settings.copyWith(minimizeToTrayOnClose: enabled));
+  }
+
+  Future<void> setLeftHandedMode(bool enabled) async {
+    if (_settings.isLeftHandedMode == enabled) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(isLeftHandedMode: enabled));
+  }
+
+  Future<void> setVideoLinkPassword(String value) async {
+    final normalized = value.trim();
+    if (_settings.videoLinkPassword == normalized) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(videoLinkPassword: normalized));
   }
 
   Future<void> setPreviewCacheMaxSizeGb(int value) async {
@@ -1124,64 +1218,150 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<void> recacheSharedFolders() async {
+  Future<SharedCacheSummary> summarizeOwnerSharedContent() async {
+    await _loadOwnerCaches();
+    return _buildSharedCacheSummary(_ownerSharedCaches);
+  }
+
+  Future<SharedRecacheReport?> recacheSharedContent({
+    void Function(SharedRecacheProgress progress)? onProgress,
+  }) async {
+    if (_isSharedRecacheInProgress || isSharedRecacheCooldownActive) {
+      return null;
+    }
+
     _isAddingShare = true;
+    _isSharedRecacheInProgress = true;
+    _sharedRecacheProgress = null;
     notifyListeners();
+
+    var shouldStartCooldown = false;
+    SharedRecacheReport? report;
     try {
       await _loadOwnerCaches();
-      final folderCaches = _ownerSharedCaches
-          .where((cache) => !cache.rootPath.startsWith('selection://'))
-          .toList(growable: false);
-      if (folderCaches.isEmpty) {
-        _infoMessage = 'No shared folders to re-cache.';
+      final caches = List<SharedFolderCacheRecord>.from(_ownerSharedCaches);
+      if (caches.isEmpty) {
+        _infoMessage = 'No shared folders/files to re-cache.';
         _errorMessage = null;
-        return;
+        return null;
       }
 
+      final before = _buildSharedCacheSummary(caches);
       var updatedCount = 0;
       var failedCount = 0;
-      var indexedTotal = 0;
-      var discoveredNewFiles = 0;
+      final totalCaches = caches.length;
+      _sharedRecacheProgress = 0;
+      onProgress?.call(
+        SharedRecacheProgress(
+          processedCaches: 0,
+          totalCaches: totalCaches,
+          currentCacheLabel: '',
+        ),
+      );
+      await _appNotificationService.showSharedRecacheProgressNotification(
+        processedCaches: 0,
+        totalCaches: totalCaches,
+        currentCacheLabel: '',
+      );
 
-      for (final cache in folderCaches) {
+      for (var index = 0; index < caches.length; index++) {
+        final cache = caches[index];
         try {
-          final result = await _sharedFolderCacheRepository
-              .upsertOwnerFolderCache(
-                ownerMacAddress: _localDeviceMac,
-                folderPath: cache.rootPath,
-                displayName: cache.displayName,
-              );
-          updatedCount += 1;
-          indexedTotal += result.record.itemCount;
-          final delta = result.record.itemCount - result.previousItemCount;
-          if (delta > 0) {
-            discoveredNewFiles += delta;
+          if (cache.rootPath.startsWith('selection://')) {
+            await _sharedFolderCacheRepository
+                .refreshOwnerSelectionCacheEntries(cache);
+          } else {
+            await _sharedFolderCacheRepository.upsertOwnerFolderCache(
+              ownerMacAddress: _localDeviceMac,
+              folderPath: cache.rootPath,
+              displayName: cache.displayName,
+            );
           }
+          updatedCount += 1;
         } catch (error) {
           failedCount += 1;
           _log('Failed to re-cache folder ${cache.rootPath}: $error');
         }
+
+        final processed = index + 1;
+        _sharedRecacheProgress = processed / totalCaches;
+        final progress = SharedRecacheProgress(
+          processedCaches: processed,
+          totalCaches: totalCaches,
+          currentCacheLabel: cache.displayName,
+        );
+        onProgress?.call(progress);
+        notifyListeners();
+        await _appNotificationService.showSharedRecacheProgressNotification(
+          processedCaches: processed,
+          totalCaches: totalCaches,
+          currentCacheLabel: cache.displayName,
+        );
       }
 
       await _loadOwnerCaches();
+      final after = _buildSharedCacheSummary(_ownerSharedCaches);
+      report = SharedRecacheReport(
+        before: before,
+        after: after,
+        updatedCaches: updatedCount,
+        failedCaches: failedCount,
+      );
+      shouldStartCooldown = true;
+      _sharedRecacheCooldownUntil = DateTime.now().add(_sharedRecacheCooldown);
+
+      final summaryText =
+          'Before cache: ${before.totalFiles} files, '
+          'after re-cache: ${after.totalFiles} files.';
       if (updatedCount == 0) {
-        _errorMessage = 'Failed to re-cache shared folders.';
+        _errorMessage = 'Failed to re-cache shared folders/files.';
         _infoMessage = null;
       } else {
         _errorMessage = null;
         final suffix = failedCount > 0 ? ' ($failedCount failed)' : '';
         _infoMessage =
-            'Re-cached $updatedCount shared folder(s). '
-            'Indexed $indexedTotal file(s), '
-            'new: $discoveredNewFiles$suffix.';
+            'Re-cached $updatedCount shared cache(s)$suffix. $summaryText';
       }
+      await _appNotificationService.showSharedRecacheCompletedNotification(
+        beforeFiles: before.totalFiles,
+        afterFiles: after.totalFiles,
+      );
+      return report;
     } catch (error) {
-      _errorMessage = 'Failed to re-cache shared folders: $error';
+      _errorMessage = 'Failed to re-cache shared folders/files: $error';
       _log(_errorMessage!);
+      return report;
     } finally {
       _isAddingShare = false;
+      _isSharedRecacheInProgress = false;
+      _sharedRecacheProgress = null;
+      if (!shouldStartCooldown) {
+        _sharedRecacheCooldownUntil = null;
+      }
       notifyListeners();
     }
+  }
+
+  SharedCacheSummary _buildSharedCacheSummary(
+    List<SharedFolderCacheRecord> caches,
+  ) {
+    var folderCaches = 0;
+    var selectionCaches = 0;
+    var totalFiles = 0;
+    for (final cache in caches) {
+      totalFiles += cache.itemCount;
+      if (cache.rootPath.startsWith('selection://')) {
+        selectionCaches += 1;
+      } else {
+        folderCaches += 1;
+      }
+    }
+    return SharedCacheSummary(
+      totalCaches: caches.length,
+      folderCaches: folderCaches,
+      selectionCaches: selectionCaches,
+      totalFiles: totalFiles,
+    );
   }
 
   Future<void> addSharedFiles() async {
@@ -1257,6 +1437,70 @@ class DiscoveryController extends ChangeNotifier {
       }
     }
     files.sort((a, b) {
+      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+        b.cacheDisplayName.toLowerCase(),
+      );
+      if (cacheCmp != 0) {
+        return cacheCmp;
+      }
+      return a.relativePath.toLowerCase().compareTo(
+        b.relativePath.toLowerCase(),
+      );
+    });
+    return files;
+  }
+
+  Future<List<ShareableLocalFile>> listShareableLocalFiles() async {
+    await _loadOwnerCaches();
+    final files = <ShareableLocalFile>[];
+    final seenPaths = <String>{};
+
+    for (final cache in _ownerSharedCaches) {
+      final entries = await _sharedFolderCacheRepository.readIndexEntries(
+        cache.cacheId,
+      );
+      for (final entry in entries) {
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
+        final dedupeKey = Platform.isWindows
+            ? normalizedPath.toLowerCase()
+            : normalizedPath;
+        if (!seenPaths.add(dedupeKey)) {
+          continue;
+        }
+
+        final file = File(absolutePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+
+        files.add(
+          ShareableLocalFile(
+            cacheId: cache.cacheId,
+            cacheDisplayName: cache.displayName,
+            relativePath: entry.relativePath,
+            absolutePath: absolutePath,
+            isSelectionCache: cache.rootPath.startsWith('selection://'),
+          ),
+        );
+      }
+    }
+
+    files.sort((a, b) {
+      final nameCmp = p
+          .basename(a.relativePath)
+          .toLowerCase()
+          .compareTo(p.basename(b.relativePath).toLowerCase());
+      if (nameCmp != 0) {
+        return nameCmp;
+      }
       final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
         b.cacheDisplayName.toLowerCase(),
       );

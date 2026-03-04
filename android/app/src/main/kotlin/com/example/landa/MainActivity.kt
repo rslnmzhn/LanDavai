@@ -33,6 +33,7 @@ class MainActivity : FlutterActivity() {
         private const val DOWNLOAD_CHANNEL_NAME = "Landa downloads"
         private const val DOWNLOAD_CHANNEL_DESCRIPTION = "File transfer progress and completion"
         private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1401
+        private const val SHARED_RECACHE_NOTIFICATION_ID = 91021
     }
 
     private var multicastLock: WifiManager.MulticastLock? = null
@@ -137,6 +138,27 @@ class MainActivity : FlutterActivity() {
                 "showFriendRequestNotification" -> {
                     val requesterName = call.argument<String>("requesterName") ?: "Unknown device"
                     showFriendRequestNotification(requesterName = requesterName)
+                    result.success(null)
+                }
+                "showSharedRecacheProgressNotification" -> {
+                    val processedCaches =
+                        call.argument<Number>("processedCaches")?.toInt() ?: 0
+                    val totalCaches = call.argument<Number>("totalCaches")?.toInt() ?: 0
+                    val currentCacheLabel = call.argument<String>("currentCacheLabel") ?: ""
+                    showSharedRecacheProgressNotification(
+                        processedCaches = processedCaches,
+                        totalCaches = totalCaches,
+                        currentCacheLabel = currentCacheLabel,
+                    )
+                    result.success(null)
+                }
+                "showSharedRecacheCompletedNotification" -> {
+                    val beforeFiles = call.argument<Number>("beforeFiles")?.toInt() ?: 0
+                    val afterFiles = call.argument<Number>("afterFiles")?.toInt() ?: 0
+                    showSharedRecacheCompletedNotification(
+                        beforeFiles = beforeFiles,
+                        afterFiles = afterFiles,
+                    )
                     result.success(null)
                 }
                 else -> result.notImplemented()
@@ -457,6 +479,77 @@ class MainActivity : FlutterActivity() {
 
         NotificationManagerCompat.from(this).notify(
             abs(("friend|$requesterName|${System.currentTimeMillis()}").hashCode()),
+            notification,
+        )
+    }
+
+    private fun showSharedRecacheProgressNotification(
+        processedCaches: Int,
+        totalCaches: Int,
+        currentCacheLabel: String,
+    ) {
+        if (!canPostNotifications()) {
+            return
+        }
+
+        val safeTotal = totalCaches.coerceAtLeast(0)
+        val safeProcessed = processedCaches.coerceAtLeast(0).coerceAtMost(safeTotal)
+        val indeterminate = safeTotal <= 0
+        val progress = if (indeterminate) {
+            0
+        } else {
+            ((safeProcessed * 100L) / safeTotal).toInt()
+        }
+
+        val label = currentCacheLabel.trim()
+        val statusText = if (indeterminate) {
+            "Preparing re-cache..."
+        } else if (label.isEmpty()) {
+            "Re-cached $safeProcessed/$safeTotal"
+        } else {
+            "Re-cached $safeProcessed/$safeTotal: $label"
+        }
+
+        val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentTitle("Re-caching shared folders/files")
+            .setContentText(statusText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(statusText))
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setProgress(100, progress, indeterminate)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(
+            SHARED_RECACHE_NOTIFICATION_ID,
+            notification,
+        )
+    }
+
+    private fun showSharedRecacheCompletedNotification(
+        beforeFiles: Int,
+        afterFiles: Int,
+    ) {
+        if (!canPostNotifications()) {
+            return
+        }
+
+        val text = "Before cache: $beforeFiles files, after re-cache: $afterFiles files."
+        val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("Re-cache completed")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setOngoing(false)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setProgress(0, 0, false)
+            .build()
+
+        NotificationManagerCompat.from(this).notify(
+            SHARED_RECACHE_NOTIFICATION_ID,
             notification,
         )
     }

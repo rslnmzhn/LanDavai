@@ -25,7 +25,6 @@ import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/data/video_link_share_service.dart';
-import '../../transfer/domain/shared_folder_cache.dart';
 import '../application/discovery_controller.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
@@ -44,13 +43,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     with WidgetsBindingObserver {
   late final DiscoveryController _controller;
   final DesktopWindowService _desktopWindowService = DesktopWindowService();
-  final TextEditingController _videoLinkPasswordController =
-      TextEditingController();
   List<ShareableVideoFile> _shareableVideoFiles = const <ShareableVideoFile>[];
   String? _selectedShareableVideoId;
   bool _isLoadingShareableVideoFiles = false;
-  bool _isPublishingVideoLink = false;
-  String? _lastInfoMessage;
 
   @override
   void initState() {
@@ -91,7 +86,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _videoLinkPasswordController.dispose();
     _controller.removeListener(_handleInfoMessages);
     _controller.dispose();
     super.dispose();
@@ -116,10 +110,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
 
   void _handleInfoMessages() {
     final info = _controller.infoMessage;
-    if (!mounted || info == null || info == _lastInfoMessage) {
+    if (!mounted || info == null) {
       return;
     }
-    _lastInfoMessage = info;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(info)));
     _controller.clearInfoMessage();
   }
@@ -130,112 +123,172 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       animation: _controller,
       builder: (context, _) {
         final devices = _controller.devices;
-        return Scaffold(
-          appBar: AppBar(
-            title: const Text('Landa devices'),
-            actions: [
-              IconButton(
-                tooltip: 'Friends',
-                onPressed: _openFriendsSheet,
-                icon: const Icon(Icons.group_rounded),
+        final isLeftHanded = _controller.settings.isLeftHandedMode;
+        final isTabletLayout = MediaQuery.sizeOf(context).width >= 900;
+        final sideMenu = _SideMenuDrawer(
+          onOpenFriends: _openFriendsSheet,
+          onOpenSettings: _openSettingsSheet,
+          onOpenClipboard: _openClipboardSheet,
+          onOpenHistory: _openHistorySheet,
+          onOpenFiles: _openFileExplorer,
+          onRefresh: _controller.isManualRefreshInProgress
+              ? null
+              : _controller.refresh,
+          controller: _controller,
+          videos: _shareableVideoFiles,
+          selectedVideoId: _selectedShareableVideoId,
+          isLoadingVideos: _isLoadingShareableVideoFiles,
+          onSelectedVideoChanged: (next) {
+            setState(() {
+              _selectedShareableVideoId = next;
+            });
+          },
+          onOpenVideoList: () => unawaited(_reloadShareableVideoFiles()),
+          onToggleVideoServer: _toggleVideoLinkServer,
+          onCopyVideoLink: _controller.videoLinkWatchUrl == null
+              ? null
+              : () =>
+                    unawaited(_copyToClipboard(_controller.videoLinkWatchUrl!)),
+        );
+        final sideMenuPanel = SizedBox(
+          width: 296,
+          child: ColoredBox(
+            color: AppColors.surface,
+            child: _SideMenuActions(
+              onOpenFriends: _openFriendsSheet,
+              onOpenSettings: _openSettingsSheet,
+              onOpenClipboard: _openClipboardSheet,
+              onOpenHistory: _openHistorySheet,
+              onOpenFiles: _openFileExplorer,
+              onRefresh: _controller.isManualRefreshInProgress
+                  ? null
+                  : _controller.refresh,
+              controller: _controller,
+              videos: _shareableVideoFiles,
+              selectedVideoId: _selectedShareableVideoId,
+              isLoadingVideos: _isLoadingShareableVideoFiles,
+              onSelectedVideoChanged: (next) {
+                setState(() {
+                  _selectedShareableVideoId = next;
+                });
+              },
+              onOpenVideoList: () => unawaited(_reloadShareableVideoFiles()),
+              onToggleVideoServer: _toggleVideoLinkServer,
+              onCopyVideoLink: _controller.videoLinkWatchUrl == null
+                  ? null
+                  : () => unawaited(
+                      _copyToClipboard(_controller.videoLinkWatchUrl!),
+                    ),
+              closeOnTap: false,
+            ),
+          ),
+        );
+        final mainContent = Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            children: [
+              _NetworkSummaryCard(
+                controller: _controller,
+                total: devices.length,
               ),
-              IconButton(
-                tooltip: 'Settings',
-                onPressed: _openSettingsSheet,
-                icon: const Icon(Icons.tune_rounded),
-              ),
-              IconButton(
-                tooltip: 'Clipboard',
-                onPressed: _openClipboardSheet,
-                icon: const Icon(Icons.content_paste_rounded),
-              ),
-              IconButton(
-                tooltip: 'Download history',
-                onPressed: _openHistorySheet,
-                icon: const Icon(Icons.history),
-              ),
-              IconButton(
-                tooltip: 'Files',
-                onPressed: _openFileExplorer,
-                icon: const Icon(Icons.folder_open_rounded),
-              ),
-              IconButton(
-                tooltip: 'Refresh',
-                onPressed: _controller.isManualRefreshInProgress
-                    ? null
-                    : _controller.refresh,
-                icon: const Icon(Icons.refresh),
+              const SizedBox(height: AppSpacing.md),
+              if (_controller.errorMessage != null) ...[
+                _ErrorBanner(message: _controller.errorMessage!),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+              if (_controller.isUploading || _controller.isDownloading) ...[
+                _TransferProgressCard(controller: _controller),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+              if (_controller.isManualRefreshInProgress) ...[
+                const LinearProgressIndicator(
+                  minHeight: 3,
+                  color: AppColors.brandPrimary,
+                  backgroundColor: AppColors.mutedBorder,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+              Expanded(
+                child: devices.isEmpty
+                    ? _EmptyState(onRefresh: _controller.refresh)
+                    : ListView.separated(
+                        itemCount: devices.length,
+                        separatorBuilder: (_, index) =>
+                            const SizedBox(height: AppSpacing.xs),
+                        itemBuilder: (_, index) => _DeviceTile(
+                          device: devices[index],
+                          selected:
+                              _controller.selectedDevice?.ip ==
+                              devices[index].ip,
+                          onSelect: _controller.selectDeviceByIp,
+                          onOpenActionsMenu: _openDeviceActionsMenu,
+                        ),
+                      ),
               ),
             ],
           ),
-          body: Padding(
-            padding: const EdgeInsets.all(AppSpacing.md),
-            child: Column(
-              children: [
-                _NetworkSummaryCard(
-                  controller: _controller,
-                  total: devices.length,
-                ),
-                const SizedBox(height: AppSpacing.md),
-                _VideoLinkServerCard(
-                  controller: _controller,
-                  videos: _shareableVideoFiles,
-                  selectedVideoId: _selectedShareableVideoId,
-                  isLoadingVideos: _isLoadingShareableVideoFiles,
-                  isPublishing: _isPublishingVideoLink,
-                  passwordController: _videoLinkPasswordController,
-                  onSelectedVideoChanged: (next) {
-                    setState(() {
-                      _selectedShareableVideoId = next;
-                    });
+        );
+        return Scaffold(
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            leading: isLeftHanded && !isTabletLayout
+                ? Builder(
+                    builder: (buttonContext) {
+                      return IconButton(
+                        tooltip: 'Menu',
+                        onPressed: () {
+                          unawaited(_reloadShareableVideoFiles());
+                          Scaffold.of(buttonContext).openDrawer();
+                        },
+                        icon: const Icon(Icons.menu_rounded),
+                      );
+                    },
+                  )
+                : null,
+            title: const Text('Landa devices'),
+            actions: [
+              if (!isLeftHanded && !isTabletLayout)
+                Builder(
+                  builder: (buttonContext) {
+                    return IconButton(
+                      tooltip: 'Menu',
+                      onPressed: () {
+                        unawaited(_reloadShareableVideoFiles());
+                        Scaffold.of(buttonContext).openEndDrawer();
+                      },
+                      icon: const Icon(Icons.menu_rounded),
+                    );
                   },
-                  onRefreshVideos: () =>
-                      unawaited(_reloadShareableVideoFiles()),
-                  onPublish: () => unawaited(_publishSelectedVideoLink()),
-                  onToggle: _toggleVideoLinkServer,
-                  onCopyLink: _controller.videoLinkWatchUrl == null
-                      ? null
-                      : () => unawaited(
-                          _copyToClipboard(_controller.videoLinkWatchUrl!),
-                        ),
                 ),
-                const SizedBox(height: AppSpacing.md),
-                if (_controller.errorMessage != null) ...[
-                  _ErrorBanner(message: _controller.errorMessage!),
-                  const SizedBox(height: AppSpacing.sm),
-                ],
-                if (_controller.isUploading || _controller.isDownloading) ...[
-                  _TransferProgressCard(controller: _controller),
-                  const SizedBox(height: AppSpacing.sm),
-                ],
-                if (_controller.isManualRefreshInProgress) ...[
-                  const LinearProgressIndicator(
-                    minHeight: 3,
-                    color: AppColors.brandPrimary,
-                    backgroundColor: AppColors.mutedBorder,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                ],
-                Expanded(
-                  child: devices.isEmpty
-                      ? _EmptyState(onRefresh: _controller.refresh)
-                      : ListView.separated(
-                          itemCount: devices.length,
-                          separatorBuilder: (_, index) =>
-                              const SizedBox(height: AppSpacing.xs),
-                          itemBuilder: (_, index) => _DeviceTile(
-                            device: devices[index],
-                            selected:
-                                _controller.selectedDevice?.ip ==
-                                devices[index].ip,
-                            onSelect: _controller.selectDeviceByIp,
-                            onOpenActionsMenu: _openDeviceActionsMenu,
-                          ),
-                        ),
-                ),
-              ],
-            ),
+            ],
           ),
+          drawer: !isTabletLayout && isLeftHanded ? sideMenu : null,
+          endDrawer: !isTabletLayout && !isLeftHanded ? sideMenu : null,
+          drawerEnableOpenDragGesture: !isTabletLayout && isLeftHanded,
+          endDrawerEnableOpenDragGesture: !isTabletLayout && !isLeftHanded,
+          body: isTabletLayout
+              ? Row(
+                  children: [
+                    if (isLeftHanded) ...[
+                      sideMenuPanel,
+                      const VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: AppColors.mutedBorder,
+                      ),
+                    ],
+                    Expanded(child: mainContent),
+                    if (!isLeftHanded) ...[
+                      const VerticalDivider(
+                        width: 1,
+                        thickness: 1,
+                        color: AppColors.mutedBorder,
+                      ),
+                      sideMenuPanel,
+                    ],
+                  ],
+                )
+              : mainContent,
           bottomNavigationBar: _ActionBar(
             controller: _controller,
             onReceive: _openReceivePanel,
@@ -469,6 +522,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   _desktopWindowService.setMinimizeToTrayEnabled(enabled),
                 );
               },
+              onLeftHandedModeChanged: (enabled) {
+                unawaited(_controller.setLeftHandedMode(enabled));
+              },
+              onVideoLinkPasswordChanged: (value) {
+                unawaited(_controller.setVideoLinkPassword(value));
+              },
               onPreviewCacheMaxSizeGbChanged: (value) {
                 unawaited(_controller.setPreviewCacheMaxSizeGb(value));
               },
@@ -532,14 +591,65 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
   }
 
-  Future<bool> _confirmSharedCacheRemoval({required String displayName}) async {
+  Future<SharedRecacheActionResult> _handleSharedRecacheFromFiles() async {
+    if (_controller.isSharedRecacheInProgress) {
+      return SharedRecacheActionResult.refreshedOnly;
+    }
+    if (_controller.isSharedRecacheCooldownActive) {
+      return SharedRecacheActionResult.refreshedOnly;
+    }
+
+    final before = await _controller.summarizeOwnerSharedContent();
+    if (!mounted) {
+      return SharedRecacheActionResult.cancelled;
+    }
+    if (before.totalCaches == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No shared folders/files to re-cache yet.'),
+        ),
+      );
+      return SharedRecacheActionResult.refreshedOnly;
+    }
+
+    final agreed = await _confirmSharedRecacheAgreement(before);
+    if (!agreed) {
+      return SharedRecacheActionResult.cancelled;
+    }
+
+    final report = await _controller.recacheSharedContent();
+    if (!mounted) {
+      return SharedRecacheActionResult.started;
+    }
+    if (report != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Before cache: ${report.before.totalFiles} files, '
+            'after re-cache: ${report.after.totalFiles} files.',
+          ),
+        ),
+      );
+    }
+    await _reloadShareableVideoFiles();
+    return SharedRecacheActionResult.started;
+  }
+
+  Future<bool> _confirmSharedRecacheAgreement(SharedCacheSummary before) async {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
+        final folderLabel = before.folderCaches == 1 ? 'folder' : 'folders';
+        final fileLabel = before.totalFiles == 1 ? 'file' : 'files';
+        final selectionText = before.selectionCaches > 0
+            ? '\nSelection caches: ${before.selectionCaches}'
+            : '';
         return AlertDialog(
-          title: const Text('Remove shared folder?'),
+          title: const Text('Start re-cache?'),
           content: Text(
-            '"$displayName" will be removed from shared access on this device.',
+            'Currently cached: ${before.folderCaches} $folderLabel, '
+            '${before.totalFiles} $fileLabel.$selectionText\n\n'
+            'Re-cache will rebuild indexes for all shared folders/files.',
           ),
           actions: [
             TextButton(
@@ -548,8 +658,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-              child: const Text('Remove'),
+              child: const Text('Start'),
             ),
           ],
         );
@@ -627,29 +736,15 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       );
       return;
     }
-    final password = _videoLinkPasswordController.text.trim();
+    final password = _controller.settings.videoLinkPassword.trim();
     if (password.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Enter a password first.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Set a web-link password in Settings.')),
+      );
       return;
     }
 
-    setState(() {
-      _isPublishingVideoLink = true;
-    });
-    try {
-      await _controller.publishVideoLinkShare(
-        file: selected,
-        password: password,
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isPublishingVideoLink = false;
-        });
-      }
-    }
+    await _controller.publishVideoLinkShare(file: selected, password: password);
   }
 
   Future<void> _toggleVideoLinkServer(bool enabled) async {
@@ -699,201 +794,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       },
     );
     return result ?? false;
-  }
-
-  Future<void> _openVideoLinkShareDialog({
-    SharedFolderCacheRecord? cache,
-  }) async {
-    final files = await _controller.listShareableVideoFiles(
-      cacheId: cache?.cacheId,
-    );
-    if (!mounted) {
-      return;
-    }
-    if (files.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            cache == null
-                ? 'No shared video files available. Add shared files first.'
-                : 'No video files found in this shared cache.',
-          ),
-        ),
-      );
-      return;
-    }
-
-    final passwordController = TextEditingController();
-    var selectedId = files.first.id;
-    String? dialogError;
-
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final selected = files.firstWhere((file) => file.id == selectedId);
-            final activeUrl = _controller.videoLinkWatchUrl;
-            final activeSession = _controller.videoLinkShareSession;
-            return AlertDialog(
-              title: const Text('Share Video By Link'),
-              content: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      cache == null
-                          ? 'Source: all shared caches'
-                          : 'Cache: ${cache.displayName}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedId,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'Video file',
-                      ),
-                      items: files
-                          .map(
-                            (file) => DropdownMenuItem<String>(
-                              value: file.id,
-                              child: Text(
-                                cache == null
-                                    ? '${file.cacheDisplayName} • ${file.relativePath} • ${_formatBytes(file.sizeBytes)}'
-                                    : '${file.relativePath} • ${_formatBytes(file.sizeBytes)}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                      onChanged: (next) {
-                        if (next == null) {
-                          return;
-                        }
-                        setDialogState(() {
-                          selectedId = next;
-                          dialogError = null;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    TextField(
-                      controller: passwordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        labelText: 'Password',
-                        helperText: 'Password is required to open the link.',
-                      ),
-                    ),
-                    if (dialogError != null) ...[
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        dialogError!,
-                        style: Theme.of(
-                          context,
-                        ).textTheme.bodySmall?.copyWith(color: AppColors.error),
-                      ),
-                    ],
-                    const SizedBox(height: AppSpacing.sm),
-                    if (activeSession != null && activeUrl != null) ...[
-                      Text(
-                        'Current link',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      const SizedBox(height: AppSpacing.xxs),
-                      SelectableText(
-                        activeUrl,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          fontFamily: 'JetBrainsMono',
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        'Current file: ${activeSession.fileName}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      'Publishing a new file replaces the previous one on the same link and port.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      cache == null
-                          ? 'Selected: ${selected.cacheDisplayName} • ${selected.fileName}'
-                          : 'Selected: ${selected.fileName}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
-                  child: const Text('Cancel'),
-                ),
-                if (activeUrl != null)
-                  TextButton(
-                    onPressed: () => unawaited(_copyToClipboard(activeUrl)),
-                    child: const Text('Copy link'),
-                  ),
-                if (activeSession != null)
-                  TextButton(
-                    onPressed: () async {
-                      final navigator = Navigator.of(dialogContext);
-                      final shouldStop = await _confirmStopVideoLinkShare();
-                      if (shouldStop != true) {
-                        return;
-                      }
-                      await _controller.stopVideoLinkShare();
-                      if (!mounted) {
-                        return;
-                      }
-                      if (_controller.errorMessage == null) {
-                        navigator.pop();
-                      }
-                    },
-                    child: const Text('Stop link'),
-                  ),
-                FilledButton(
-                  onPressed: () async {
-                    final navigator = Navigator.of(dialogContext);
-                    final password = passwordController.text.trim();
-                    if (password.isEmpty) {
-                      setDialogState(() {
-                        dialogError = 'Enter a password.';
-                      });
-                      return;
-                    }
-                    await _controller.publishVideoLinkShare(
-                      file: selected,
-                      password: password,
-                    );
-                    if (!mounted) {
-                      return;
-                    }
-                    if (_controller.errorMessage == null) {
-                      navigator.pop();
-                    } else {
-                      setDialogState(() {
-                        dialogError = _controller.errorMessage;
-                      });
-                    }
-                  },
-                  child: const Text('Publish'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-    passwordController.dispose();
   }
 
   Future<void> _openDeviceActionsMenu(
@@ -986,30 +886,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.refresh_rounded),
-                title: const Text('Re-cache shared folders'),
-                subtitle: const Text(
-                  'Refresh index and generate missing previews',
-                ),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _controller.recacheSharedFolders();
-                  if (!mounted) {
-                    return;
-                  }
-                  await _reloadShareableVideoFiles();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder_shared_outlined),
-                title: const Text('View shared folders'),
-                subtitle: const Text('See all currently shared caches'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _openSharedFoldersSheet();
-                },
-              ),
-              ListTile(
                 leading: const Icon(Icons.note_add_outlined),
                 title: const Text('Add shared files'),
                 subtitle: const Text(
@@ -1031,246 +907,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     );
   }
 
-  Future<void> _openSharedFoldersSheet() async {
-    await _controller.reloadOwnerSharedCaches();
-    if (!mounted) {
-      return;
-    }
-
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.78,
-          child: AnimatedBuilder(
-            animation: _controller,
-            builder: (context, _) {
-              final sharedCaches = _controller.ownerSharedCaches;
-              final activeVideoSession = _controller.videoLinkShareSession;
-              final activeVideoUrl = _controller.videoLinkWatchUrl;
-              return SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Shared folders',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (activeVideoSession != null &&
-                          activeVideoUrl != null) ...[
-                        Card(
-                          child: Padding(
-                            padding: const EdgeInsets.all(AppSpacing.md),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Active video link',
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                ),
-                                const SizedBox(height: AppSpacing.xs),
-                                SelectableText(
-                                  activeVideoUrl,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(fontFamily: 'JetBrainsMono'),
-                                ),
-                                const SizedBox(height: AppSpacing.xs),
-                                Text(
-                                  'File: ${activeVideoSession.fileName}',
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                                const SizedBox(height: AppSpacing.sm),
-                                Wrap(
-                                  spacing: AppSpacing.sm,
-                                  runSpacing: AppSpacing.xs,
-                                  children: [
-                                    OutlinedButton.icon(
-                                      onPressed: () => unawaited(
-                                        _copyToClipboard(activeVideoUrl),
-                                      ),
-                                      icon: const Icon(Icons.copy_rounded),
-                                      label: const Text('Copy link'),
-                                    ),
-                                    OutlinedButton.icon(
-                                      onPressed: () async {
-                                        final shouldStop =
-                                            await _confirmStopVideoLinkShare();
-                                        if (!shouldStop) {
-                                          return;
-                                        }
-                                        await _controller.stopVideoLinkShare();
-                                      },
-                                      icon: const Icon(Icons.link_off_rounded),
-                                      label: const Text('Stop link'),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                      ],
-                      Expanded(
-                        child: sharedCaches.isEmpty
-                            ? const Center(
-                                child: Text('No shared folders yet.'),
-                              )
-                            : ListView.separated(
-                                itemCount: sharedCaches.length,
-                                separatorBuilder: (_, index) =>
-                                    const SizedBox(height: AppSpacing.sm),
-                                itemBuilder: (_, index) {
-                                  final cache = sharedCaches[index];
-                                  final isSelection = cache.rootPath.startsWith(
-                                    'selection://',
-                                  );
-                                  return Card(
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(
-                                        AppSpacing.md,
-                                      ),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                isSelection
-                                                    ? Icons.list_alt_rounded
-                                                    : Icons.folder_open,
-                                                color: AppColors.brandPrimary,
-                                              ),
-                                              const SizedBox(
-                                                width: AppSpacing.sm,
-                                              ),
-                                              Expanded(
-                                                child: Text(
-                                                  cache.displayName,
-                                                  style: Theme.of(
-                                                    context,
-                                                  ).textTheme.titleMedium,
-                                                ),
-                                              ),
-                                              IconButton(
-                                                tooltip: 'Remove from sharing',
-                                                onPressed:
-                                                    _controller.isAddingShare
-                                                    ? null
-                                                    : () async {
-                                                        final confirmed =
-                                                            await _confirmSharedCacheRemoval(
-                                                              displayName: cache
-                                                                  .displayName,
-                                                            );
-                                                        if (!mounted ||
-                                                            !confirmed) {
-                                                          return;
-                                                        }
-                                                        await _controller
-                                                            .removeSharedCache(
-                                                              cache,
-                                                            );
-                                                        if (!mounted) {
-                                                          return;
-                                                        }
-                                                        await _reloadShareableVideoFiles();
-                                                      },
-                                                icon: const Icon(
-                                                  Icons.delete_outline_rounded,
-                                                  color: AppColors.error,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: AppSpacing.xs),
-                                          Text(
-                                            '${cache.itemCount} files • '
-                                            '${_formatBytes(cache.totalBytes)}',
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall,
-                                          ),
-                                          const SizedBox(
-                                            height: AppSpacing.xxs,
-                                          ),
-                                          Text(
-                                            isSelection
-                                                ? 'Selection cache'
-                                                : cache.rootPath,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall,
-                                          ),
-                                          const SizedBox(
-                                            height: AppSpacing.xxs,
-                                          ),
-                                          Text(
-                                            'Updated: ${_formatTime(DateTime.fromMillisecondsSinceEpoch(cache.updatedAtMs))}',
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.bodySmall,
-                                          ),
-                                          const SizedBox(height: AppSpacing.sm),
-                                          Wrap(
-                                            spacing: AppSpacing.sm,
-                                            runSpacing: AppSpacing.xs,
-                                            children: [
-                                              OutlinedButton.icon(
-                                                onPressed: () async {
-                                                  await _openVideoLinkShareDialog(
-                                                    cache: cache,
-                                                  );
-                                                },
-                                                icon: const Icon(
-                                                  Icons.link_rounded,
-                                                ),
-                                                label: const Text(
-                                                  'Share video link',
-                                                ),
-                                              ),
-                                              if (!isSelection)
-                                                OutlinedButton.icon(
-                                                  onPressed: () async {
-                                                    await _controller
-                                                        .openHistoryPath(
-                                                          cache.rootPath,
-                                                        );
-                                                  },
-                                                  icon: const Icon(
-                                                    Icons.folder_open,
-                                                  ),
-                                                  label: const Text(
-                                                    'Open folder',
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        );
-      },
-    );
-  }
-
   Future<void> _openFileExplorer() async {
     final storageService = TransferStorageService();
     final receiveDirectory = await storageService.resolveReceiveDirectory();
@@ -1283,11 +919,29 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       }
     }
     await _controller.reloadOwnerSharedCaches();
+    final sharedFiles = await _controller.listShareableLocalFiles();
 
     final roots = <FileExplorerRoot>[];
     final seenPaths = <String>{};
 
-    void addRoot({required String label, required String path}) {
+    void addRoot({
+      required String label,
+      required String path,
+      bool isSharedFolder = false,
+      List<FileExplorerVirtualFile> virtualFiles =
+          const <FileExplorerVirtualFile>[],
+    }) {
+      if (virtualFiles.isNotEmpty) {
+        roots.add(
+          FileExplorerRoot(
+            label: label,
+            path: path,
+            isSharedFolder: isSharedFolder,
+            virtualFiles: virtualFiles,
+          ),
+        );
+        return;
+      }
       final normalized = _normalizePathKey(path);
       if (normalized.isEmpty || seenPaths.contains(normalized)) {
         return;
@@ -1296,18 +950,37 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         return;
       }
       seenPaths.add(normalized);
-      roots.add(FileExplorerRoot(label: label, path: path));
+      roots.add(
+        FileExplorerRoot(
+          label: label,
+          path: path,
+          isSharedFolder: isSharedFolder,
+          virtualFiles: virtualFiles,
+        ),
+      );
     }
 
     if (publicDownloadsDirectory != null) {
       addRoot(label: 'Landa Downloads', path: publicDownloadsDirectory.path);
     }
     addRoot(label: 'Incoming', path: receiveDirectory.path);
-    for (final cache in _controller.ownerSharedCaches) {
-      if (cache.rootPath.startsWith('selection://')) {
-        continue;
-      }
-      addRoot(label: 'Shared: ${cache.displayName}', path: cache.rootPath);
+    if (sharedFiles.isNotEmpty) {
+      addRoot(
+        label: 'My files',
+        path: 'virtual://my-files',
+        isSharedFolder: true,
+        virtualFiles: sharedFiles
+            .map(
+              (file) => FileExplorerVirtualFile(
+                path: file.absolutePath,
+                subtitle: '${file.cacheDisplayName} / ${file.relativePath}',
+                virtualPath: file.isSelectionCache
+                    ? p.basename(file.relativePath.replaceAll('\\', '/'))
+                    : '${file.cacheDisplayName}/${file.relativePath.replaceAll('\\', '/')}',
+              ),
+            )
+            .toList(growable: false),
+      );
     }
 
     if (!mounted) {
@@ -1321,7 +994,16 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     }
 
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => FileExplorerPage(roots: roots)),
+      MaterialPageRoute<void>(
+        builder: (_) => FileExplorerPage(
+          roots: roots,
+          onRecacheSharedFolders: _handleSharedRecacheFromFiles,
+          recacheStateListenable: _controller,
+          isSharedRecacheInProgress: () =>
+              _controller.isSharedRecacheInProgress,
+          sharedRecacheProgress: () => _controller.sharedRecacheProgress,
+        ),
+      ),
     );
   }
 
@@ -1501,6 +1183,181 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   }
 }
 
+class _SideMenuDrawer extends StatelessWidget {
+  const _SideMenuDrawer({
+    required this.onOpenFriends,
+    required this.onOpenSettings,
+    required this.onOpenClipboard,
+    required this.onOpenHistory,
+    required this.onOpenFiles,
+    required this.onRefresh,
+    required this.controller,
+    required this.videos,
+    required this.selectedVideoId,
+    required this.isLoadingVideos,
+    required this.onSelectedVideoChanged,
+    required this.onOpenVideoList,
+    required this.onToggleVideoServer,
+    required this.onCopyVideoLink,
+  });
+
+  final Future<void> Function() onOpenFriends;
+  final Future<void> Function() onOpenSettings;
+  final Future<void> Function() onOpenClipboard;
+  final Future<void> Function() onOpenHistory;
+  final Future<void> Function() onOpenFiles;
+  final Future<void> Function()? onRefresh;
+  final DiscoveryController controller;
+  final List<ShareableVideoFile> videos;
+  final String? selectedVideoId;
+  final bool isLoadingVideos;
+  final ValueChanged<String?> onSelectedVideoChanged;
+  final VoidCallback onOpenVideoList;
+  final ValueChanged<bool> onToggleVideoServer;
+  final VoidCallback? onCopyVideoLink;
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      child: _SideMenuActions(
+        onOpenFriends: onOpenFriends,
+        onOpenSettings: onOpenSettings,
+        onOpenClipboard: onOpenClipboard,
+        onOpenHistory: onOpenHistory,
+        onOpenFiles: onOpenFiles,
+        onRefresh: onRefresh,
+        controller: controller,
+        videos: videos,
+        selectedVideoId: selectedVideoId,
+        isLoadingVideos: isLoadingVideos,
+        onSelectedVideoChanged: onSelectedVideoChanged,
+        onOpenVideoList: onOpenVideoList,
+        onToggleVideoServer: onToggleVideoServer,
+        onCopyVideoLink: onCopyVideoLink,
+        closeOnTap: true,
+      ),
+    );
+  }
+}
+
+class _SideMenuActions extends StatelessWidget {
+  const _SideMenuActions({
+    required this.onOpenFriends,
+    required this.onOpenSettings,
+    required this.onOpenClipboard,
+    required this.onOpenHistory,
+    required this.onOpenFiles,
+    required this.onRefresh,
+    required this.controller,
+    required this.videos,
+    required this.selectedVideoId,
+    required this.isLoadingVideos,
+    required this.onSelectedVideoChanged,
+    required this.onOpenVideoList,
+    required this.onToggleVideoServer,
+    required this.onCopyVideoLink,
+    required this.closeOnTap,
+  });
+
+  final Future<void> Function() onOpenFriends;
+  final Future<void> Function() onOpenSettings;
+  final Future<void> Function() onOpenClipboard;
+  final Future<void> Function() onOpenHistory;
+  final Future<void> Function() onOpenFiles;
+  final Future<void> Function()? onRefresh;
+  final DiscoveryController controller;
+  final List<ShareableVideoFile> videos;
+  final String? selectedVideoId;
+  final bool isLoadingVideos;
+  final ValueChanged<String?> onSelectedVideoChanged;
+  final VoidCallback onOpenVideoList;
+  final ValueChanged<bool> onToggleVideoServer;
+  final VoidCallback? onCopyVideoLink;
+  final bool closeOnTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ListView(
+        padding: EdgeInsets.zero,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Text('Menu', style: Theme.of(context).textTheme.titleLarge),
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.group_rounded,
+            title: 'Friends',
+            onTap: onOpenFriends,
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.tune_rounded,
+            title: 'Settings',
+            onTap: onOpenSettings,
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.content_paste_rounded,
+            title: 'Clipboard',
+            onTap: onOpenClipboard,
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.history,
+            title: 'Download history',
+            onTap: onOpenHistory,
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.folder_open_rounded,
+            title: 'Files',
+            onTap: onOpenFiles,
+          ),
+          _buildItem(
+            context: context,
+            icon: Icons.refresh_rounded,
+            title: 'Refresh',
+            onTap: onRefresh,
+          ),
+          _VideoLinkServerCard(
+            controller: controller,
+            videos: videos,
+            selectedVideoId: selectedVideoId,
+            isLoadingVideos: isLoadingVideos,
+            onSelectedVideoChanged: onSelectedVideoChanged,
+            onOpenVideoList: onOpenVideoList,
+            onToggle: onToggleVideoServer,
+            onCopyLink: onCopyVideoLink,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildItem({
+    required BuildContext context,
+    required IconData icon,
+    required String title,
+    required Future<void> Function()? onTap,
+  }) {
+    return ListTile(
+      leading: Icon(icon),
+      title: Text(title),
+      enabled: onTap != null,
+      onTap: onTap == null
+          ? null
+          : () {
+              if (closeOnTap) {
+                Navigator.of(context).pop();
+              }
+              unawaited(onTap());
+            },
+    );
+  }
+}
+
 class _NetworkSummaryCard extends StatelessWidget {
   const _NetworkSummaryCard({required this.controller, required this.total});
 
@@ -1573,11 +1430,8 @@ class _VideoLinkServerCard extends StatelessWidget {
     required this.videos,
     required this.selectedVideoId,
     required this.isLoadingVideos,
-    required this.isPublishing,
-    required this.passwordController,
     required this.onSelectedVideoChanged,
-    required this.onRefreshVideos,
-    required this.onPublish,
+    required this.onOpenVideoList,
     required this.onToggle,
     this.onCopyLink,
   });
@@ -1586,11 +1440,8 @@ class _VideoLinkServerCard extends StatelessWidget {
   final List<ShareableVideoFile> videos;
   final String? selectedVideoId;
   final bool isLoadingVideos;
-  final bool isPublishing;
-  final TextEditingController passwordController;
   final ValueChanged<String?> onSelectedVideoChanged;
-  final VoidCallback onRefreshVideos;
-  final VoidCallback onPublish;
+  final VoidCallback onOpenVideoList;
   final ValueChanged<bool> onToggle;
   final VoidCallback? onCopyLink;
 
@@ -1599,145 +1450,75 @@ class _VideoLinkServerCard extends StatelessWidget {
     final activeSession = controller.videoLinkShareSession;
     final activeUrl = controller.videoLinkWatchUrl;
     final enabled = activeSession != null;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  height: 40,
-                  width: 40,
-                  decoration: BoxDecoration(
-                    color: (enabled ? AppColors.success : AppColors.mutedIcon)
-                        .withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(AppRadius.md),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile.adaptive(
+          secondary: Icon(
+            enabled ? Icons.language_rounded : Icons.link_off_rounded,
+            color: enabled ? AppColors.success : AppColors.textMuted,
+          ),
+          value: enabled,
+          onChanged: onToggle,
+          title: const Text('Web server for video'),
+        ),
+        ListTile(
+          title: DropdownButtonFormField<String>(
+            initialValue: selectedVideoId,
+            isExpanded: true,
+            onTap: onOpenVideoList,
+            items: videos
+                .map(
+                  (file) => DropdownMenuItem<String>(
+                    value: file.id,
+                    child: Text(
+                      '${file.cacheDisplayName} • ${file.relativePath}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
+                    ),
                   ),
-                  child: Icon(
-                    enabled ? Icons.language_rounded : Icons.link_off_rounded,
-                    color: enabled ? AppColors.success : AppColors.textMuted,
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Web server for video',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: AppSpacing.xxs),
-                      Text(
-                        enabled
-                            ? 'Enabled'
-                            : 'Disabled. Toggle on to pick video and password.',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                  ),
-                ),
-                Switch.adaptive(value: enabled, onChanged: onToggle),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            DropdownButtonFormField<String>(
-              initialValue: selectedVideoId,
-              items: videos
+                )
+                .toList(growable: false),
+            selectedItemBuilder: (context) {
+              return videos
                   .map(
-                    (file) => DropdownMenuItem<String>(
-                      value: file.id,
-                      child: Text(
-                        '${file.cacheDisplayName} • ${file.relativePath}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                    (file) => Text(
+                      '${file.cacheDisplayName} • ${file.relativePath}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      softWrap: false,
                     ),
                   )
-                  .toList(growable: false),
-              onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
-              decoration: InputDecoration(
-                border: const OutlineInputBorder(),
-                isDense: true,
-                labelText: 'Video from shared files',
-                helperText: videos.isEmpty
-                    ? 'No shared videos. Add files/folders first.'
-                    : null,
-              ),
+                  .toList(growable: false);
+            },
+            onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: 'Video from shared files',
             ),
-            const SizedBox(height: AppSpacing.xs),
-            TextField(
-              controller: passwordController,
-              obscureText: true,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                isDense: true,
-                labelText: 'Password',
-                helperText: 'Required for opening the web link.',
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.xs,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: isLoadingVideos ? null : onRefreshVideos,
-                  icon: isLoadingVideos
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh_rounded),
-                  label: const Text('Refresh videos'),
-                ),
-                FilledButton.icon(
-                  onPressed: videos.isEmpty || isPublishing ? null : onPublish,
-                  icon: isPublishing
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.surface,
-                          ),
-                        )
-                      : const Icon(Icons.publish_rounded),
-                  label: Text(enabled ? 'Update link' : 'Publish link'),
-                ),
-              ],
-            ),
-            if (activeSession != null) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'File: ${activeSession.fileName}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ],
-            if (activeUrl != null) ...[
-              const SizedBox(height: AppSpacing.xxs),
-              SelectableText(
-                activeUrl,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrainsMono'),
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: onCopyLink,
-                  icon: const Icon(Icons.copy_rounded),
-                  label: const Text('Copy link'),
-                ),
-              ),
-            ],
-          ],
+          ),
         ),
-      ),
+        if (isLoadingVideos)
+          const ListTile(title: LinearProgressIndicator(minHeight: 2)),
+        if (activeSession != null)
+          ListTile(dense: true, title: Text('File: ${activeSession.fileName}')),
+        if (activeUrl != null)
+          ListTile(
+            dense: true,
+            title: SelectableText(
+              activeUrl,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrainsMono'),
+            ),
+            trailing: OutlinedButton.icon(
+              onPressed: onCopyLink,
+              icon: const Icon(Icons.copy_rounded),
+              label: const Text('Copy'),
+            ),
+          ),
+      ],
     );
   }
 }

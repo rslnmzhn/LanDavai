@@ -62,6 +62,8 @@ class AppSettings {
     required this.backgroundScanInterval,
     required this.downloadAttemptNotificationsEnabled,
     required this.minimizeToTrayOnClose,
+    required this.isLeftHandedMode,
+    required this.videoLinkPassword,
     required this.previewCacheMaxSizeGb,
     required this.previewCacheMaxAgeDays,
     required this.clipboardHistoryMaxEntries,
@@ -70,6 +72,8 @@ class AppSettings {
   final BackgroundScanIntervalOption backgroundScanInterval;
   final bool downloadAttemptNotificationsEnabled;
   final bool minimizeToTrayOnClose;
+  final bool isLeftHandedMode;
+  final String videoLinkPassword;
   final int previewCacheMaxSizeGb;
   final int previewCacheMaxAgeDays;
   final int clipboardHistoryMaxEntries;
@@ -78,6 +82,8 @@ class AppSettings {
     backgroundScanInterval: BackgroundScanIntervalOption.fiveMinutes,
     downloadAttemptNotificationsEnabled: true,
     minimizeToTrayOnClose: true,
+    isLeftHandedMode: false,
+    videoLinkPassword: '',
     previewCacheMaxSizeGb: 2,
     previewCacheMaxAgeDays: 30,
     clipboardHistoryMaxEntries: 120,
@@ -87,6 +93,8 @@ class AppSettings {
     BackgroundScanIntervalOption? backgroundScanInterval,
     bool? downloadAttemptNotificationsEnabled,
     bool? minimizeToTrayOnClose,
+    bool? isLeftHandedMode,
+    String? videoLinkPassword,
     int? previewCacheMaxSizeGb,
     int? previewCacheMaxAgeDays,
     int? clipboardHistoryMaxEntries,
@@ -99,6 +107,8 @@ class AppSettings {
           this.downloadAttemptNotificationsEnabled,
       minimizeToTrayOnClose:
           minimizeToTrayOnClose ?? this.minimizeToTrayOnClose,
+      isLeftHandedMode: isLeftHandedMode ?? this.isLeftHandedMode,
+      videoLinkPassword: videoLinkPassword ?? this.videoLinkPassword,
       previewCacheMaxSizeGb:
           previewCacheMaxSizeGb ?? this.previewCacheMaxSizeGb,
       previewCacheMaxAgeDays:
