@@ -3,7 +3,10 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  flutter_media_metadata
   irondash_engine_context
+  media_kit_libs_windows_video
+  media_kit_video
   super_native_extensions
   syncfusion_pdfviewer_windows
   url_launcher_windows

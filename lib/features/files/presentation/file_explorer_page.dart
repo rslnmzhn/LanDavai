@@ -1,11 +1,19 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_media_metadata/flutter_media_metadata.dart';
+import 'package:image/image.dart' as img;
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:video_player/video_player.dart';
 import 'package:video_thumbnail/video_thumbnail.dart' as video_thumbnail;
@@ -77,6 +85,56 @@ class FileExplorerVirtualDirectory {
   final List<FileExplorerVirtualFolder> folders;
   final List<FileExplorerVirtualFile> files;
 }
+
+const Set<String> _supportedImageExtensions = <String>{
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.webp',
+  '.gif',
+  '.bmp',
+  '.heic',
+  '.heif',
+  '.tif',
+  '.tiff',
+};
+
+const Set<String> _supportedVideoExtensions = <String>{
+  '.mp4',
+  '.mov',
+  '.mkv',
+  '.avi',
+  '.webm',
+  '.m4v',
+  '.3gp',
+  '.mpeg',
+  '.mpg',
+};
+
+const Set<String> _supportedAudioExtensions = <String>{
+  '.mp3',
+  '.m4a',
+  '.aac',
+  '.flac',
+  '.wav',
+  '.ogg',
+  '.opus',
+  '.wma',
+};
+
+const Set<String> _supportedTextExtensions = <String>{
+  '.txt',
+  '.md',
+  '.log',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.csv',
+  '.xml',
+};
+
+bool get _useMediaKitForPlayback =>
+    Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
 enum SharedRecacheActionResult { started, refreshedOnly, cancelled }
 
@@ -1304,7 +1362,13 @@ class LocalFileViewerPage extends StatelessWidget {
       case _LocalFileKind.image:
         body = _ImageFileViewer(filePath: filePath);
       case _LocalFileKind.video:
-        body = _VideoFileViewer(filePath: filePath);
+        body = _useMediaKitForPlayback
+            ? _MediaKitVideoFileViewer(filePath: filePath)
+            : _VideoFileViewer(filePath: filePath);
+      case _LocalFileKind.audio:
+        body = _useMediaKitForPlayback
+            ? _MediaKitAudioFileViewer(filePath: filePath)
+            : _AudioFileViewer(filePath: filePath);
       case _LocalFileKind.text:
         body = _TextFileViewer(filePath: filePath);
       case _LocalFileKind.pdf:
@@ -1321,13 +1385,16 @@ class LocalFileViewerPage extends StatelessWidget {
 
   _LocalFileKind _resolveFileKind(String path) {
     final ext = p.extension(path).toLowerCase();
-    if (_imageExtensions.contains(ext)) {
+    if (_supportedImageExtensions.contains(ext)) {
       return _LocalFileKind.image;
     }
-    if (_videoExtensions.contains(ext)) {
+    if (_supportedVideoExtensions.contains(ext)) {
       return _LocalFileKind.video;
     }
-    if (_textExtensions.contains(ext)) {
+    if (_supportedAudioExtensions.contains(ext)) {
+      return _LocalFileKind.audio;
+    }
+    if (_supportedTextExtensions.contains(ext)) {
       return _LocalFileKind.text;
     }
     if (ext == '.pdf') {
@@ -1335,42 +1402,6 @@ class LocalFileViewerPage extends StatelessWidget {
     }
     return _LocalFileKind.other;
   }
-
-  static const Set<String> _imageExtensions = <String>{
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-    '.gif',
-    '.bmp',
-    '.heic',
-    '.heif',
-    '.tif',
-    '.tiff',
-  };
-
-  static const Set<String> _videoExtensions = <String>{
-    '.mp4',
-    '.mov',
-    '.mkv',
-    '.avi',
-    '.webm',
-    '.m4v',
-    '.3gp',
-    '.mpeg',
-    '.mpg',
-  };
-
-  static const Set<String> _textExtensions = <String>{
-    '.txt',
-    '.md',
-    '.log',
-    '.json',
-    '.yaml',
-    '.yml',
-    '.csv',
-    '.xml',
-  };
 }
 
 class _ImageFileViewer extends StatelessWidget {
@@ -1396,6 +1427,428 @@ class _ImageFileViewer extends StatelessWidget {
   }
 }
 
+class _MediaKitVideoFileViewer extends StatefulWidget {
+  const _MediaKitVideoFileViewer({required this.filePath});
+
+  final String filePath;
+
+  @override
+  State<_MediaKitVideoFileViewer> createState() =>
+      _MediaKitVideoFileViewerState();
+}
+
+class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
+  late final Player _player;
+  late final VideoController _videoController;
+  late final Future<Uint8List?> _previewFuture;
+  StreamSubscription<bool>? _playingSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  String? _errorMessage;
+  bool _opened = false;
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _previewFuture = _MediaPreviewCache.loadVideoPreview(
+      filePath: widget.filePath,
+      maxExtent: 1280,
+      quality: 82,
+      timeMs: 700,
+    );
+    _player = Player();
+    _videoController = VideoController(_player);
+    _playingSubscription = _player.stream.playing.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPlaying = event;
+      });
+    });
+    _positionSubscription = _player.stream.position.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _position = event;
+      });
+    });
+    _durationSubscription = _player.stream.duration.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _duration = event;
+      });
+    });
+    _initialize();
+  }
+
+  @override
+  void dispose() {
+    _playingSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _durationSubscription?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _player.open(
+        Media(_mediaUriFromFilePath(widget.filePath)),
+        play: false,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _opened = true;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = 'Cannot open video in built-in player.\n$error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_errorMessage != null) {
+      return _UnsupportedFileViewer(
+        filePath: widget.filePath,
+        hintMessage: _errorMessage,
+      );
+    }
+
+    final totalMs = _duration.inMilliseconds;
+    final positionMs = _position.inMilliseconds.clamp(0, math.max(totalMs, 0));
+    final sliderMax = math.max(totalMs, 1).toDouble();
+    final aspect = _resolveVideoAspectRatio(_player.state);
+
+    return Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: !_opened
+                ? FutureBuilder<Uint8List?>(
+                    future: _previewFuture,
+                    builder: (context, snapshot) {
+                      final bytes = snapshot.data;
+                      if (bytes != null && bytes.isNotEmpty) {
+                        return Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.all(AppSpacing.md),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.lg,
+                                ),
+                                child: Image.memory(bytes, fit: BoxFit.contain),
+                              ),
+                            ),
+                            Container(
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.32),
+                                shape: BoxShape.circle,
+                              ),
+                              padding: const EdgeInsets.all(AppSpacing.xs),
+                              child: const Icon(
+                                Icons.play_circle_fill_rounded,
+                                color: Colors.white,
+                                size: 46,
+                              ),
+                            ),
+                          ],
+                        );
+                      }
+                      return const CircularProgressIndicator();
+                    },
+                  )
+                : AspectRatio(
+                    aspectRatio: aspect,
+                    child: Video(
+                      controller: _videoController,
+                      controls: null,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: Slider(
+            value: positionMs.toDouble().clamp(0, sliderMax),
+            min: 0,
+            max: sliderMax,
+            onChanged: _duration == Duration.zero
+                ? null
+                : (value) {
+                    _player.seek(Duration(milliseconds: value.round()));
+                  },
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+          child: Row(
+            children: [
+              Text(
+                '${_formatPlaybackDuration(_position)} / ${_formatPlaybackDuration(_duration)}',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Back 10s',
+                onPressed: () {
+                  final target = _position - const Duration(seconds: 10);
+                  _player.seek(target.isNegative ? Duration.zero : target);
+                },
+                icon: const Icon(Icons.replay_10_rounded),
+              ),
+              IconButton(
+                tooltip: _isPlaying ? 'Pause' : 'Play',
+                onPressed: () {
+                  if (_isPlaying) {
+                    _player.pause();
+                  } else {
+                    _player.play();
+                  }
+                },
+                icon: Icon(
+                  _isPlaying
+                      ? Icons.pause_circle_filled_rounded
+                      : Icons.play_circle_fill_rounded,
+                  size: 36,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Forward 10s',
+                onPressed: () {
+                  final target = _position + const Duration(seconds: 10);
+                  final bounded =
+                      _duration == Duration.zero || target < _duration
+                      ? target
+                      : _duration;
+                  _player.seek(bounded);
+                },
+                icon: const Icon(Icons.forward_10_rounded),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+    );
+  }
+}
+
+class _MediaKitAudioFileViewer extends StatefulWidget {
+  const _MediaKitAudioFileViewer({required this.filePath});
+
+  final String filePath;
+
+  @override
+  State<_MediaKitAudioFileViewer> createState() =>
+      _MediaKitAudioFileViewerState();
+}
+
+class _MediaKitAudioFileViewerState extends State<_MediaKitAudioFileViewer> {
+  late final Player _player;
+  late final Future<Uint8List?> _coverFuture;
+  StreamSubscription<bool>? _playingSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  String? _errorMessage;
+  bool _isPlaying = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _coverFuture = _MediaPreviewCache.loadAudioCover(
+      filePath: widget.filePath,
+      maxExtent: 1200,
+      quality: 86,
+    );
+    _player = Player();
+    _playingSubscription = _player.stream.playing.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isPlaying = event;
+      });
+    });
+    _positionSubscription = _player.stream.position.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _position = event;
+      });
+    });
+    _durationSubscription = _player.stream.duration.listen((event) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _duration = event;
+      });
+    });
+    _initialize();
+  }
+
+  @override
+  void dispose() {
+    _playingSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _durationSubscription?.cancel();
+    _player.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _player.open(
+        Media(_mediaUriFromFilePath(widget.filePath)),
+        play: false,
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = 'Cannot open audio in built-in player.\n$error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_errorMessage != null) {
+      return _UnsupportedFileViewer(
+        filePath: widget.filePath,
+        hintMessage: _errorMessage,
+      );
+    }
+
+    final totalMs = _duration.inMilliseconds;
+    final positionMs = _position.inMilliseconds.clamp(0, math.max(totalMs, 0));
+    final sliderMax = math.max(totalMs, 1).toDouble();
+
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 540,
+                  maxHeight: 540,
+                ),
+                child: FutureBuilder<Uint8List?>(
+                  future: _coverFuture,
+                  builder: (context, snapshot) {
+                    final cover = snapshot.data;
+                    if (cover != null && cover.isNotEmpty) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        child: Image.memory(cover, fit: BoxFit.contain),
+                      );
+                    }
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceSoft,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: AppColors.mutedBorder),
+                      ),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: const Icon(
+                        Icons.audiotrack_rounded,
+                        color: AppColors.mutedIcon,
+                        size: 64,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+          Slider(
+            value: positionMs.toDouble().clamp(0, sliderMax),
+            min: 0,
+            max: sliderMax,
+            onChanged: _duration == Duration.zero
+                ? null
+                : (value) {
+                    _player.seek(Duration(milliseconds: value.round()));
+                  },
+          ),
+          Row(
+            children: [
+              Text(
+                '${_formatPlaybackDuration(_position)} / ${_formatPlaybackDuration(_duration)}',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Back 10s',
+                onPressed: () {
+                  final target = _position - const Duration(seconds: 10);
+                  _player.seek(target.isNegative ? Duration.zero : target);
+                },
+                icon: const Icon(Icons.replay_10_rounded),
+              ),
+              IconButton(
+                tooltip: _isPlaying ? 'Pause' : 'Play',
+                onPressed: () {
+                  if (_isPlaying) {
+                    _player.pause();
+                  } else {
+                    _player.play();
+                  }
+                },
+                icon: Icon(
+                  _isPlaying
+                      ? Icons.pause_circle_filled_rounded
+                      : Icons.play_circle_fill_rounded,
+                  size: 36,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Forward 10s',
+                onPressed: () {
+                  final target = _position + const Duration(seconds: 10);
+                  final bounded =
+                      _duration == Duration.zero || target < _duration
+                      ? target
+                      : _duration;
+                  _player.seek(bounded);
+                },
+                icon: const Icon(Icons.forward_10_rounded),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _VideoFileViewer extends StatefulWidget {
   const _VideoFileViewer({required this.filePath});
 
@@ -1408,10 +1861,17 @@ class _VideoFileViewer extends StatefulWidget {
 class _VideoFileViewerState extends State<_VideoFileViewer> {
   VideoPlayerController? _controller;
   String? _errorMessage;
+  late final Future<Uint8List?> _previewFuture;
 
   @override
   void initState() {
     super.initState();
+    _previewFuture = _MediaPreviewCache.loadVideoPreview(
+      filePath: widget.filePath,
+      maxExtent: 1280,
+      quality: 82,
+      timeMs: 700,
+    );
     _initialize();
   }
 
@@ -1455,7 +1915,41 @@ class _VideoFileViewerState extends State<_VideoFileViewer> {
 
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) {
-      return const Center(child: CircularProgressIndicator());
+      return Center(
+        child: FutureBuilder<Uint8List?>(
+          future: _previewFuture,
+          builder: (context, snapshot) {
+            final bytes = snapshot.data;
+            if (bytes != null && bytes.isNotEmpty) {
+              return Stack(
+                alignment: Alignment.center,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(AppRadius.lg),
+                      child: Image.memory(bytes, fit: BoxFit.contain),
+                    ),
+                  ),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.32),
+                      shape: BoxShape.circle,
+                    ),
+                    padding: const EdgeInsets.all(AppSpacing.xs),
+                    child: const Icon(
+                      Icons.play_circle_fill_rounded,
+                      color: Colors.white,
+                      size: 46,
+                    ),
+                  ),
+                ],
+              );
+            }
+            return const CircularProgressIndicator();
+          },
+        ),
+      );
     }
 
     final isPlaying = controller.value.isPlaying;
@@ -1505,6 +1999,197 @@ class _VideoFileViewerState extends State<_VideoFileViewer> {
         const SizedBox(height: AppSpacing.sm),
       ],
     );
+  }
+}
+
+class _AudioFileViewer extends StatefulWidget {
+  const _AudioFileViewer({required this.filePath});
+
+  final String filePath;
+
+  @override
+  State<_AudioFileViewer> createState() => _AudioFileViewerState();
+}
+
+class _AudioFileViewerState extends State<_AudioFileViewer> {
+  VideoPlayerController? _controller;
+  String? _errorMessage;
+  late final Future<Uint8List?> _coverFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _coverFuture = _MediaPreviewCache.loadAudioCover(
+      filePath: widget.filePath,
+      maxExtent: 1200,
+      quality: 86,
+    );
+    _initialize();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final controller = VideoPlayerController.file(File(widget.filePath));
+      await controller.initialize();
+      await controller.setLooping(false);
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() {
+        _controller = controller;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = 'Cannot open audio in built-in player.\n$error';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_errorMessage != null) {
+      return _UnsupportedFileViewer(
+        filePath: widget.filePath,
+        hintMessage: _errorMessage,
+      );
+    }
+
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        children: [
+          Expanded(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 540,
+                  maxHeight: 540,
+                ),
+                child: FutureBuilder<Uint8List?>(
+                  future: _coverFuture,
+                  builder: (context, snapshot) {
+                    final cover = snapshot.data;
+                    if (cover != null && cover.isNotEmpty) {
+                      return ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        child: Image.memory(cover, fit: BoxFit.contain),
+                      );
+                    }
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceSoft,
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                        border: Border.all(color: AppColors.mutedBorder),
+                      ),
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      child: const Icon(
+                        Icons.audiotrack_rounded,
+                        color: AppColors.mutedIcon,
+                        size: 64,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          VideoProgressIndicator(
+            controller,
+            allowScrubbing: true,
+            colors: const VideoProgressColors(
+              playedColor: AppColors.brandPrimary,
+              bufferedColor: AppColors.brandAccent,
+              backgroundColor: AppColors.mutedBorder,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          ValueListenableBuilder<VideoPlayerValue>(
+            valueListenable: controller,
+            builder: (context, value, _) {
+              final isPlaying = value.isPlaying;
+              final position = value.position;
+              final duration = value.duration;
+              return Row(
+                children: [
+                  Text(
+                    '${_formatDuration(position)} / ${_formatDuration(duration)}',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Back 10s',
+                    onPressed: () async {
+                      final target = position - const Duration(seconds: 10);
+                      await controller.seekTo(
+                        target.isNegative ? Duration.zero : target,
+                      );
+                    },
+                    icon: const Icon(Icons.replay_10_rounded),
+                  ),
+                  IconButton(
+                    tooltip: isPlaying ? 'Pause' : 'Play',
+                    onPressed: () async {
+                      if (isPlaying) {
+                        await controller.pause();
+                      } else {
+                        await controller.play();
+                      }
+                    },
+                    icon: Icon(
+                      isPlaying
+                          ? Icons.pause_circle_filled_rounded
+                          : Icons.play_circle_fill_rounded,
+                      size: 36,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Forward 10s',
+                    onPressed: () async {
+                      final target = position + const Duration(seconds: 10);
+                      final bounded =
+                          duration == Duration.zero || target < duration
+                          ? target
+                          : duration;
+                      await controller.seekTo(bounded);
+                    },
+                    icon: const Icon(Icons.forward_10_rounded),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDuration(Duration value) {
+    final totalSeconds = value.inSeconds.clamp(0, 359999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 }
 
@@ -1682,6 +2367,30 @@ class _ViewerError extends StatelessWidget {
   }
 }
 
+String _mediaUriFromFilePath(String filePath) {
+  return Uri.file(filePath).toString();
+}
+
+String _formatPlaybackDuration(Duration value) {
+  final totalSeconds = value.inSeconds.clamp(0, 359999);
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+  return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+}
+
+double _resolveVideoAspectRatio(PlayerState state) {
+  final width = state.width ?? state.videoParams.dw ?? state.videoParams.w;
+  final height = state.height ?? state.videoParams.dh ?? state.videoParams.h;
+  if (width == null || height == null || width <= 0 || height <= 0) {
+    return 16 / 9;
+  }
+  return width / height;
+}
+
 class _ExplorerPathHeader extends StatelessWidget {
   const _ExplorerPathHeader({
     required this.rootLabel,
@@ -1810,35 +2519,10 @@ class _ExplorerFilePreview extends StatelessWidget {
   final String filePath;
   final double size;
 
-  static const Set<String> _imageExtensions = <String>{
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-    '.gif',
-    '.bmp',
-    '.heic',
-    '.heif',
-    '.tif',
-    '.tiff',
-  };
-
-  static const Set<String> _videoExtensions = <String>{
-    '.mp4',
-    '.mov',
-    '.mkv',
-    '.avi',
-    '.webm',
-    '.m4v',
-    '.3gp',
-    '.mpeg',
-    '.mpg',
-  };
-
   @override
   Widget build(BuildContext context) {
     final ext = p.extension(filePath).toLowerCase();
-    if (_imageExtensions.contains(ext)) {
+    if (_supportedImageExtensions.contains(ext)) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Image.file(
@@ -1850,8 +2534,11 @@ class _ExplorerFilePreview extends StatelessWidget {
         ),
       );
     }
-    if (_videoExtensions.contains(ext)) {
+    if (_supportedVideoExtensions.contains(ext)) {
       return _ExplorerVideoPreview(filePath: filePath, size: size);
+    }
+    if (_supportedAudioExtensions.contains(ext)) {
+      return _ExplorerAudioPreview(filePath: filePath, size: size);
     }
     return _fallbackIcon(Icons.insert_drive_file_rounded);
   }
@@ -1880,8 +2567,6 @@ class _ExplorerVideoPreview extends StatefulWidget {
 }
 
 class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
-  static final Map<String, Uint8List?> _thumbnailCache = <String, Uint8List?>{};
-
   late final Future<Uint8List?> _thumbnailFuture;
 
   @override
@@ -1891,19 +2576,12 @@ class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
   }
 
   Future<Uint8List?> _loadThumbnail() async {
-    final cached = _thumbnailCache[widget.filePath];
-    if (cached != null) {
-      return cached;
-    }
-    final bytes = await video_thumbnail.VideoThumbnail.thumbnailData(
-      video: widget.filePath,
-      imageFormat: video_thumbnail.ImageFormat.JPEG,
-      maxHeight: 96,
-      quality: 55,
-      timeMs: 600,
+    return _MediaPreviewCache.loadVideoPreview(
+      filePath: widget.filePath,
+      maxExtent: math.max(180, (widget.size * 2).round()),
+      quality: 72,
+      timeMs: 700,
     );
-    _thumbnailCache[widget.filePath] = bytes;
-    return bytes;
   }
 
   @override
@@ -1948,6 +2626,315 @@ class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
       ),
       child: const Icon(Icons.videocam_rounded, color: AppColors.mutedIcon),
     );
+  }
+}
+
+class _ExplorerAudioPreview extends StatefulWidget {
+  const _ExplorerAudioPreview({required this.filePath, this.size = 44});
+
+  final String filePath;
+  final double size;
+
+  @override
+  State<_ExplorerAudioPreview> createState() => _ExplorerAudioPreviewState();
+}
+
+class _ExplorerAudioPreviewState extends State<_ExplorerAudioPreview> {
+  late final Future<Uint8List?> _coverFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _coverFuture = _MediaPreviewCache.loadAudioCover(
+      filePath: widget.filePath,
+      maxExtent: math.max(180, (widget.size * 2).round()),
+      quality: 78,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Uint8List?>(
+      future: _coverFuture,
+      builder: (context, snapshot) {
+        final bytes = snapshot.data;
+        if (bytes == null || bytes.isEmpty) {
+          return _buildFallback();
+        }
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Image.memory(
+            bytes,
+            width: widget.size,
+            height: widget.size,
+            fit: BoxFit.cover,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFallback() {
+    return Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: const Icon(Icons.audiotrack_rounded, color: AppColors.mutedIcon),
+    );
+  }
+}
+
+class _MediaPreviewCache {
+  static final Map<String, Uint8List?> _memoryByKey = <String, Uint8List?>{};
+  static final Map<String, Future<Uint8List?>> _pendingByKey =
+      <String, Future<Uint8List?>>{};
+  static Directory? _cacheDirectory;
+  static const int _maxInMemoryItems = 320;
+
+  static Future<Uint8List?> loadVideoPreview({
+    required String filePath,
+    required int maxExtent,
+    required int quality,
+    required int timeMs,
+  }) {
+    return _loadOrCreate(
+      kind: 'video',
+      filePath: filePath,
+      maxExtent: maxExtent,
+      quality: quality,
+      extraKey: 't$timeMs',
+      builder: () async {
+        if (_useMediaKitForPlayback) {
+          final bytes = await _buildVideoPreviewWithMediaKit(
+            filePath: filePath,
+            timeMs: timeMs,
+          );
+          if (bytes == null || bytes.isEmpty) {
+            return null;
+          }
+          return _normalizeArtworkBytes(
+            bytes,
+            maxExtent: maxExtent,
+            quality: quality,
+          );
+        } else {
+          final bytes = await video_thumbnail.VideoThumbnail.thumbnailData(
+            video: filePath,
+            imageFormat: video_thumbnail.ImageFormat.JPEG,
+            maxWidth: maxExtent,
+            quality: quality,
+            timeMs: timeMs,
+          );
+          if (bytes == null || bytes.isEmpty) {
+            return null;
+          }
+          return Uint8List.fromList(bytes);
+        }
+      },
+    );
+  }
+
+  static Future<Uint8List?> loadAudioCover({
+    required String filePath,
+    required int maxExtent,
+    required int quality,
+  }) {
+    return _loadOrCreate(
+      kind: 'audio',
+      filePath: filePath,
+      maxExtent: maxExtent,
+      quality: quality,
+      extraKey: 'cover',
+      builder: () async {
+        final metadata = await MetadataRetriever.fromFile(File(filePath));
+        final rawCover = metadata.albumArt;
+        if (rawCover == null || rawCover.isEmpty) {
+          return null;
+        }
+        return _normalizeArtworkBytes(
+          rawCover,
+          maxExtent: maxExtent,
+          quality: quality,
+        );
+      },
+    );
+  }
+
+  static Future<Uint8List?> _loadOrCreate({
+    required String kind,
+    required String filePath,
+    required int maxExtent,
+    required int quality,
+    required String extraKey,
+    required Future<Uint8List?> Function() builder,
+  }) async {
+    if (filePath.trim().isEmpty) {
+      return null;
+    }
+
+    final source = File(filePath);
+    if (!await source.exists()) {
+      return null;
+    }
+
+    final stat = await source.stat();
+    if (stat.type != FileSystemEntityType.file) {
+      return null;
+    }
+
+    final key = _buildCacheKey(
+      kind: kind,
+      filePath: filePath,
+      stat: stat,
+      maxExtent: maxExtent,
+      quality: quality,
+      extraKey: extraKey,
+    );
+    if (_memoryByKey.containsKey(key)) {
+      return _memoryByKey[key];
+    }
+    final pending = _pendingByKey[key];
+    if (pending != null) {
+      return pending;
+    }
+
+    final future = () async {
+      try {
+        final cacheDir = await _resolveCacheDirectory();
+        final cacheFile = File(p.join(cacheDir.path, '$kind-$key.jpg'));
+        if (await cacheFile.exists()) {
+          final cachedBytes = await cacheFile.readAsBytes();
+          _rememberInMemory(key, cachedBytes);
+          return cachedBytes;
+        }
+
+        final generated = await builder();
+        if (generated == null || generated.isEmpty) {
+          _rememberInMemory(key, null);
+          return null;
+        }
+
+        if (!await cacheFile.parent.exists()) {
+          await cacheFile.parent.create(recursive: true);
+        }
+        await cacheFile.writeAsBytes(generated, flush: true);
+        _rememberInMemory(key, generated);
+        return generated;
+      } catch (_) {
+        return null;
+      } finally {
+        _pendingByKey.remove(key);
+      }
+    }();
+
+    _pendingByKey[key] = future;
+    return future;
+  }
+
+  static String _buildCacheKey({
+    required String kind,
+    required String filePath,
+    required FileStat stat,
+    required int maxExtent,
+    required int quality,
+    required String extraKey,
+  }) {
+    var normalizedPath = p.normalize(filePath).replaceAll('\\', '/');
+    if (Platform.isWindows) {
+      normalizedPath = normalizedPath.toLowerCase();
+    }
+    final input =
+        '$kind|$normalizedPath|${stat.size}|${stat.modified.millisecondsSinceEpoch}|$maxExtent|$quality|$extraKey';
+    return sha256.convert(utf8.encode(input)).toString();
+  }
+
+  static void _rememberInMemory(String key, Uint8List? value) {
+    _memoryByKey[key] = value;
+    if (_memoryByKey.length <= _maxInMemoryItems) {
+      return;
+    }
+    final firstKey = _memoryByKey.keys.first;
+    _memoryByKey.remove(firstKey);
+  }
+
+  static Future<Directory> _resolveCacheDirectory() async {
+    final existing = _cacheDirectory;
+    if (existing != null) {
+      return existing;
+    }
+    final support = await getApplicationSupportDirectory();
+    final dir = Directory(p.join(support.path, 'Landa', 'media_previews'));
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    _cacheDirectory = dir;
+    return dir;
+  }
+
+  static Future<Uint8List?> _normalizeArtworkBytes(
+    Uint8List bytes, {
+    required int maxExtent,
+    required int quality,
+  }) async {
+    try {
+      return await Isolate.run(
+        () => _normalizeArtworkBytesSync(
+          bytes: bytes,
+          maxExtent: maxExtent,
+          quality: quality,
+        ),
+      );
+    } catch (_) {
+      return bytes;
+    }
+  }
+
+  static Future<Uint8List?> _buildVideoPreviewWithMediaKit({
+    required String filePath,
+    required int timeMs,
+  }) async {
+    final player = Player();
+    try {
+      await player.open(Media(_mediaUriFromFilePath(filePath)), play: false);
+      if (timeMs > 0) {
+        await player.seek(Duration(milliseconds: timeMs));
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      return player.screenshot(format: 'image/jpeg');
+    } catch (_) {
+      return null;
+    } finally {
+      await player.dispose();
+    }
+  }
+
+  static Uint8List? _normalizeArtworkBytesSync({
+    required Uint8List bytes,
+    required int maxExtent,
+    required int quality,
+  }) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+    final resized = _resizeToLongestEdge(decoded, maxExtent: maxExtent);
+    return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
+  }
+
+  static img.Image _resizeToLongestEdge(
+    img.Image source, {
+    required int maxExtent,
+  }) {
+    if (source.width <= maxExtent && source.height <= maxExtent) {
+      return source;
+    }
+    if (source.width >= source.height) {
+      return img.copyResize(source, width: maxExtent);
+    }
+    return img.copyResize(source, height: maxExtent);
   }
 }
 
@@ -2209,4 +3196,4 @@ class _ExplorerErrorBanner extends StatelessWidget {
   }
 }
 
-enum _LocalFileKind { image, video, text, pdf, other }
+enum _LocalFileKind { image, video, audio, text, pdf, other }
