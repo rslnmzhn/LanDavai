@@ -329,6 +329,19 @@ class DiscoveryController extends ChangeNotifier {
       List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
   List<TransferHistoryRecord> get downloadHistory =>
       List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
+  VideoLinkShareSession? get videoLinkShareSession => _videoLinkShareSession;
+  String? get videoLinkWatchUrl {
+    final session = _videoLinkShareSession;
+    if (session == null) {
+      return null;
+    }
+    final host = _localIp?.trim();
+    final safeHost = host == null || host.isEmpty
+        ? InternetAddress.loopbackIPv4.address
+        : host;
+    return session.buildWatchUrl(hostAddress: safeHost);
+  }
+
   List<ClipboardHistoryEntry> get clipboardHistory =>
       List<ClipboardHistoryEntry>.unmodifiable(_clipboardHistory);
   bool get isLoadingRemoteClipboard => _isLoadingRemoteClipboard;
