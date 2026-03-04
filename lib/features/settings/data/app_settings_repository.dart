@@ -19,6 +19,8 @@ class AppSettingsRepository {
   static const String _minimizeToTrayKey = 'minimize_to_tray_on_close';
   static const String _previewCacheMaxSizeGbKey = 'preview_cache_max_size_gb';
   static const String _previewCacheMaxAgeDaysKey = 'preview_cache_max_age_days';
+  static const String _clipboardHistoryMaxEntriesKey =
+      'clipboard_history_max_entries';
 
   Future<AppSettings> load() async {
     final db = await _databaseProvider();
@@ -62,6 +64,10 @@ class AppSettingsRepository {
         values[_previewCacheMaxAgeDaysKey],
         fallback: defaults.previewCacheMaxAgeDays,
       ),
+      clipboardHistoryMaxEntries: _parseNonNegativeInt(
+        values[_clipboardHistoryMaxEntriesKey],
+        fallback: defaults.clipboardHistoryMaxEntries,
+      ),
     );
   }
 
@@ -97,6 +103,12 @@ class AppSettingsRepository {
         txn: txn,
         key: _previewCacheMaxAgeDaysKey,
         value: settings.previewCacheMaxAgeDays.toString(),
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _clipboardHistoryMaxEntriesKey,
+        value: settings.clipboardHistoryMaxEntries.toString(),
         updatedAtMs: now,
       );
     });
