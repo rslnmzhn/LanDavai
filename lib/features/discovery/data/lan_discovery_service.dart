@@ -296,6 +296,84 @@ class DownloadRequestEvent {
   final DateTime observedAt;
 }
 
+class ClipboardCatalogItem {
+  const ClipboardCatalogItem({
+    required this.id,
+    required this.entryType,
+    required this.createdAtMs,
+    this.textValue,
+    this.imagePreviewBase64,
+  });
+
+  final String id;
+  final String entryType;
+  final int createdAtMs;
+  final String? textValue;
+  final String? imagePreviewBase64;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'id': id,
+      'entryType': entryType,
+      'createdAtMs': createdAtMs,
+      'textValue': textValue,
+      'imagePreviewBase64': imagePreviewBase64,
+    };
+  }
+
+  static ClipboardCatalogItem? fromJson(Map<String, dynamic> json) {
+    final id = json['id'] as String?;
+    final entryType = json['entryType'] as String?;
+    final createdAtRaw = json['createdAtMs'];
+    if (id == null || entryType == null || createdAtRaw is! num) {
+      return null;
+    }
+    return ClipboardCatalogItem(
+      id: id,
+      entryType: entryType,
+      createdAtMs: createdAtRaw.toInt(),
+      textValue: json['textValue'] as String?,
+      imagePreviewBase64: json['imagePreviewBase64'] as String?,
+    );
+  }
+}
+
+class ClipboardQueryEvent {
+  const ClipboardQueryEvent({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.maxEntries,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int maxEntries;
+  final DateTime observedAt;
+}
+
+class ClipboardCatalogEvent {
+  const ClipboardCatalogEvent({
+    required this.requestId,
+    required this.ownerIp,
+    required this.ownerName,
+    required this.ownerMacAddress,
+    required this.entries,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String ownerIp;
+  final String ownerName;
+  final String ownerMacAddress;
+  final List<ClipboardCatalogItem> entries;
+  final DateTime observedAt;
+}
+
 class ThumbnailSyncItem {
   const ThumbnailSyncItem({
     required this.cacheId,
@@ -382,6 +460,8 @@ class LanDiscoveryService {
   static const String _thumbnailSyncRequestPrefix =
       'LANDA_THUMBNAIL_SYNC_REQUEST_V1';
   static const String _thumbnailPacketPrefix = 'LANDA_THUMBNAIL_PACKET_V1';
+  static const String _clipboardQueryPrefix = 'LANDA_CLIPBOARD_QUERY_V1';
+  static const String _clipboardCatalogPrefix = 'LANDA_CLIPBOARD_CATALOG_V1';
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
@@ -428,6 +508,8 @@ class LanDiscoveryService {
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
+    void Function(ClipboardQueryEvent event)? onClipboardQuery,
+    void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
     String? preferredSourceIp,
   }) async {
     if (_started) {
@@ -710,6 +792,46 @@ class LanDiscoveryService {
           datagram = _socket?.receive();
           continue;
         }
+
+        final clipboardQuery = _parseClipboardQueryPacket(message);
+        if (clipboardQuery != null) {
+          if (clipboardQuery.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          onClipboardQuery?.call(
+            ClipboardQueryEvent(
+              requestId: clipboardQuery.requestId,
+              requesterIp: senderIp,
+              requesterName: clipboardQuery.requesterName,
+              requesterMacAddress: clipboardQuery.requesterMacAddress,
+              maxEntries: clipboardQuery.maxEntries,
+              observedAt: DateTime.now(),
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
+
+        final clipboardCatalog = _parseClipboardCatalogPacket(message);
+        if (clipboardCatalog != null) {
+          if (clipboardCatalog.instanceId == _instanceId) {
+            datagram = _socket?.receive();
+            continue;
+          }
+          onClipboardCatalog?.call(
+            ClipboardCatalogEvent(
+              requestId: clipboardCatalog.requestId,
+              ownerIp: senderIp,
+              ownerName: clipboardCatalog.ownerName,
+              ownerMacAddress: clipboardCatalog.ownerMacAddress,
+              entries: clipboardCatalog.entries,
+              observedAt: DateTime.now(),
+            ),
+          );
+          datagram = _socket?.receive();
+          continue;
+        }
         datagram = _socket?.receive();
       }
     });
@@ -968,6 +1090,50 @@ class LanDiscoveryService {
     };
     await _sendEncodedPacket(
       prefix: _thumbnailPacketPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendClipboardQuery({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int maxEntries,
+  }) async {
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'requesterName': requesterName,
+      'requesterMacAddress': requesterMacAddress,
+      'maxEntries': maxEntries,
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _clipboardQueryPrefix,
+      payload: payload,
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendClipboardCatalog({
+    required String targetIp,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<ClipboardCatalogItem> entries,
+  }) async {
+    final payload = <String, Object?>{
+      'instanceId': _instanceId,
+      'requestId': requestId,
+      'ownerName': ownerName,
+      'ownerMacAddress': ownerMacAddress,
+      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
+    };
+    await _sendEncodedPacket(
+      prefix: _clipboardCatalogPrefix,
       payload: payload,
       targetIp: targetIp,
     );
@@ -1491,6 +1657,79 @@ class LanDiscoveryService {
     }
   }
 
+  _ClipboardQueryPacket? _parseClipboardQueryPacket(String message) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _clipboardQueryPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final requesterName = decoded['requesterName'] as String?;
+    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
+    final maxEntriesRaw = decoded['maxEntries'];
+    if (instanceId == null ||
+        requestId == null ||
+        requesterName == null ||
+        requesterMacAddress == null ||
+        maxEntriesRaw is! num) {
+      return null;
+    }
+
+    return _ClipboardQueryPacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      maxEntries: maxEntriesRaw.toInt(),
+    );
+  }
+
+  _ClipboardCatalogPacket? _parseClipboardCatalogPacket(String message) {
+    final decoded = _decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: _clipboardCatalogPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final ownerName = decoded['ownerName'] as String?;
+    final ownerMacAddress = decoded['ownerMacAddress'] as String?;
+    final entriesRaw = decoded['entries'];
+    if (instanceId == null ||
+        requestId == null ||
+        ownerName == null ||
+        ownerMacAddress == null ||
+        entriesRaw is! List<dynamic>) {
+      return null;
+    }
+
+    final entries = <ClipboardCatalogItem>[];
+    for (final rawEntry in entriesRaw) {
+      if (rawEntry is! Map<String, dynamic>) {
+        continue;
+      }
+      final parsed = ClipboardCatalogItem.fromJson(rawEntry);
+      if (parsed != null) {
+        entries.add(parsed);
+      }
+    }
+
+    return _ClipboardCatalogPacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+    );
+  }
+
   Map<String, dynamic>? _decodeTransferEnvelope({
     required String message,
     required String expectedPrefix,
@@ -1760,6 +1999,38 @@ class _DownloadRequestPacket {
   final String cacheId;
   final List<String> selectedRelativePaths;
   final bool previewMode;
+}
+
+class _ClipboardQueryPacket {
+  const _ClipboardQueryPacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.maxEntries,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int maxEntries;
+}
+
+class _ClipboardCatalogPacket {
+  const _ClipboardCatalogPacket({
+    required this.instanceId,
+    required this.requestId,
+    required this.ownerName,
+    required this.ownerMacAddress,
+    required this.entries,
+  });
+
+  final String instanceId;
+  final String requestId;
+  final String ownerName;
+  final String ownerMacAddress;
+  final List<ClipboardCatalogItem> entries;
 }
 
 class _ThumbnailSyncRequestPacket {

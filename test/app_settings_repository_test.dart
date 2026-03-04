@@ -57,6 +57,10 @@ void main() {
       settings.previewCacheMaxAgeDays,
       AppSettings.defaults.previewCacheMaxAgeDays,
     );
+    expect(
+      settings.clipboardHistoryMaxEntries,
+      AppSettings.defaults.clipboardHistoryMaxEntries,
+    );
   });
 
   test('persists and restores all app settings', () async {
@@ -66,6 +70,7 @@ void main() {
       minimizeToTrayOnClose: false,
       previewCacheMaxSizeGb: 4,
       previewCacheMaxAgeDays: 10,
+      clipboardHistoryMaxEntries: 42,
     );
 
     await repository.save(expected);
@@ -79,5 +84,9 @@ void main() {
     expect(restored.minimizeToTrayOnClose, expected.minimizeToTrayOnClose);
     expect(restored.previewCacheMaxSizeGb, expected.previewCacheMaxSizeGb);
     expect(restored.previewCacheMaxAgeDays, expected.previewCacheMaxAgeDays);
+    expect(
+      restored.clipboardHistoryMaxEntries,
+      expected.clipboardHistoryMaxEntries,
+    );
   });
 }

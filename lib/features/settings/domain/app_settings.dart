@@ -64,6 +64,7 @@ class AppSettings {
     required this.minimizeToTrayOnClose,
     required this.previewCacheMaxSizeGb,
     required this.previewCacheMaxAgeDays,
+    required this.clipboardHistoryMaxEntries,
   });
 
   final BackgroundScanIntervalOption backgroundScanInterval;
@@ -71,6 +72,7 @@ class AppSettings {
   final bool minimizeToTrayOnClose;
   final int previewCacheMaxSizeGb;
   final int previewCacheMaxAgeDays;
+  final int clipboardHistoryMaxEntries;
 
   static const AppSettings defaults = AppSettings(
     backgroundScanInterval: BackgroundScanIntervalOption.fiveMinutes,
@@ -78,6 +80,7 @@ class AppSettings {
     minimizeToTrayOnClose: true,
     previewCacheMaxSizeGb: 2,
     previewCacheMaxAgeDays: 30,
+    clipboardHistoryMaxEntries: 120,
   );
 
   AppSettings copyWith({
@@ -86,6 +89,7 @@ class AppSettings {
     bool? minimizeToTrayOnClose,
     int? previewCacheMaxSizeGb,
     int? previewCacheMaxAgeDays,
+    int? clipboardHistoryMaxEntries,
   }) {
     return AppSettings(
       backgroundScanInterval:
@@ -99,6 +103,8 @@ class AppSettings {
           previewCacheMaxSizeGb ?? this.previewCacheMaxSizeGb,
       previewCacheMaxAgeDays:
           previewCacheMaxAgeDays ?? this.previewCacheMaxAgeDays,
+      clipboardHistoryMaxEntries:
+          clipboardHistoryMaxEntries ?? this.clipboardHistoryMaxEntries,
     );
   }
 }

@@ -14,6 +14,9 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/data/transfer_history_repository.dart';
 import '../../history/domain/transfer_history_record.dart';
+import '../../clipboard/data/clipboard_capture_service.dart';
+import '../../clipboard/data/clipboard_history_repository.dart';
+import '../../clipboard/domain/clipboard_entry.dart';
 import '../../settings/data/app_settings_repository.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/data/file_hash_service.dart';
@@ -139,6 +142,8 @@ class DiscoveryController extends ChangeNotifier {
     required AppSettingsRepository appSettingsRepository,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
+    required ClipboardHistoryRepository clipboardHistoryRepository,
+    required ClipboardCaptureService clipboardCaptureService,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
@@ -151,6 +156,8 @@ class DiscoveryController extends ChangeNotifier {
        _appSettingsRepository = appSettingsRepository,
        _appNotificationService = appNotificationService,
        _transferHistoryRepository = transferHistoryRepository,
+       _clipboardHistoryRepository = clipboardHistoryRepository,
+       _clipboardCaptureService = clipboardCaptureService,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
@@ -168,6 +175,8 @@ class DiscoveryController extends ChangeNotifier {
   final AppSettingsRepository _appSettingsRepository;
   final AppNotificationService _appNotificationService;
   final TransferHistoryRepository _transferHistoryRepository;
+  final ClipboardHistoryRepository _clipboardHistoryRepository;
+  final ClipboardCaptureService _clipboardCaptureService;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
@@ -202,8 +211,13 @@ class DiscoveryController extends ChangeNotifier {
   final List<TransferHistoryRecord> _downloadHistory =
       <TransferHistoryRecord>[];
   final List<FriendPeer> _friends = <FriendPeer>[];
+  final List<ClipboardHistoryEntry> _clipboardHistory =
+      <ClipboardHistoryEntry>[];
+  final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
+      <String, List<RemoteClipboardEntry>>{};
   final Map<String, String> _friendNameById = <String, String>{};
   Timer? _scanTimer;
+  Timer? _clipboardPollTimer;
   AppSettings _settings = AppSettings.defaults;
   bool _started = false;
   bool _isAppInForeground = true;
@@ -212,7 +226,9 @@ class DiscoveryController extends ChangeNotifier {
   bool _isAddingShare = false;
   bool _isSendingTransfer = false;
   bool _isLoadingRemoteShares = false;
+  bool _isLoadingRemoteClipboard = false;
   String? _activeShareQueryRequestId;
+  String? _activeClipboardQueryRequestId;
   int _uploadSentBytes = 0;
   int _uploadTotalBytes = 0;
   int _downloadReceivedBytes = 0;
@@ -231,6 +247,7 @@ class DiscoveryController extends ChangeNotifier {
   String _localPeerId = '';
   bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
+  String? _lastCapturedClipboardHash;
   String? _errorMessage;
   String? _infoMessage;
 
@@ -287,6 +304,17 @@ class DiscoveryController extends ChangeNotifier {
       List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
   List<TransferHistoryRecord> get downloadHistory =>
       List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
+  List<ClipboardHistoryEntry> get clipboardHistory =>
+      List<ClipboardHistoryEntry>.unmodifiable(_clipboardHistory);
+  bool get isLoadingRemoteClipboard => _isLoadingRemoteClipboard;
+
+  List<RemoteClipboardEntry> remoteClipboardEntriesFor(String ownerIp) {
+    final entries = _remoteClipboardByOwnerIp[ownerIp];
+    if (entries == null) {
+      return const <RemoteClipboardEntry>[];
+    }
+    return List<RemoteClipboardEntry>.unmodifiable(entries);
+  }
 
   String? remoteThumbnailPath({
     required String ownerIp,
@@ -359,6 +387,7 @@ class DiscoveryController extends ChangeNotifier {
     await _loadAliases();
     await _loadTrustedDevices();
     await _loadSettings();
+    await _loadClipboardHistory();
     await _loadOwnerCaches();
     await _loadDownloadHistory();
     await _loadFriends();
@@ -379,11 +408,14 @@ class DiscoveryController extends ChangeNotifier {
         onDownloadRequest: _onDownloadRequest,
         onThumbnailSyncRequest: _onThumbnailSyncRequest,
         onThumbnailPacket: _onThumbnailPacket,
+        onClipboardQuery: _onClipboardQuery,
+        onClipboardCatalog: _onClipboardCatalog,
         preferredSourceIp: _localIp,
       );
 
       await _refresh(isManual: false);
       _restartAutoRefreshTimer();
+      _startClipboardPolling();
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
       _log(_errorMessage!);
@@ -543,6 +575,17 @@ class DiscoveryController extends ChangeNotifier {
     await _saveSettings(_settings.copyWith(previewCacheMaxAgeDays: normalized));
   }
 
+  Future<void> setClipboardHistoryMaxEntries(int value) async {
+    final normalized = value < 0 ? 0 : value;
+    if (_settings.clipboardHistoryMaxEntries == normalized) {
+      return;
+    }
+    await _saveSettings(
+      _settings.copyWith(clipboardHistoryMaxEntries: normalized),
+    );
+    await _trimClipboardHistoryToSettingsLimit();
+  }
+
   void setAppForegroundState(bool isForeground) {
     if (_isAppInForeground == isForeground) {
       return;
@@ -686,6 +729,76 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
     } finally {
       _isFriendMutationInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> requestRemoteClipboardHistory(DiscoveredDevice device) async {
+    if (!device.isAppDetected) {
+      _errorMessage = 'Remote clipboard is available only for Landa devices.';
+      notifyListeners();
+      return;
+    }
+
+    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    if (mac == null || !_trustedDeviceMacs.contains(mac)) {
+      _errorMessage =
+          'Remote clipboard is available only for confirmed friends.';
+      notifyListeners();
+      return;
+    }
+
+    _isLoadingRemoteClipboard = true;
+    _remoteClipboardByOwnerIp.remove(device.ip);
+    notifyListeners();
+
+    final requestId = _fileHashService.buildStableId(
+      'clipboard-query|${DateTime.now().microsecondsSinceEpoch}|${device.ip}|$_localDeviceMac',
+    );
+    _activeClipboardQueryRequestId = requestId;
+    try {
+      await _lanDiscoveryService.sendClipboardQuery(
+        targetIp: device.ip,
+        requestId: requestId,
+        requesterName: _localName,
+        requesterMacAddress: _localDeviceMac,
+        maxEntries: _settings.clipboardHistoryMaxEntries,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      _errorMessage = null;
+      if ((_remoteClipboardByOwnerIp[device.ip] ?? const []).isEmpty) {
+        _infoMessage = 'Clipboard history from ${device.displayName} is empty.';
+      }
+    } catch (error) {
+      _errorMessage = 'Failed to request remote clipboard: $error';
+      _log(_errorMessage!);
+    } finally {
+      _isLoadingRemoteClipboard = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> removeClipboardHistoryEntry(String entryId) async {
+    final normalizedId = entryId.trim();
+    if (normalizedId.isEmpty) {
+      return;
+    }
+
+    try {
+      final removed = await _clipboardHistoryRepository.deleteById(
+        normalizedId,
+      );
+      if (removed == null) {
+        return;
+      }
+      await _deleteClipboardImageFileIfExists(removed.imagePath);
+      await _loadClipboardHistory(notify: false, updateLastCapturedHash: false);
+      _errorMessage = null;
+      _infoMessage = 'Clipboard entry removed.';
+      notifyListeners();
+    } catch (error) {
+      _errorMessage = 'Failed to remove clipboard entry: $error';
+      _log(_errorMessage!);
       notifyListeners();
     }
   }
@@ -1967,6 +2080,264 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  void _onClipboardQuery(ClipboardQueryEvent event) {
+    unawaited(_handleClipboardQuery(event));
+  }
+
+  Future<void> _handleClipboardQuery(ClipboardQueryEvent event) async {
+    final requesterMac = DeviceAliasRepository.normalizeMac(
+      event.requesterMacAddress,
+    );
+    if (requesterMac == null || !_trustedDeviceMacs.contains(requesterMac)) {
+      _log('Clipboard query from ${event.requesterIp} ignored: not a friend.');
+      return;
+    }
+
+    final safeLimit = event.maxEntries <= 0
+        ? (_settings.clipboardHistoryMaxEntries <= 0
+              ? 120
+              : _settings.clipboardHistoryMaxEntries)
+        : event.maxEntries;
+
+    final sourceEntries = _clipboardHistory.take(safeLimit);
+    final entries = <ClipboardCatalogItem>[];
+    for (final item in sourceEntries) {
+      if (item.type == ClipboardEntryType.text) {
+        final text = item.textValue ?? '';
+        final clipped = text.length > 6000 ? text.substring(0, 6000) : text;
+        entries.add(
+          ClipboardCatalogItem(
+            id: item.id,
+            entryType: item.type.value,
+            createdAtMs: item.createdAt.millisecondsSinceEpoch,
+            textValue: clipped,
+          ),
+        );
+        continue;
+      }
+
+      final imagePath = item.imagePath;
+      if (imagePath == null || imagePath.trim().isEmpty) {
+        continue;
+      }
+      final previewBase64 = await _encodeClipboardImagePreviewBase64(imagePath);
+      if (previewBase64 == null) {
+        continue;
+      }
+      entries.add(
+        ClipboardCatalogItem(
+          id: item.id,
+          entryType: item.type.value,
+          createdAtMs: item.createdAt.millisecondsSinceEpoch,
+          imagePreviewBase64: previewBase64,
+        ),
+      );
+    }
+
+    try {
+      await _lanDiscoveryService.sendClipboardCatalog(
+        targetIp: event.requesterIp,
+        requestId: event.requestId,
+        ownerName: _localName,
+        ownerMacAddress: _localDeviceMac,
+        entries: entries,
+      );
+    } catch (error) {
+      _log('Failed to send clipboard catalog: $error');
+    }
+  }
+
+  void _onClipboardCatalog(ClipboardCatalogEvent event) {
+    if (_activeClipboardQueryRequestId != null &&
+        event.requestId != _activeClipboardQueryRequestId) {
+      return;
+    }
+
+    final mapped = <RemoteClipboardEntry>[];
+    for (final item in event.entries) {
+      final type = ClipboardEntryTypeX.fromValue(item.entryType);
+      List<int>? imageBytes;
+      if (type == ClipboardEntryType.image) {
+        final encoded = item.imagePreviewBase64;
+        if (encoded == null || encoded.trim().isEmpty) {
+          continue;
+        }
+        try {
+          imageBytes = base64Decode(encoded);
+        } catch (_) {
+          continue;
+        }
+      }
+      mapped.add(
+        RemoteClipboardEntry(
+          id: item.id,
+          type: type,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(item.createdAtMs),
+          textValue: item.textValue,
+          imageBytes: imageBytes,
+        ),
+      );
+    }
+
+    mapped.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _remoteClipboardByOwnerIp[event.ownerIp] = mapped;
+
+    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
+    final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
+    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
+    final existing = _devicesByIp[event.ownerIp];
+    _devicesByIp[event.ownerIp] =
+        (existing ??
+                DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
+            .copyWith(
+              deviceName: event.ownerName,
+              aliasName: aliasName,
+              isReachable: true,
+              isAppDetected: true,
+              macAddress: ownerMac ?? existing?.macAddress,
+              isTrusted: trusted,
+              lastSeen: event.observedAt,
+            );
+
+    _infoMessage =
+        'Clipboard history received from ${aliasName ?? event.ownerName}.';
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  Future<String?> _encodeClipboardImagePreviewBase64(String imagePath) async {
+    try {
+      final file = File(imagePath);
+      if (!await file.exists()) {
+        return null;
+      }
+      final bytes = await file.readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) {
+        return null;
+      }
+
+      final longest = math.max(decoded.width, decoded.height);
+      var resized = longest > 512
+          ? img.copyResize(
+              decoded,
+              width: decoded.width >= decoded.height ? 512 : null,
+              height: decoded.height > decoded.width ? 512 : null,
+            )
+          : decoded;
+      var encoded = img.encodeJpg(resized, quality: 55);
+      if (encoded.length > 48 * 1024) {
+        resized = img.copyResize(
+          decoded,
+          width: decoded.width >= decoded.height ? 360 : null,
+          height: decoded.height > decoded.width ? 360 : null,
+        );
+        encoded = img.encodeJpg(resized, quality: 45);
+      }
+      return base64Encode(encoded);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _startClipboardPolling() {
+    _clipboardPollTimer?.cancel();
+    _clipboardPollTimer = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) => unawaited(_captureClipboardSnapshot()),
+    );
+    unawaited(_captureClipboardSnapshot());
+  }
+
+  Future<void> _captureClipboardSnapshot() async {
+    try {
+      final captured = await _clipboardCaptureService.readCurrentClipboard();
+      if (captured == null) {
+        return;
+      }
+      if (_lastCapturedClipboardHash == captured.contentHash) {
+        return;
+      }
+      if (await _clipboardHistoryRepository.hasHash(captured.contentHash)) {
+        _lastCapturedClipboardHash = captured.contentHash;
+        return;
+      }
+
+      final entryId = _fileHashService.buildStableId(
+        'clipboard|${captured.contentHash}|${DateTime.now().microsecondsSinceEpoch}',
+      );
+      String? imagePath;
+      if (captured.type == ClipboardEntryType.image &&
+          captured.imageBytes != null &&
+          captured.imageBytes!.isNotEmpty) {
+        final directory = await _transferStorageService
+            .resolveClipboardDirectory(appFolderName: 'Landa');
+        imagePath = p.join(directory.path, '$entryId.png');
+        await File(imagePath).writeAsBytes(captured.imageBytes!, flush: true);
+      }
+
+      await _clipboardHistoryRepository.insert(
+        ClipboardHistoryEntry(
+          id: entryId,
+          type: captured.type,
+          contentHash: captured.contentHash,
+          textValue: captured.textValue,
+          imagePath: imagePath,
+          createdAt: DateTime.now(),
+        ),
+      );
+      _lastCapturedClipboardHash = captured.contentHash;
+      await _trimClipboardHistoryToSettingsLimit();
+      await _loadClipboardHistory(notify: true);
+    } catch (error) {
+      _log('Clipboard capture failed: $error');
+    }
+  }
+
+  Future<void> _trimClipboardHistoryToSettingsLimit() async {
+    final removed = await _clipboardHistoryRepository.trimToMaxEntries(
+      _settings.clipboardHistoryMaxEntries,
+    );
+    for (final entry in removed) {
+      await _deleteClipboardImageFileIfExists(entry.imagePath);
+    }
+  }
+
+  Future<void> _loadClipboardHistory({
+    bool notify = false,
+    bool updateLastCapturedHash = true,
+  }) async {
+    try {
+      final rows = await _clipboardHistoryRepository.listRecent(limit: 300);
+      _clipboardHistory
+        ..clear()
+        ..addAll(rows);
+      if (updateLastCapturedHash) {
+        final latest = rows.isEmpty ? null : rows.first;
+        _lastCapturedClipboardHash = latest?.contentHash;
+      }
+      if (notify) {
+        notifyListeners();
+      }
+    } catch (error) {
+      _log('Failed to load clipboard history: $error');
+    }
+  }
+
+  Future<void> _deleteClipboardImageFileIfExists(String? imagePath) async {
+    final path = imagePath?.trim();
+    if (path == null || path.isEmpty) {
+      return;
+    }
+
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {}
+  }
+
   void _onShareQuery(ShareQueryEvent event) {
     unawaited(_handleShareQuery(event));
   }
@@ -2490,9 +2861,11 @@ class DiscoveryController extends ChangeNotifier {
         'notifyDownloadAttempts=${_settings.downloadAttemptNotificationsEnabled}, '
         'trayOnClose=${_settings.minimizeToTrayOnClose}, '
         'previewMaxSizeGb=${_settings.previewCacheMaxSizeGb}, '
-        'previewMaxAgeDays=${_settings.previewCacheMaxAgeDays}',
+        'previewMaxAgeDays=${_settings.previewCacheMaxAgeDays}, '
+        'clipboardMaxEntries=${_settings.clipboardHistoryMaxEntries}',
       );
       unawaited(_cleanupPreviewCacheBySettings());
+      unawaited(_trimClipboardHistoryToSettingsLimit());
     } catch (error) {
       _log('Failed to load app settings: $error');
       _settings = AppSettings.defaults;
@@ -2506,6 +2879,7 @@ class DiscoveryController extends ChangeNotifier {
       _errorMessage = null;
       _restartAutoRefreshTimer();
       unawaited(_cleanupPreviewCacheBySettings());
+      unawaited(_trimClipboardHistoryToSettingsLimit());
       notifyListeners();
     } catch (error) {
       _errorMessage = 'Failed to save app settings: $error';
@@ -3053,6 +3427,7 @@ class DiscoveryController extends ChangeNotifier {
   @override
   void dispose() {
     _scanTimer?.cancel();
+    _clipboardPollTimer?.cancel();
     for (final session in _activeReceiveSessions.values) {
       unawaited(session.close());
     }

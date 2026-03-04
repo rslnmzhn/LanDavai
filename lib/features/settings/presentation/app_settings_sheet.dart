@@ -15,6 +15,7 @@ class AppSettingsSheet extends StatefulWidget {
     required this.onMinimizeToTrayChanged,
     required this.onPreviewCacheMaxSizeGbChanged,
     required this.onPreviewCacheMaxAgeDaysChanged,
+    required this.onClipboardHistoryMaxEntriesChanged,
     super.key,
   });
 
@@ -24,6 +25,7 @@ class AppSettingsSheet extends StatefulWidget {
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final ValueChanged<int> onPreviewCacheMaxSizeGbChanged;
   final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
+  final ValueChanged<int> onClipboardHistoryMaxEntriesChanged;
 
   @override
   State<AppSettingsSheet> createState() => _AppSettingsSheetState();
@@ -32,6 +34,7 @@ class AppSettingsSheet extends StatefulWidget {
 class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _cacheSizeController;
   late final TextEditingController _cacheAgeController;
+  late final TextEditingController _clipboardLimitController;
 
   @override
   void initState() {
@@ -41,6 +44,9 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     );
     _cacheAgeController = TextEditingController(
       text: widget.settings.previewCacheMaxAgeDays.toString(),
+    );
+    _clipboardLimitController = TextEditingController(
+      text: widget.settings.clipboardHistoryMaxEntries.toString(),
     );
   }
 
@@ -57,12 +63,20 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       _cacheAgeController.text = widget.settings.previewCacheMaxAgeDays
           .toString();
     }
+    if (oldWidget.settings.clipboardHistoryMaxEntries !=
+        widget.settings.clipboardHistoryMaxEntries) {
+      _clipboardLimitController.text = widget
+          .settings
+          .clipboardHistoryMaxEntries
+          .toString();
+    }
   }
 
   @override
   void dispose() {
     _cacheSizeController.dispose();
     _cacheAgeController.dispose();
+    _clipboardLimitController.dispose();
     super.dispose();
   }
 
@@ -89,6 +103,15 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onPreviewCacheMaxAgeDaysChanged(parsed);
+  }
+
+  void _saveClipboardLimit() {
+    final parsed = int.tryParse(_clipboardLimitController.text.trim());
+    if (parsed == null || parsed < 0) {
+      _showValidationMessage('Введите неотрицательное число записей.');
+      return;
+    }
+    widget.onClipboardHistoryMaxEntriesChanged(parsed);
   }
 
   @override
@@ -188,6 +211,22 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 controller: _cacheAgeController,
                 label: 'Максимальный срок хранения (дни)',
                 onSave: _saveCacheAge,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'История буфера обмена',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Максимум записей в локальной истории. 0 = без ограничений.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _IntegerSettingField(
+                controller: _clipboardLimitController,
+                label: 'Максимум записей истории',
+                onSave: _saveClipboardLimit,
               ),
             ],
           ),
