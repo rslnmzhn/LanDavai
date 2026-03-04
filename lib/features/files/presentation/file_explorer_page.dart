@@ -20,14 +20,22 @@ class FileExplorerRoot {
     required this.path,
     this.isSharedFolder = false,
     this.virtualFiles = const <FileExplorerVirtualFile>[],
+    this.virtualFilesLoader,
+    this.virtualDirectoryLoader,
   });
 
   final String label;
   final String path;
   final bool isSharedFolder;
   final List<FileExplorerVirtualFile> virtualFiles;
+  final Future<List<FileExplorerVirtualFile>> Function()? virtualFilesLoader;
+  final Future<FileExplorerVirtualDirectory> Function(String folderPath)?
+  virtualDirectoryLoader;
 
-  bool get isVirtual => virtualFiles.isNotEmpty;
+  bool get isVirtual =>
+      virtualFiles.isNotEmpty ||
+      virtualFilesLoader != null ||
+      virtualDirectoryLoader != null;
 }
 
 class FileExplorerVirtualFile {
@@ -35,14 +43,58 @@ class FileExplorerVirtualFile {
     required this.path,
     required this.virtualPath,
     this.subtitle,
+    this.sizeBytes,
+    this.modifiedAt,
+    this.changedAt,
   });
 
   final String path;
   final String virtualPath;
   final String? subtitle;
+  final int? sizeBytes;
+  final DateTime? modifiedAt;
+  final DateTime? changedAt;
+}
+
+class FileExplorerVirtualFolder {
+  const FileExplorerVirtualFolder({
+    required this.name,
+    required this.folderPath,
+    this.removableSharedCacheId,
+  });
+
+  final String name;
+  final String folderPath;
+  final String? removableSharedCacheId;
+}
+
+class FileExplorerVirtualDirectory {
+  const FileExplorerVirtualDirectory({
+    this.folders = const <FileExplorerVirtualFolder>[],
+    this.files = const <FileExplorerVirtualFile>[],
+  });
+
+  final List<FileExplorerVirtualFolder> folders;
+  final List<FileExplorerVirtualFile> files;
 }
 
 enum SharedRecacheActionResult { started, refreshedOnly, cancelled }
+
+class SharedRecacheProgressDetails {
+  const SharedRecacheProgressDetails({
+    required this.processedFiles,
+    required this.totalFiles,
+    required this.currentCacheLabel,
+    required this.currentRelativePath,
+    required this.eta,
+  });
+
+  final int processedFiles;
+  final int totalFiles;
+  final String currentCacheLabel;
+  final String currentRelativePath;
+  final Duration? eta;
+}
 
 enum _ExplorerSortOption {
   nameAsc,
@@ -78,6 +130,7 @@ class _ExplorerEntityRecord {
     required this.changedAt,
     this.filePath,
     this.virtualFolderPath,
+    this.removableSharedCacheId,
   });
 
   final bool isDirectory;
@@ -88,6 +141,7 @@ class _ExplorerEntityRecord {
   final DateTime changedAt;
   final String? filePath;
   final String? virtualFolderPath;
+  final String? removableSharedCacheId;
 
   static _ExplorerEntityRecord fromReal({
     required FileSystemEntity entity,
@@ -107,6 +161,7 @@ class _ExplorerEntityRecord {
   static _ExplorerEntityRecord virtualFolder({
     required String name,
     required String folderPath,
+    String? removableSharedCacheId,
   }) {
     return _ExplorerEntityRecord(
       isDirectory: true,
@@ -116,6 +171,7 @@ class _ExplorerEntityRecord {
       modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
       changedAt: DateTime.fromMillisecondsSinceEpoch(0),
       virtualFolderPath: folderPath,
+      removableSharedCacheId: removableSharedCacheId,
     );
   }
 
@@ -134,23 +190,48 @@ class _ExplorerEntityRecord {
       filePath: file.path,
     );
   }
+
+  static _ExplorerEntityRecord virtualFileCached({
+    required String filePath,
+    required String name,
+    required String subtitle,
+    required int sizeBytes,
+    required DateTime modifiedAt,
+    required DateTime changedAt,
+  }) {
+    return _ExplorerEntityRecord(
+      isDirectory: false,
+      name: name,
+      subtitle: subtitle,
+      sizeBytes: sizeBytes,
+      modifiedAt: modifiedAt,
+      changedAt: changedAt,
+      filePath: filePath,
+    );
+  }
 }
 
 class FileExplorerPage extends StatefulWidget {
   const FileExplorerPage({
     required this.roots,
     this.onRecacheSharedFolders,
+    this.onRemoveSharedCache,
     this.recacheStateListenable,
     this.isSharedRecacheInProgress,
     this.sharedRecacheProgress,
+    this.sharedRecacheDetails,
     super.key,
   });
 
   final List<FileExplorerRoot> roots;
-  final Future<SharedRecacheActionResult> Function()? onRecacheSharedFolders;
+  final Future<SharedRecacheActionResult> Function(String virtualFolderPath)?
+  onRecacheSharedFolders;
+  final Future<bool> Function(String cacheId, String cacheLabel)?
+  onRemoveSharedCache;
   final Listenable? recacheStateListenable;
   final bool Function()? isSharedRecacheInProgress;
   final double? Function()? sharedRecacheProgress;
+  final SharedRecacheProgressDetails? Function()? sharedRecacheDetails;
 
   @override
   State<FileExplorerPage> createState() => _FileExplorerPageState();
@@ -173,6 +254,10 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   _ExplorerSortOption _sortOption = _ExplorerSortOption.nameAsc;
   _ExplorerViewMode _viewMode = _ExplorerViewMode.list;
   double _gridTileExtent = 152;
+  final Map<int, List<FileExplorerVirtualFile>> _virtualFilesByRootIndex =
+      <int, List<FileExplorerVirtualFile>>{};
+  final Map<String, FileExplorerVirtualDirectory> _virtualDirectoryByKey =
+      <String, FileExplorerVirtualDirectory>{};
 
   FileExplorerRoot get _selectedRoot => _roots[_selectedRootIndex];
 
@@ -186,6 +271,14 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
   double? get _sharedRecacheProgressValue {
     final resolver = widget.sharedRecacheProgress;
+    if (resolver == null) {
+      return null;
+    }
+    return resolver();
+  }
+
+  SharedRecacheProgressDetails? get _sharedRecacheDetailsValue {
+    final resolver = widget.sharedRecacheDetails;
     if (resolver == null) {
       return null;
     }
@@ -404,6 +497,14 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
+              if (_canRecacheSelectedRoot && _isSharedRecacheRunning) ...[
+                _SharedRecacheStatusCard(
+                  progress: _sharedRecacheProgressValue,
+                  details: _sharedRecacheDetailsValue,
+                  formatEta: _formatEta,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
               if (_isLoading)
                 const LinearProgressIndicator(
                   minHeight: 3,
@@ -431,6 +532,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                           return _ExplorerEntityTile(
                             entry: entry,
                             onTap: () => _openEntry(entry),
+                            onDelete:
+                                _canRemoveSharedCachesFromFiles &&
+                                    entry.removableSharedCacheId != null
+                                ? () => _removeSharedCacheFromEntry(entry)
+                                : null,
                           );
                         },
                       )
@@ -451,6 +557,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                                 entry: entry,
                                 tileExtent: _gridTileExtent,
                                 onTap: () => _openEntry(entry),
+                                onDelete:
+                                    _canRemoveSharedCachesFromFiles &&
+                                        entry.removableSharedCacheId != null
+                                    ? () => _removeSharedCacheFromEntry(entry)
+                                    : null,
                               );
                             },
                           );
@@ -479,6 +590,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   bool get _canRecacheSelectedRoot =>
       _selectedRoot.isSharedFolder && widget.onRecacheSharedFolders != null;
 
+  bool get _canRemoveSharedCachesFromFiles =>
+      _selectedRoot.isSharedFolder && widget.onRemoveSharedCache != null;
+
   String get _refreshActionTooltip =>
       _canRecacheSelectedRoot ? 'Re-cache shared folders/files' : 'Refresh';
 
@@ -499,6 +613,72 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       );
     }
     return Icon(_refreshActionIcon);
+  }
+
+  Future<void> _removeSharedCacheFromEntry(_ExplorerEntityRecord entry) async {
+    final cacheId = entry.removableSharedCacheId;
+    if (cacheId == null || cacheId.trim().isEmpty) {
+      return;
+    }
+    final removeHandler = widget.onRemoveSharedCache;
+    if (removeHandler == null) {
+      return;
+    }
+
+    final agreed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Remove shared folder?'),
+          content: Text(
+            'The folder "${entry.name}" will be removed from shared access.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Remove'),
+            ),
+          ],
+        );
+      },
+    );
+    if (agreed != true || !mounted) {
+      return;
+    }
+
+    final removed = await removeHandler(cacheId, entry.name);
+    if (!removed || !mounted) {
+      return;
+    }
+
+    final removedFolder = _normalizeVirtualFolder(
+      entry.virtualFolderPath ?? '',
+    );
+    final currentFolder = _normalizeVirtualFolder(_virtualCurrentFolder);
+    if (removedFolder.isNotEmpty &&
+        (currentFolder == removedFolder ||
+            currentFolder.startsWith('$removedFolder/'))) {
+      setState(() {
+        _virtualCurrentFolder = '';
+      });
+    }
+    _invalidateSelectedVirtualRootCache();
+    await _loadCurrentRoot();
+  }
+
+  String _formatEta(Duration eta) {
+    final totalSeconds = eta.inSeconds.clamp(0, 359999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
   void _toggleViewMode() {
@@ -619,11 +799,141 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
   Future<void> _loadCurrentRoot() async {
     final root = _selectedRoot;
+    final directoryLoader = root.virtualDirectoryLoader;
+    if (directoryLoader != null) {
+      await _loadVirtualDirectoryFromLoader(directoryLoader);
+      return;
+    }
     if (root.isVirtual) {
-      await _loadVirtualEntries(root.virtualFiles);
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+      try {
+        final virtualFiles = await _resolveVirtualFilesForSelectedRoot();
+        await _loadVirtualEntries(virtualFiles);
+      } catch (error) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _entries = const <_ExplorerEntityRecord>[];
+          _isLoading = false;
+          _errorMessage = 'Cannot open files: $error';
+        });
+      }
       return;
     }
     await _loadDirectory(root.path);
+  }
+
+  Future<void> _loadVirtualDirectoryFromLoader(
+    Future<FileExplorerVirtualDirectory> Function(String folderPath) loader,
+  ) async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final folder = _normalizeVirtualFolder(_virtualCurrentFolder);
+      final cacheKey = '$_selectedRootIndex|$folder';
+      final directory =
+          _virtualDirectoryByKey[cacheKey] ?? await loader(folder);
+      _virtualDirectoryByKey[cacheKey] = directory;
+
+      final records = <_ExplorerEntityRecord>[];
+      for (final virtualFolder in directory.folders) {
+        records.add(
+          _ExplorerEntityRecord.virtualFolder(
+            name: virtualFolder.name,
+            folderPath: _normalizeVirtualFolder(virtualFolder.folderPath),
+            removableSharedCacheId: virtualFolder.removableSharedCacheId,
+          ),
+        );
+      }
+      for (final virtualFile in directory.files) {
+        final record = await _buildVirtualFileRecord(virtualFile);
+        if (record != null) {
+          records.add(record);
+        }
+      }
+      _sortRecords(records);
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _entries = records;
+        _isLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _entries = const <_ExplorerEntityRecord>[];
+        _isLoading = false;
+        _errorMessage = 'Cannot open files: $error';
+      });
+    }
+  }
+
+  Future<List<FileExplorerVirtualFile>>
+  _resolveVirtualFilesForSelectedRoot() async {
+    final rootIndex = _selectedRootIndex;
+    final cached = _virtualFilesByRootIndex[rootIndex];
+    if (cached != null) {
+      return cached;
+    }
+
+    final root = _roots[rootIndex];
+    if (root.virtualFiles.isNotEmpty) {
+      _virtualFilesByRootIndex[rootIndex] = root.virtualFiles;
+      return root.virtualFiles;
+    }
+
+    final loader = root.virtualFilesLoader;
+    if (loader == null) {
+      _virtualFilesByRootIndex[rootIndex] = const <FileExplorerVirtualFile>[];
+      return const <FileExplorerVirtualFile>[];
+    }
+
+    final loaded = await loader();
+    _virtualFilesByRootIndex[rootIndex] = loaded;
+    return loaded;
+  }
+
+  Future<_ExplorerEntityRecord?> _buildVirtualFileRecord(
+    FileExplorerVirtualFile virtualFile,
+  ) async {
+    final modifiedAt = virtualFile.modifiedAt;
+    final changedAt = virtualFile.changedAt;
+    final sizeBytes = virtualFile.sizeBytes;
+    if (modifiedAt != null && changedAt != null && sizeBytes != null) {
+      return _ExplorerEntityRecord.virtualFileCached(
+        filePath: virtualFile.path,
+        name: p.basename(virtualFile.virtualPath),
+        subtitle: virtualFile.subtitle ?? virtualFile.path,
+        sizeBytes: sizeBytes,
+        modifiedAt: modifiedAt,
+        changedAt: changedAt,
+      );
+    }
+
+    final file = File(virtualFile.path);
+    if (!await file.exists()) {
+      return null;
+    }
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file) {
+      return null;
+    }
+    return _ExplorerEntityRecord.virtualFile(
+      file: file,
+      stat: stat,
+      subtitle: virtualFile.subtitle ?? virtualFile.path,
+    );
   }
 
   Future<void> _loadDirectory(String path) async {
@@ -684,7 +994,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       final folder = _normalizeVirtualFolder(_virtualCurrentFolder);
       final foldersByPath = <String, _ExplorerEntityRecord>{};
       final records = <_ExplorerEntityRecord>[];
+      var processed = 0;
       for (final virtualFile in virtualFiles) {
+        processed += 1;
         if (virtualFile.path.trim().isEmpty) {
           continue;
         }
@@ -728,21 +1040,14 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
           continue;
         }
 
-        final file = File(virtualFile.path);
-        if (!await file.exists()) {
+        final fileRecord = await _buildVirtualFileRecord(virtualFile);
+        if (fileRecord == null) {
           continue;
         }
-        final stat = await file.stat();
-        if (stat.type != FileSystemEntityType.file) {
-          continue;
+        records.add(fileRecord);
+        if (processed % 500 == 0) {
+          await Future<void>.delayed(Duration.zero);
         }
-        records.add(
-          _ExplorerEntityRecord.virtualFile(
-            file: file,
-            stat: stat,
-            subtitle: virtualFile.subtitle ?? virtualFile.path,
-          ),
-        );
       }
       records.insertAll(0, foldersByPath.values);
       _sortRecords(records);
@@ -768,14 +1073,24 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
   Future<void> _handleRefreshAction() async {
     if (!_canRecacheSelectedRoot) {
+      _invalidateSelectedVirtualRootCache();
       await _loadCurrentRoot();
       return;
     }
-    final action = await widget.onRecacheSharedFolders!.call();
+    final action = await widget.onRecacheSharedFolders!.call(
+      _normalizeVirtualFolder(_virtualCurrentFolder),
+    );
     if (action == SharedRecacheActionResult.cancelled) {
       return;
     }
+    _invalidateSelectedVirtualRootCache();
     await _loadCurrentRoot();
+  }
+
+  void _invalidateSelectedVirtualRootCache() {
+    _virtualFilesByRootIndex.remove(_selectedRootIndex);
+    final prefix = '$_selectedRootIndex|';
+    _virtualDirectoryByKey.removeWhere((key, _) => key.startsWith(prefix));
   }
 
   Future<void> _goUp() async {
@@ -884,6 +1199,93 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
               entry.subtitle.toLowerCase().contains(query),
         )
         .toList(growable: false);
+  }
+}
+
+class _SharedRecacheStatusCard extends StatelessWidget {
+  const _SharedRecacheStatusCard({
+    required this.progress,
+    required this.details,
+    required this.formatEta,
+  });
+
+  final double? progress;
+  final SharedRecacheProgressDetails? details;
+  final String Function(Duration eta) formatEta;
+
+  @override
+  Widget build(BuildContext context) {
+    final processedFiles = details?.processedFiles ?? 0;
+    final totalFiles = details?.totalFiles ?? 0;
+    final cacheLabel = details?.currentCacheLabel.trim() ?? '';
+    final relativePath = details?.currentRelativePath.trim() ?? '';
+    final eta = details?.eta;
+    final etaText = eta == null ? 'ETA --:--' : 'ETA ${formatEta(eta)}';
+    final filesText = totalFiles > 0
+        ? '$processedFiles/$totalFiles files'
+        : '$processedFiles files';
+    final normalizedProgress = progress?.clamp(0.0, 1.0).toDouble();
+
+    final locationText = [
+      cacheLabel,
+      relativePath,
+    ].where((value) => value.isNotEmpty).join(' • ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.cached_rounded,
+                size: 16,
+                color: AppColors.brandPrimaryDark,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  'Re-caching shared files',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            '$filesText • $etaText',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          if (locationText.isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xxs),
+            Text(
+              locationText,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textMuted),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.xs),
+          LinearProgressIndicator(
+            value: normalizedProgress,
+            minHeight: 4,
+            color: AppColors.brandPrimary,
+            backgroundColor: AppColors.mutedBorder,
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -1329,10 +1731,15 @@ class _ExplorerPathHeader extends StatelessWidget {
 }
 
 class _ExplorerEntityTile extends StatelessWidget {
-  const _ExplorerEntityTile({required this.entry, required this.onTap});
+  const _ExplorerEntityTile({
+    required this.entry,
+    required this.onTap,
+    this.onDelete,
+  });
 
   final _ExplorerEntityRecord entry;
   final VoidCallback onTap;
+  final Future<void> Function()? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -1351,6 +1758,15 @@ class _ExplorerEntityTile extends StatelessWidget {
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
+      trailing: onDelete == null
+          ? null
+          : IconButton(
+              tooltip: 'Remove from sharing',
+              onPressed: () async {
+                await onDelete!();
+              },
+              icon: const Icon(Icons.delete_outline_rounded),
+            ),
       onTap: onTap,
     );
   }
@@ -1540,66 +1956,99 @@ class _ExplorerEntityGridTile extends StatelessWidget {
     required this.entry,
     required this.tileExtent,
     required this.onTap,
+    this.onDelete,
   });
 
   final _ExplorerEntityRecord entry;
   final double tileExtent;
   final VoidCallback onTap;
+  final Future<void> Function()? onDelete;
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      onTap: onTap,
-      child: Ink(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-        ),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const horizontalPadding = AppSpacing.xs;
-            const verticalPadding = AppSpacing.xs;
-            const nameHeight = 18.0;
-            final availableWidth = constraints.maxWidth - horizontalPadding * 2;
-            final availableHeight = constraints.maxHeight - verticalPadding * 2;
-            final previewMaxHeight =
-                availableHeight - nameHeight - AppSpacing.xs;
-            final previewSize = math
-                .min(availableWidth, previewMaxHeight)
-                .clamp(44, 170)
-                .toDouble();
-            return Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: horizontalPadding,
-                vertical: verticalPadding,
-              ),
-              child: Column(
-                children: [
-                  Expanded(
-                    child: Center(
-                      child: _ExplorerEntityLeading(
-                        isDirectory: entry.isDirectory,
-                        filePath: entry.filePath,
-                        size: previewSize,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  SizedBox(
-                    height: nameHeight,
-                    child: Align(
-                      alignment: Alignment.topCenter,
-                      child: _GridNameLabel(
-                        name: entry.name,
-                        maxWidth: availableWidth,
-                      ),
-                    ),
+    return GestureDetector(
+      onSecondaryTapDown: onDelete == null
+          ? null
+          : (details) async {
+              final action = await showMenu<String>(
+                context: context,
+                position: RelativeRect.fromLTRB(
+                  details.globalPosition.dx,
+                  details.globalPosition.dy,
+                  details.globalPosition.dx,
+                  details.globalPosition.dy,
+                ),
+                items: const [
+                  PopupMenuItem<String>(
+                    value: 'remove',
+                    child: Text('Remove from sharing'),
                   ),
                 ],
-              ),
-            );
-          },
+              );
+              if (action == 'remove') {
+                await onDelete!();
+              }
+            },
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        onTap: onTap,
+        onLongPress: onDelete == null
+            ? null
+            : () async {
+                await onDelete!();
+              },
+        child: Ink(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              const horizontalPadding = AppSpacing.xs;
+              const verticalPadding = AppSpacing.xs;
+              const nameHeight = 18.0;
+              final availableWidth =
+                  constraints.maxWidth - horizontalPadding * 2;
+              final availableHeight =
+                  constraints.maxHeight - verticalPadding * 2;
+              final previewMaxHeight =
+                  availableHeight - nameHeight - AppSpacing.xs;
+              final previewSize = math
+                  .min(availableWidth, previewMaxHeight)
+                  .clamp(44, 170)
+                  .toDouble();
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: horizontalPadding,
+                  vertical: verticalPadding,
+                ),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: Center(
+                        child: _ExplorerEntityLeading(
+                          isDirectory: entry.isDirectory,
+                          filePath: entry.filePath,
+                          size: previewSize,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    SizedBox(
+                      height: nameHeight,
+                      child: Align(
+                        alignment: Alignment.topCenter,
+                        child: _GridNameLabel(
+                          name: entry.name,
+                          maxWidth: availableWidth,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
         ),
       ),
     );

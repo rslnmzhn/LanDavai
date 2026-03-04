@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -22,6 +23,16 @@ class OwnerFolderCacheUpsertResult {
   final bool created;
   final int previousItemCount;
 }
+
+typedef OwnerCacheProgressCallback =
+    void Function({
+      required int processedFiles,
+      required int totalFiles,
+      required String relativePath,
+      required OwnerCacheProgressStage stage,
+    });
+
+enum OwnerCacheProgressStage { scanning, indexing }
 
 class SharedFolderCacheRepository {
   SharedFolderCacheRepository({
@@ -60,6 +71,8 @@ class SharedFolderCacheRepository {
     required String ownerMacAddress,
     required String folderPath,
     String? displayName,
+    int? parallelWorkers,
+    OwnerCacheProgressCallback? onProgress,
   }) async {
     final ownerMac = _normalizeOrThrow(
       ownerMacAddress,
@@ -102,6 +115,8 @@ class SharedFolderCacheRepository {
       normalizedRoot,
       cacheId: cacheId,
       previousEntriesByRelativePath: previousEntriesByRelativePath,
+      parallelWorkers: parallelWorkers,
+      onProgress: onProgress,
     );
     final totalBytes = entries.fold<int>(
       0,
@@ -173,7 +188,8 @@ class SharedFolderCacheRepository {
     );
 
     final entries = <SharedFolderIndexEntry>[];
-    for (final absolutePath in normalizedPaths) {
+    for (var index = 0; index < normalizedPaths.length; index++) {
+      final absolutePath = normalizedPaths[index];
       final file = File(absolutePath);
       if (!await file.exists()) {
         continue;
@@ -200,6 +216,9 @@ class SharedFolderCacheRepository {
           thumbnailId: thumbnail?.thumbnailId,
         ),
       );
+      if ((index + 1) % 20 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     if (entries.isEmpty) {
@@ -340,12 +359,93 @@ class SharedFolderCacheRepository {
   }
 
   Future<SharedFolderCacheRecord> refreshOwnerSelectionCacheEntries(
-    SharedFolderCacheRecord cache,
-  ) async {
+    SharedFolderCacheRecord cache, {
+    OwnerCacheProgressCallback? onProgress,
+  }) async {
     if (!cache.rootPath.startsWith('selection://')) {
       return cache;
     }
-    return _refreshSelectionCacheEntries(cache);
+    return _refreshSelectionCacheEntries(cache, onProgress: onProgress);
+  }
+
+  Future<SharedFolderCacheRecord> refreshOwnerFolderSubdirectoryEntries(
+    SharedFolderCacheRecord cache, {
+    required String relativeFolderPath,
+    int? parallelWorkers,
+    OwnerCacheProgressCallback? onProgress,
+  }) async {
+    if (cache.rootPath.startsWith('selection://')) {
+      return cache;
+    }
+
+    final normalizedFolder = _normalizeRelativeFolderPath(relativeFolderPath);
+    if (normalizedFolder.isEmpty) {
+      final result = await upsertOwnerFolderCache(
+        ownerMacAddress: cache.ownerMacAddress,
+        folderPath: cache.rootPath,
+        displayName: cache.displayName,
+        parallelWorkers: parallelWorkers,
+        onProgress: onProgress,
+      );
+      return result.record;
+    }
+
+    final root = Directory(cache.rootPath);
+    if (!await root.exists()) {
+      throw ArgumentError('Directory does not exist: ${cache.rootPath}');
+    }
+
+    final existingEntries = await readIndexEntries(cache.cacheId);
+    final untouched = <SharedFolderIndexEntry>[];
+    final previousScoped = <String, SharedFolderIndexEntry>{};
+    for (final entry in existingEntries) {
+      if (_isRelativePathWithinFolder(entry.relativePath, normalizedFolder)) {
+        previousScoped[entry.relativePath] = entry;
+      } else {
+        untouched.add(entry);
+      }
+    }
+
+    final scopedRootPath = p.join(cache.rootPath, normalizedFolder);
+    final scopedRoot = Directory(scopedRootPath);
+    List<SharedFolderIndexEntry> refreshedScopedEntries =
+        const <SharedFolderIndexEntry>[];
+    if (await scopedRoot.exists()) {
+      refreshedScopedEntries = await _indexFolder(
+        scopedRootPath,
+        cacheId: cache.cacheId,
+        previousEntriesByRelativePath: previousScoped,
+        parallelWorkers: parallelWorkers,
+        onProgress: onProgress,
+        relativePrefix: normalizedFolder,
+      );
+    }
+
+    final merged = <SharedFolderIndexEntry>[
+      ...untouched,
+      ...refreshedScopedEntries,
+    ]..sort((a, b) => a.relativePath.compareTo(b.relativePath));
+
+    final totalBytes = merged.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
+    );
+    final updated = SharedFolderCacheRecord(
+      cacheId: cache.cacheId,
+      role: cache.role,
+      ownerMacAddress: cache.ownerMacAddress,
+      peerMacAddress: cache.peerMacAddress,
+      rootPath: cache.rootPath,
+      displayName: cache.displayName,
+      indexFilePath: cache.indexFilePath,
+      itemCount: merged.length,
+      totalBytes: totalBytes,
+      updatedAtMs: DateTime.now().millisecondsSinceEpoch,
+    );
+
+    await _writeIndexFile(updated, merged);
+    await _upsertRecord(updated);
+    return updated;
   }
 
   Future<List<SharedFolderIndexEntry>> readIndexEntries(String cacheId) async {
@@ -543,28 +643,50 @@ class SharedFolderCacheRepository {
   }
 
   Future<SharedFolderCacheRecord> _refreshSelectionCacheEntries(
-    SharedFolderCacheRecord cache,
-  ) async {
+    SharedFolderCacheRecord cache, {
+    OwnerCacheProgressCallback? onProgress,
+  }) async {
     final entries = await readIndexEntries(cache.cacheId);
     final normalized = <SharedFolderIndexEntry>[];
     var changed = false;
+    final total = entries.length;
+    var processed = 0;
 
     for (final entry in entries) {
+      processed += 1;
       final absolutePath = entry.absolutePath;
       if (absolutePath == null || absolutePath.trim().isEmpty) {
         changed = true;
+        onProgress?.call(
+          processedFiles: processed,
+          totalFiles: total,
+          relativePath: entry.relativePath,
+          stage: OwnerCacheProgressStage.indexing,
+        );
         continue;
       }
 
       final file = File(absolutePath);
       if (!await file.exists()) {
         changed = true;
+        onProgress?.call(
+          processedFiles: processed,
+          totalFiles: total,
+          relativePath: entry.relativePath,
+          stage: OwnerCacheProgressStage.indexing,
+        );
         continue;
       }
 
       final stat = await file.stat();
       if (stat.type != FileSystemEntityType.file) {
         changed = true;
+        onProgress?.call(
+          processedFiles: processed,
+          totalFiles: total,
+          relativePath: entry.relativePath,
+          stage: OwnerCacheProgressStage.indexing,
+        );
         continue;
       }
 
@@ -592,6 +714,15 @@ class SharedFolderCacheRepository {
           thumbnailId: thumbnailId,
         ),
       );
+      onProgress?.call(
+        processedFiles: processed,
+        totalFiles: total,
+        relativePath: entry.relativePath,
+        stage: OwnerCacheProgressStage.indexing,
+      );
+      if (processed % 20 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     if (!changed) {
@@ -657,51 +788,173 @@ class SharedFolderCacheRepository {
     String rootPath, {
     required String cacheId,
     Map<String, SharedFolderIndexEntry>? previousEntriesByRelativePath,
+    int? parallelWorkers,
+    OwnerCacheProgressCallback? onProgress,
+    String relativePrefix = '',
   }) async {
     final root = Directory(rootPath);
-    final entries = <SharedFolderIndexEntry>[];
+    final normalizedPrefix = _normalizeRelativeFolderPath(relativePrefix);
+    final probes = <_FolderProbeEntry>[];
+    var discoveredFiles = 0;
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) {
         continue;
       }
-
       final stat = await entity.stat();
       if (stat.type != FileSystemEntityType.file) {
         continue;
       }
-
-      final relative = p
+      final relativePath = p
           .relative(entity.path, from: rootPath)
           .replaceAll('\\', '/');
-      final modifiedAtMs = stat.modified.millisecondsSinceEpoch;
-      final previous = previousEntriesByRelativePath?[relative];
-      if (previous != null &&
-          previous.sizeBytes == stat.size &&
-          previous.modifiedAtMs == modifiedAtMs) {
-        entries.add(previous);
-        continue;
-      }
-
-      final thumbnail = await _thumbnailCacheService.ensureOwnerThumbnail(
-        cacheId: cacheId,
-        relativePath: relative,
-        sourcePath: entity.path,
-        sizeBytes: stat.size,
-        modifiedAtMs: modifiedAtMs,
-      );
-
-      entries.add(
-        SharedFolderIndexEntry(
-          relativePath: relative,
+      final cacheRelativePath = normalizedPrefix.isEmpty
+          ? relativePath
+          : '$normalizedPrefix/$relativePath';
+      probes.add(
+        _FolderProbeEntry(
+          sourcePath: entity.path,
+          relativePath: cacheRelativePath,
           sizeBytes: stat.size,
-          modifiedAtMs: modifiedAtMs,
-          thumbnailId: thumbnail?.thumbnailId,
+          modifiedAtMs: stat.modified.millisecondsSinceEpoch,
         ),
+      );
+      final reportedPath = probes.last.relativePath;
+      discoveredFiles += 1;
+      if (discoveredFiles == 1 || discoveredFiles % 32 == 0) {
+        onProgress?.call(
+          processedFiles: discoveredFiles,
+          totalFiles: 0,
+          relativePath: reportedPath,
+          stage: OwnerCacheProgressStage.scanning,
+        );
+      }
+      if (discoveredFiles % 64 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
+    }
+
+    if (discoveredFiles > 0 && discoveredFiles % 32 != 0) {
+      final relativePath = probes.last.relativePath;
+      onProgress?.call(
+        processedFiles: discoveredFiles,
+        totalFiles: 0,
+        relativePath: relativePath,
+        stage: OwnerCacheProgressStage.scanning,
       );
     }
 
-    entries.sort((a, b) => a.relativePath.compareTo(b.relativePath));
-    return entries;
+    final total = probes.length;
+    if (total == 0) {
+      return <SharedFolderIndexEntry>[];
+    }
+
+    final entries = List<SharedFolderIndexEntry?>.filled(
+      total,
+      null,
+      growable: false,
+    );
+    final workerCount = _resolveParallelWorkerCount(
+      total,
+      overrideWorkers: parallelWorkers,
+    );
+    var nextIndex = 0;
+    var processedCount = 0;
+
+    Future<void> runWorker() async {
+      while (true) {
+        final index = nextIndex;
+        if (index >= total) {
+          return;
+        }
+        nextIndex += 1;
+
+        final probe = probes[index];
+        final previous = previousEntriesByRelativePath?[probe.relativePath];
+        if (previous != null &&
+            previous.sizeBytes == probe.sizeBytes &&
+            previous.modifiedAtMs == probe.modifiedAtMs) {
+          entries[index] = previous;
+        } else {
+          final thumbnail = await _thumbnailCacheService.ensureOwnerThumbnail(
+            cacheId: cacheId,
+            relativePath: probe.relativePath,
+            sourcePath: probe.sourcePath,
+            sizeBytes: probe.sizeBytes,
+            modifiedAtMs: probe.modifiedAtMs,
+          );
+          entries[index] = SharedFolderIndexEntry(
+            relativePath: probe.relativePath,
+            sizeBytes: probe.sizeBytes,
+            modifiedAtMs: probe.modifiedAtMs,
+            thumbnailId: thumbnail?.thumbnailId,
+          );
+        }
+
+        processedCount += 1;
+        onProgress?.call(
+          processedFiles: processedCount,
+          totalFiles: total,
+          relativePath: probe.relativePath,
+          stage: OwnerCacheProgressStage.indexing,
+        );
+        if (processedCount % 20 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    }
+
+    await Future.wait(
+      List<Future<void>>.generate(workerCount, (_) => runWorker()),
+    );
+
+    final completedEntries = entries.whereType<SharedFolderIndexEntry>().toList(
+      growable: false,
+    );
+
+    if (completedEntries.length != total) {
+      throw StateError(
+        'Folder indexing did not complete for all files '
+        '($total expected, ${completedEntries.length} collected).',
+      );
+    }
+
+    final sortedEntries = List<SharedFolderIndexEntry>.from(completedEntries);
+    sortedEntries.sort((a, b) => a.relativePath.compareTo(b.relativePath));
+    return sortedEntries;
+  }
+
+  String _normalizeRelativeFolderPath(String value) {
+    return value
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((part) => part.isNotEmpty && part != '.')
+        .join('/');
+  }
+
+  bool _isRelativePathWithinFolder(String relativePath, String folderPath) {
+    final normalizedRelative = _normalizeRelativeFolderPath(relativePath);
+    final normalizedFolder = _normalizeRelativeFolderPath(folderPath);
+    if (normalizedFolder.isEmpty) {
+      return true;
+    }
+    return normalizedRelative == normalizedFolder ||
+        normalizedRelative.startsWith('$normalizedFolder/');
+  }
+
+  int _resolveParallelWorkerCount(int totalFiles, {int? overrideWorkers}) {
+    if (totalFiles <= 1) {
+      return 1;
+    }
+    if (overrideWorkers != null && overrideWorkers > 0) {
+      final capped = math.max(
+        1,
+        math.min(overrideWorkers, Platform.numberOfProcessors),
+      );
+      return math.min(totalFiles, capped);
+    }
+    // Auto mode: keep one logical core free for UI/system responsiveness.
+    final availableWorkers = math.max(2, Platform.numberOfProcessors - 1);
+    return math.min(totalFiles, availableWorkers);
   }
 
   String _resolveDisplayName({
@@ -806,4 +1059,18 @@ class SharedFolderCacheRepository {
     }
     return normalized;
   }
+}
+
+class _FolderProbeEntry {
+  const _FolderProbeEntry({
+    required this.sourcePath,
+    required this.relativePath,
+    required this.sizeBytes,
+    required this.modifiedAtMs,
+  });
+
+  final String sourcePath;
+  final String relativePath;
+  final int sizeBytes;
+  final int modifiedAtMs;
 }

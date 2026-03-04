@@ -1,5 +1,7 @@
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -129,19 +131,9 @@ class ThumbnailCacheService {
       return null;
     }
 
-    if (bytes.lengthInBytes > _maxPacketSafeBytes) {
-      final decoded = img.decodeImage(bytes);
-      if (decoded != null) {
-        final resized = img.copyResize(
-          decoded,
-          width: decoded.width > decoded.height ? _thumbnailMaxExtent : null,
-          height: decoded.height >= decoded.width ? _thumbnailMaxExtent : null,
-          interpolation: img.Interpolation.average,
-        );
-        bytes = Uint8List.fromList(
-          img.encodeJpg(resized, quality: _thumbnailQuality),
-        );
-      }
+    bytes = await _ensurePacketSafeThumbnailBytes(bytes);
+    if (bytes == null || bytes.isEmpty) {
+      return null;
     }
 
     await target.parent.create(recursive: true);
@@ -258,20 +250,12 @@ class ThumbnailCacheService {
         return null;
       }
       final bytes = await source.readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) {
-        return null;
-      }
-
-      final resized = img.copyResize(
-        decoded,
-        width: decoded.width > decoded.height ? _thumbnailMaxExtent : null,
-        height: decoded.height >= decoded.width ? _thumbnailMaxExtent : null,
-        interpolation: img.Interpolation.average,
-      );
-
-      return Uint8List.fromList(
-        img.encodeJpg(resized, quality: _thumbnailQuality),
+      return await Isolate.run(
+        () => _buildImageThumbnailSync(
+          bytes: bytes,
+          maxExtent: _thumbnailMaxExtent,
+          quality: _thumbnailQuality,
+        ),
       );
     } catch (error) {
       _log('Image thumbnail build failed: $error');
@@ -296,6 +280,90 @@ class ThumbnailCacheService {
       _log('Video thumbnail build failed: $error');
       return null;
     }
+  }
+
+  Future<Uint8List?> _ensurePacketSafeThumbnailBytes(Uint8List bytes) async {
+    if (bytes.lengthInBytes <= _maxPacketSafeBytes) {
+      return bytes;
+    }
+    try {
+      final reduced = await Isolate.run(
+        () => _ensurePacketSafeThumbnailBytesSync(
+          bytes: bytes,
+          maxPacketSafeBytes: _maxPacketSafeBytes,
+          maxExtent: _thumbnailMaxExtent,
+          quality: _thumbnailQuality,
+        ),
+      );
+      if (reduced == null || reduced.isEmpty) {
+        return null;
+      }
+      if (reduced.lengthInBytes > _maxPacketSafeBytes) {
+        return null;
+      }
+      return reduced;
+    } catch (error) {
+      _log('Thumbnail packet-safe resize failed: $error');
+      return null;
+    }
+  }
+
+  static Uint8List? _buildImageThumbnailSync({
+    required Uint8List bytes,
+    required int maxExtent,
+    required int quality,
+  }) {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+    final resized = _resizeToLongestEdge(decoded, maxExtent: maxExtent);
+    return Uint8List.fromList(img.encodeJpg(resized, quality: quality));
+  }
+
+  static Uint8List? _ensurePacketSafeThumbnailBytesSync({
+    required Uint8List bytes,
+    required int maxPacketSafeBytes,
+    required int maxExtent,
+    required int quality,
+  }) {
+    if (bytes.lengthInBytes <= maxPacketSafeBytes) {
+      return bytes;
+    }
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) {
+      return null;
+    }
+
+    var targetExtent = math.max(64, maxExtent);
+    var targetQuality = quality;
+    var attempts = 0;
+    Uint8List? encoded;
+    while (attempts < 8) {
+      final resized = _resizeToLongestEdge(decoded, maxExtent: targetExtent);
+      encoded = Uint8List.fromList(
+        img.encodeJpg(resized, quality: targetQuality),
+      );
+      if (encoded.lengthInBytes <= maxPacketSafeBytes) {
+        return encoded;
+      }
+      attempts += 1;
+      targetExtent = math.max(48, (targetExtent * 0.82).round());
+      targetQuality = math.max(34, targetQuality - 6);
+    }
+    return encoded;
+  }
+
+  static img.Image _resizeToLongestEdge(
+    img.Image decoded, {
+    required int maxExtent,
+  }) {
+    return img.copyResize(
+      decoded,
+      width: decoded.width > decoded.height ? maxExtent : null,
+      height: decoded.height >= decoded.width ? maxExtent : null,
+      interpolation: img.Interpolation.average,
+    );
   }
 
   void _log(String message) {

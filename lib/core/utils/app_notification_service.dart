@@ -59,18 +59,35 @@ class AppNotificationService {
     required int processedCaches,
     required int totalCaches,
     required String currentCacheLabel,
+    int? processedFiles,
+    int? totalFiles,
+    int? etaSeconds,
+    String? currentFileLabel,
   }) async {
     if (!Platform.isAndroid) {
       return;
     }
     try {
+      final payload = <String, Object?>{
+        'processedCaches': processedCaches,
+        'totalCaches': totalCaches,
+        'currentCacheLabel': currentCacheLabel,
+      };
+      if (processedFiles != null) {
+        payload['processedFiles'] = processedFiles;
+      }
+      if (totalFiles != null) {
+        payload['totalFiles'] = totalFiles;
+      }
+      if (etaSeconds != null) {
+        payload['etaSeconds'] = etaSeconds;
+      }
+      if (currentFileLabel != null) {
+        payload['currentFileLabel'] = currentFileLabel;
+      }
       await _channel.invokeMethod<void>(
         'showSharedRecacheProgressNotification',
-        <String, Object?>{
-          'processedCaches': processedCaches,
-          'totalCaches': totalCaches,
-          'currentCacheLabel': currentCacheLabel,
-        },
+        payload,
       );
     } catch (error) {
       developer.log(

@@ -23,6 +23,7 @@ class AppSettingsRepository {
   static const String _previewCacheMaxAgeDaysKey = 'preview_cache_max_age_days';
   static const String _clipboardHistoryMaxEntriesKey =
       'clipboard_history_max_entries';
+  static const String _recacheParallelWorkersKey = 'recache_parallel_workers';
 
   Future<AppSettings> load() async {
     final db = await _databaseProvider();
@@ -74,6 +75,10 @@ class AppSettingsRepository {
       clipboardHistoryMaxEntries: _parseNonNegativeInt(
         values[_clipboardHistoryMaxEntriesKey],
         fallback: defaults.clipboardHistoryMaxEntries,
+      ),
+      recacheParallelWorkers: _parseNonNegativeInt(
+        values[_recacheParallelWorkersKey],
+        fallback: defaults.recacheParallelWorkers,
       ),
     );
   }
@@ -128,6 +133,12 @@ class AppSettingsRepository {
         txn: txn,
         key: _clipboardHistoryMaxEntriesKey,
         value: settings.clipboardHistoryMaxEntries.toString(),
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _recacheParallelWorkersKey,
+        value: settings.recacheParallelWorkers.toString(),
         updatedAtMs: now,
       );
     });
