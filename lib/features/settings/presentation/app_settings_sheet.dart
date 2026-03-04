@@ -18,6 +18,7 @@ class AppSettingsSheet extends StatefulWidget {
     required this.onPreviewCacheMaxSizeGbChanged,
     required this.onPreviewCacheMaxAgeDaysChanged,
     required this.onClipboardHistoryMaxEntriesChanged,
+    required this.onRecacheParallelWorkersChanged,
     super.key,
   });
 
@@ -30,6 +31,7 @@ class AppSettingsSheet extends StatefulWidget {
   final ValueChanged<int> onPreviewCacheMaxSizeGbChanged;
   final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
   final ValueChanged<int> onClipboardHistoryMaxEntriesChanged;
+  final ValueChanged<int> onRecacheParallelWorkersChanged;
 
   @override
   State<AppSettingsSheet> createState() => _AppSettingsSheetState();
@@ -39,6 +41,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _cacheSizeController;
   late final TextEditingController _cacheAgeController;
   late final TextEditingController _clipboardLimitController;
+  late final TextEditingController _recacheWorkersController;
   late final TextEditingController _videoLinkPasswordController;
 
   @override
@@ -52,6 +55,9 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     );
     _clipboardLimitController = TextEditingController(
       text: widget.settings.clipboardHistoryMaxEntries.toString(),
+    );
+    _recacheWorkersController = TextEditingController(
+      text: widget.settings.recacheParallelWorkers.toString(),
     );
     _videoLinkPasswordController = TextEditingController(
       text: widget.settings.videoLinkPassword,
@@ -78,6 +84,11 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
           .clipboardHistoryMaxEntries
           .toString();
     }
+    if (oldWidget.settings.recacheParallelWorkers !=
+        widget.settings.recacheParallelWorkers) {
+      _recacheWorkersController.text = widget.settings.recacheParallelWorkers
+          .toString();
+    }
     if (oldWidget.settings.videoLinkPassword !=
         widget.settings.videoLinkPassword) {
       _videoLinkPasswordController.text = widget.settings.videoLinkPassword;
@@ -89,6 +100,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     _cacheSizeController.dispose();
     _cacheAgeController.dispose();
     _clipboardLimitController.dispose();
+    _recacheWorkersController.dispose();
     _videoLinkPasswordController.dispose();
     super.dispose();
   }
@@ -125,6 +137,15 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onClipboardHistoryMaxEntriesChanged(parsed);
+  }
+
+  void _saveRecacheParallelWorkers() {
+    final parsed = int.tryParse(_recacheWorkersController.text.trim());
+    if (parsed == null || parsed < 0) {
+      _showValidationMessage('Введите неотрицательное число потоков.');
+      return;
+    }
+    widget.onRecacheParallelWorkersChanged(parsed);
   }
 
   void _saveVideoLinkPassword() {
@@ -253,6 +274,22 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 controller: _clipboardLimitController,
                 label: 'Максимум записей истории',
                 onSave: _saveClipboardLimit,
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'Ускорение re-cache',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Число воркеров для пересборки кэша. 0 = авто (по CPU).',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _IntegerSettingField(
+                controller: _recacheWorkersController,
+                label: 'Параллельные воркеры re-cache',
+                onSave: _saveRecacheParallelWorkers,
               ),
               const SizedBox(height: AppSpacing.md),
               Text(

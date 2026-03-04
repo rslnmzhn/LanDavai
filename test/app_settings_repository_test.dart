@@ -63,6 +63,10 @@ void main() {
       settings.clipboardHistoryMaxEntries,
       AppSettings.defaults.clipboardHistoryMaxEntries,
     );
+    expect(
+      settings.recacheParallelWorkers,
+      AppSettings.defaults.recacheParallelWorkers,
+    );
   });
 
   test('persists and restores all app settings', () async {
@@ -75,6 +79,7 @@ void main() {
       previewCacheMaxSizeGb: 4,
       previewCacheMaxAgeDays: 10,
       clipboardHistoryMaxEntries: 42,
+      recacheParallelWorkers: 6,
     );
 
     await repository.save(expected);
@@ -94,5 +99,6 @@ void main() {
       restored.clipboardHistoryMaxEntries,
       expected.clipboardHistoryMaxEntries,
     );
+    expect(restored.recacheParallelWorkers, expected.recacheParallelWorkers);
   });
 }

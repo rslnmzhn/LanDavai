@@ -159,15 +159,43 @@ class ShareableLocalFile {
     required this.cacheId,
     required this.cacheDisplayName,
     required this.relativePath,
+    required this.virtualPath,
     required this.absolutePath,
+    required this.sizeBytes,
+    required this.modifiedAtMs,
     required this.isSelectionCache,
   });
 
   final String cacheId;
   final String cacheDisplayName;
   final String relativePath;
+  final String virtualPath;
   final String absolutePath;
+  final int sizeBytes;
+  final int modifiedAtMs;
   final bool isSelectionCache;
+}
+
+class ShareableLocalFolder {
+  const ShareableLocalFolder({
+    required this.name,
+    required this.virtualPath,
+    this.removableSharedCacheId,
+  });
+
+  final String name;
+  final String virtualPath;
+  final String? removableSharedCacheId;
+}
+
+class ShareableLocalDirectoryListing {
+  const ShareableLocalDirectoryListing({
+    required this.folders,
+    required this.files,
+  });
+
+  final List<ShareableLocalFolder> folders;
+  final List<ShareableLocalFile> files;
 }
 
 class SharedCacheSummary {
@@ -188,12 +216,20 @@ class SharedRecacheProgress {
   const SharedRecacheProgress({
     required this.processedCaches,
     required this.totalCaches,
+    required this.processedFiles,
+    required this.totalFiles,
     required this.currentCacheLabel,
+    required this.currentRelativePath,
+    required this.eta,
   });
 
   final int processedCaches;
   final int totalCaches;
+  final int processedFiles;
+  final int totalFiles;
   final String currentCacheLabel;
+  final String currentRelativePath;
+  final Duration? eta;
 }
 
 class SharedRecacheReport {
@@ -208,6 +244,41 @@ class SharedRecacheReport {
   final SharedCacheSummary after;
   final int updatedCaches;
   final int failedCaches;
+}
+
+class SharedFolderIndexingProgress {
+  const SharedFolderIndexingProgress({
+    required this.processedFiles,
+    required this.totalFiles,
+    required this.currentRelativePath,
+    required this.stage,
+    required this.eta,
+  });
+
+  final int processedFiles;
+  final int totalFiles;
+  final String currentRelativePath;
+  final OwnerCacheProgressStage stage;
+  final Duration? eta;
+}
+
+class _ScopedOwnerRecacheTarget {
+  const _ScopedOwnerRecacheTarget({
+    required this.cache,
+    required this.relativeFolderPath,
+    required this.estimatedFileCount,
+  });
+
+  final SharedFolderCacheRecord cache;
+  final String relativeFolderPath;
+  final int estimatedFileCount;
+
+  String get label {
+    if (relativeFolderPath.isEmpty) {
+      return cache.displayName;
+    }
+    return '${cache.displayName}/$relativeFolderPath';
+  }
 }
 
 class DiscoveryController extends ChangeNotifier {
@@ -247,6 +318,16 @@ class DiscoveryController extends ChangeNotifier {
   static const Duration _pendingRemotePreviewTtl = Duration(minutes: 1);
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
   static const Duration _sharedRecacheCooldown = Duration(minutes: 5);
+  static const Duration _sharedRecacheUiTickInterval = Duration(
+    milliseconds: 120,
+  );
+  static const Duration _sharedFolderIndexingUiTickInterval = Duration(
+    milliseconds: 120,
+  );
+  static const Duration _sharedRecacheNotificationTickInterval = Duration(
+    milliseconds: 900,
+  );
+  static const double _sharedFolderScanProgressWeight = 0.35;
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
@@ -294,6 +375,8 @@ class DiscoveryController extends ChangeNotifier {
   final List<FriendPeer> _friends = <FriendPeer>[];
   final List<ClipboardHistoryEntry> _clipboardHistory =
       <ClipboardHistoryEntry>[];
+  final Map<String, List<SharedFolderIndexEntry>> _ownerIndexEntriesByCacheId =
+      <String, List<SharedFolderIndexEntry>>{};
   final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
       <String, List<RemoteClipboardEntry>>{};
   final Map<String, String> _friendNameById = <String, String>{};
@@ -307,6 +390,9 @@ class DiscoveryController extends ChangeNotifier {
   bool _isAddingShare = false;
   bool _isSharedRecacheInProgress = false;
   double? _sharedRecacheProgress;
+  SharedRecacheProgress? _sharedRecacheDetails;
+  SharedFolderIndexingProgress? _sharedFolderIndexingProgress;
+  double? _sharedFolderIndexingVisualProgress;
   DateTime? _sharedRecacheCooldownUntil;
   bool _isSendingTransfer = false;
   bool _isLoadingRemoteShares = false;
@@ -341,6 +427,12 @@ class DiscoveryController extends ChangeNotifier {
   bool get isAddingShare => _isAddingShare;
   bool get isSharedRecacheInProgress => _isSharedRecacheInProgress;
   double? get sharedRecacheProgress => _sharedRecacheProgress;
+  SharedRecacheProgress? get sharedRecacheDetails => _sharedRecacheDetails;
+  SharedFolderIndexingProgress? get sharedFolderIndexingProgress =>
+      _sharedFolderIndexingProgress;
+  double? get sharedFolderIndexingProgressValue =>
+      _sharedFolderIndexingVisualProgress;
+
   bool get isSharedRecacheCooldownActive {
     final until = _sharedRecacheCooldownUntil;
     return until != null && DateTime.now().isBefore(until);
@@ -564,6 +656,25 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
+  Future<bool> removeSharedCacheById(String cacheId) async {
+    await _loadOwnerCaches();
+    SharedFolderCacheRecord? target;
+    for (final cache in _ownerSharedCaches) {
+      if (cache.cacheId == cacheId) {
+        target = cache;
+        break;
+      }
+    }
+    if (target == null) {
+      _errorMessage = 'Shared folder is no longer available.';
+      notifyListeners();
+      return false;
+    }
+
+    await removeSharedCache(target);
+    return _errorMessage == null;
+  }
+
   void clearInfoMessage() {
     _infoMessage = null;
     notifyListeners();
@@ -716,6 +827,14 @@ class DiscoveryController extends ChangeNotifier {
       _settings.copyWith(clipboardHistoryMaxEntries: normalized),
     );
     await _trimClipboardHistoryToSettingsLimit();
+  }
+
+  Future<void> setRecacheParallelWorkers(int value) async {
+    final normalized = value < 0 ? 0 : value;
+    if (_settings.recacheParallelWorkers == normalized) {
+      return;
+    }
+    await _saveSettings(_settings.copyWith(recacheParallelWorkers: normalized));
   }
 
   void setAppForegroundState(bool isForeground) {
@@ -1183,6 +1302,8 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> addSharedFolder() async {
     _isAddingShare = true;
+    _sharedFolderIndexingProgress = null;
+    _sharedFolderIndexingVisualProgress = null;
     notifyListeners();
     try {
       final folderPath = await FilePicker.platform.getDirectoryPath();
@@ -1190,10 +1311,88 @@ class DiscoveryController extends ChangeNotifier {
         return;
       }
 
+      final indexingStopwatch = Stopwatch()..start();
+      DateTime? lastUiTickAt;
+      _sharedFolderIndexingProgress = const SharedFolderIndexingProgress(
+        processedFiles: 0,
+        totalFiles: 0,
+        currentRelativePath: '',
+        stage: OwnerCacheProgressStage.scanning,
+        eta: null,
+      );
+      _sharedFolderIndexingVisualProgress = 0;
+      notifyListeners();
+
       final result = await _sharedFolderCacheRepository.upsertOwnerFolderCache(
         ownerMacAddress: _localDeviceMac,
         folderPath: folderPath,
+        parallelWorkers: _resolveRecacheParallelWorkersOverride(),
+        onProgress:
+            ({
+              required int processedFiles,
+              required int totalFiles,
+              required String relativePath,
+              required OwnerCacheProgressStage stage,
+            }) {
+              final safeProcessedFiles = math.max(0, processedFiles);
+              final safeTotalFiles = math.max(0, totalFiles);
+              Duration? eta;
+              double nextVisualProgress;
+              if (stage == OwnerCacheProgressStage.scanning ||
+                  safeTotalFiles <= 0) {
+                nextVisualProgress = _estimateSharedFolderScanProgress(
+                  safeProcessedFiles,
+                );
+              } else {
+                final fileProgress = (safeProcessedFiles / safeTotalFiles)
+                    .clamp(0, 1)
+                    .toDouble();
+                nextVisualProgress =
+                    _sharedFolderScanProgressWeight +
+                    fileProgress * (1 - _sharedFolderScanProgressWeight);
+                eta = _estimateRecacheEta(
+                  elapsed: indexingStopwatch.elapsed,
+                  processedFiles: safeProcessedFiles,
+                  totalFiles: safeTotalFiles,
+                );
+              }
+              final currentVisualProgress =
+                  _sharedFolderIndexingVisualProgress ?? 0;
+              _sharedFolderIndexingVisualProgress = math
+                  .max(currentVisualProgress, nextVisualProgress)
+                  .clamp(0, 1)
+                  .toDouble();
+              final progress = SharedFolderIndexingProgress(
+                processedFiles: safeProcessedFiles,
+                totalFiles: safeTotalFiles,
+                currentRelativePath: relativePath,
+                stage: stage,
+                eta: eta,
+              );
+              _sharedFolderIndexingProgress = progress;
+              final now = DateTime.now();
+              final shouldNotify =
+                  lastUiTickAt == null ||
+                  now.difference(lastUiTickAt!) >=
+                      _sharedFolderIndexingUiTickInterval ||
+                  (safeTotalFiles > 0 && safeProcessedFiles >= safeTotalFiles);
+              if (shouldNotify) {
+                lastUiTickAt = now;
+                notifyListeners();
+              }
+            },
       );
+      indexingStopwatch.stop();
+      final completedCount = math.max(0, result.record.itemCount);
+      _sharedFolderIndexingProgress = SharedFolderIndexingProgress(
+        processedFiles: completedCount,
+        totalFiles: completedCount,
+        currentRelativePath: '',
+        stage: OwnerCacheProgressStage.indexing,
+        eta: Duration.zero,
+      );
+      _sharedFolderIndexingVisualProgress = 1;
+      notifyListeners();
       await _loadOwnerCaches();
       final delta = result.record.itemCount - result.previousItemCount;
       if (result.created) {
@@ -1213,18 +1412,30 @@ class DiscoveryController extends ChangeNotifier {
       _errorMessage = 'Failed to add shared folder: $error';
       _log(_errorMessage!);
     } finally {
+      _sharedFolderIndexingProgress = null;
+      _sharedFolderIndexingVisualProgress = null;
       _isAddingShare = false;
       notifyListeners();
     }
   }
 
-  Future<SharedCacheSummary> summarizeOwnerSharedContent() async {
+  Future<SharedCacheSummary> summarizeOwnerSharedContent({
+    String virtualFolderPath = '',
+  }) async {
     await _loadOwnerCaches();
-    return _buildSharedCacheSummary(_ownerSharedCaches);
+    final normalizedFolder = _normalizeVirtualFolderPath(virtualFolderPath);
+    if (normalizedFolder.isEmpty) {
+      return _buildSharedCacheSummary(_ownerSharedCaches);
+    }
+    final targets = await _resolveScopedOwnerRecacheTargets(
+      virtualFolderPath: normalizedFolder,
+    );
+    return _buildScopedSharedCacheSummary(targets);
   }
 
   Future<SharedRecacheReport?> recacheSharedContent({
     void Function(SharedRecacheProgress progress)? onProgress,
+    String virtualFolderPath = '',
   }) async {
     if (_isSharedRecacheInProgress || isSharedRecacheCooldownActive) {
       return null;
@@ -1233,74 +1444,197 @@ class DiscoveryController extends ChangeNotifier {
     _isAddingShare = true;
     _isSharedRecacheInProgress = true;
     _sharedRecacheProgress = null;
+    _sharedRecacheDetails = null;
     notifyListeners();
 
     var shouldStartCooldown = false;
     SharedRecacheReport? report;
+    final recacheStopwatch = Stopwatch()..start();
+    DateTime? lastUiTickAt;
+    DateTime? lastNotificationTickAt;
     try {
       await _loadOwnerCaches();
-      final caches = List<SharedFolderCacheRecord>.from(_ownerSharedCaches);
-      if (caches.isEmpty) {
-        _infoMessage = 'No shared folders/files to re-cache.';
+      final normalizedScopeFolder = _normalizeVirtualFolderPath(
+        virtualFolderPath,
+      );
+      final targets = await _resolveScopedOwnerRecacheTargets(
+        virtualFolderPath: normalizedScopeFolder,
+      );
+      if (targets.isEmpty) {
+        _infoMessage = normalizedScopeFolder.isEmpty
+            ? 'No shared folders/files to re-cache.'
+            : 'No shared files found in selected folder.';
         _errorMessage = null;
         return null;
       }
 
-      final before = _buildSharedCacheSummary(caches);
+      final before = _buildScopedSharedCacheSummary(targets);
       var updatedCount = 0;
       var failedCount = 0;
-      final totalCaches = caches.length;
-      _sharedRecacheProgress = 0;
-      onProgress?.call(
-        SharedRecacheProgress(
-          processedCaches: 0,
-          totalCaches: totalCaches,
-          currentCacheLabel: '',
-        ),
+      final totalCaches = targets.length;
+      var estimatedTotalFiles = targets.fold<int>(
+        0,
+        (sum, target) => sum + math.max(target.estimatedFileCount, 0),
       );
-      await _appNotificationService.showSharedRecacheProgressNotification(
+      var processedFilesAcrossCaches = 0;
+
+      void publishProgress({
+        required int processedCaches,
+        required int processedFiles,
+        required int totalFiles,
+        required String currentCacheLabel,
+        required String currentRelativePath,
+        bool force = false,
+      }) {
+        final safeProcessedFiles = math.max(0, processedFiles);
+        final safeTotalFiles = math.max(totalFiles, safeProcessedFiles);
+        final progress = SharedRecacheProgress(
+          processedCaches: processedCaches.clamp(0, totalCaches),
+          totalCaches: totalCaches,
+          processedFiles: safeProcessedFiles,
+          totalFiles: safeTotalFiles,
+          currentCacheLabel: currentCacheLabel,
+          currentRelativePath: currentRelativePath,
+          eta: _estimateRecacheEta(
+            elapsed: recacheStopwatch.elapsed,
+            processedFiles: safeProcessedFiles,
+            totalFiles: safeTotalFiles,
+          ),
+        );
+        _sharedRecacheDetails = progress;
+        _sharedRecacheProgress = _resolveSharedRecacheProgressValue(progress);
+        onProgress?.call(progress);
+
+        final now = DateTime.now();
+        final shouldNotifyUi =
+            force ||
+            lastUiTickAt == null ||
+            now.difference(lastUiTickAt!) >= _sharedRecacheUiTickInterval;
+        if (shouldNotifyUi) {
+          lastUiTickAt = now;
+          notifyListeners();
+        }
+
+        final shouldNotifyPlatform =
+            force ||
+            lastNotificationTickAt == null ||
+            now.difference(lastNotificationTickAt!) >=
+                _sharedRecacheNotificationTickInterval;
+        if (shouldNotifyPlatform) {
+          lastNotificationTickAt = now;
+          unawaited(
+            _appNotificationService.showSharedRecacheProgressNotification(
+              processedCaches: progress.processedCaches,
+              totalCaches: progress.totalCaches,
+              currentCacheLabel: progress.currentCacheLabel,
+              processedFiles: progress.processedFiles,
+              totalFiles: progress.totalFiles > 0 ? progress.totalFiles : null,
+              etaSeconds: progress.eta?.inSeconds,
+              currentFileLabel: progress.currentRelativePath.isEmpty
+                  ? null
+                  : progress.currentRelativePath,
+            ),
+          );
+        }
+      }
+
+      publishProgress(
         processedCaches: 0,
-        totalCaches: totalCaches,
+        processedFiles: 0,
+        totalFiles: estimatedTotalFiles,
         currentCacheLabel: '',
+        currentRelativePath: '',
+        force: true,
       );
 
-      for (var index = 0; index < caches.length; index++) {
-        final cache = caches[index];
+      for (var index = 0; index < targets.length; index++) {
+        final target = targets[index];
+        final cache = target.cache;
+        var cacheTotalFiles = math.max(target.estimatedFileCount, 0);
+        var cacheProcessedFiles = 0;
+
+        void handleCacheFileProgress({
+          required int processedFiles,
+          required int totalFiles,
+          required String relativePath,
+          required OwnerCacheProgressStage stage,
+        }) {
+          if (stage == OwnerCacheProgressStage.scanning) {
+            return;
+          }
+          cacheProcessedFiles = math.max(0, processedFiles);
+          final normalizedTotal = math.max(totalFiles, cacheProcessedFiles);
+          if (normalizedTotal != cacheTotalFiles) {
+            estimatedTotalFiles += normalizedTotal - cacheTotalFiles;
+            cacheTotalFiles = normalizedTotal;
+          }
+          final globalProcessed =
+              processedFilesAcrossCaches + cacheProcessedFiles;
+          if (estimatedTotalFiles < globalProcessed) {
+            estimatedTotalFiles = globalProcessed;
+          }
+          publishProgress(
+            processedCaches: index,
+            processedFiles: globalProcessed,
+            totalFiles: estimatedTotalFiles,
+            currentCacheLabel: target.label,
+            currentRelativePath: relativePath,
+          );
+        }
+
         try {
           if (cache.rootPath.startsWith('selection://')) {
             await _sharedFolderCacheRepository
-                .refreshOwnerSelectionCacheEntries(cache);
-          } else {
+                .refreshOwnerSelectionCacheEntries(
+                  cache,
+                  onProgress: handleCacheFileProgress,
+                );
+          } else if (target.relativeFolderPath.isEmpty) {
             await _sharedFolderCacheRepository.upsertOwnerFolderCache(
               ownerMacAddress: _localDeviceMac,
               folderPath: cache.rootPath,
               displayName: cache.displayName,
+              parallelWorkers: _resolveRecacheParallelWorkersOverride(),
+              onProgress: handleCacheFileProgress,
             );
+          } else {
+            await _sharedFolderCacheRepository
+                .refreshOwnerFolderSubdirectoryEntries(
+                  cache,
+                  relativeFolderPath: target.relativeFolderPath,
+                  parallelWorkers: _resolveRecacheParallelWorkersOverride(),
+                  onProgress: handleCacheFileProgress,
+                );
           }
           updatedCount += 1;
         } catch (error) {
           failedCount += 1;
-          _log('Failed to re-cache folder ${cache.rootPath}: $error');
+          _log('Failed to re-cache folder ${target.label}: $error');
         }
 
-        final processed = index + 1;
-        _sharedRecacheProgress = processed / totalCaches;
-        final progress = SharedRecacheProgress(
-          processedCaches: processed,
-          totalCaches: totalCaches,
-          currentCacheLabel: cache.displayName,
+        final finalizedCacheFiles = math.max(
+          cacheProcessedFiles,
+          cacheTotalFiles,
         );
-        onProgress?.call(progress);
-        notifyListeners();
-        await _appNotificationService.showSharedRecacheProgressNotification(
-          processedCaches: processed,
-          totalCaches: totalCaches,
-          currentCacheLabel: cache.displayName,
+        processedFilesAcrossCaches += finalizedCacheFiles;
+        if (estimatedTotalFiles < processedFilesAcrossCaches) {
+          estimatedTotalFiles = processedFilesAcrossCaches;
+        }
+        publishProgress(
+          processedCaches: index + 1,
+          processedFiles: processedFilesAcrossCaches,
+          totalFiles: estimatedTotalFiles,
+          currentCacheLabel: target.label,
+          currentRelativePath: '',
+          force: true,
         );
       }
 
       await _loadOwnerCaches();
-      final after = _buildSharedCacheSummary(_ownerSharedCaches);
+      final afterTargets = await _resolveScopedOwnerRecacheTargets(
+        virtualFolderPath: normalizedScopeFolder,
+      );
+      final after = _buildScopedSharedCacheSummary(afterTargets);
       report = SharedRecacheReport(
         before: before,
         after: after,
@@ -1332,9 +1666,11 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
       return report;
     } finally {
+      recacheStopwatch.stop();
       _isAddingShare = false;
       _isSharedRecacheInProgress = false;
       _sharedRecacheProgress = null;
+      _sharedRecacheDetails = null;
       if (!shouldStartCooldown) {
         _sharedRecacheCooldownUntil = null;
       }
@@ -1362,6 +1698,157 @@ class DiscoveryController extends ChangeNotifier {
       selectionCaches: selectionCaches,
       totalFiles: totalFiles,
     );
+  }
+
+  SharedCacheSummary _buildScopedSharedCacheSummary(
+    List<_ScopedOwnerRecacheTarget> targets,
+  ) {
+    var folderCaches = 0;
+    var selectionCaches = 0;
+    var totalFiles = 0;
+    for (final target in targets) {
+      totalFiles += math.max(target.estimatedFileCount, 0);
+      if (target.cache.rootPath.startsWith('selection://')) {
+        selectionCaches += 1;
+      } else {
+        folderCaches += 1;
+      }
+    }
+    return SharedCacheSummary(
+      totalCaches: targets.length,
+      folderCaches: folderCaches,
+      selectionCaches: selectionCaches,
+      totalFiles: totalFiles,
+    );
+  }
+
+  Future<List<_ScopedOwnerRecacheTarget>> _resolveScopedOwnerRecacheTargets({
+    required String virtualFolderPath,
+  }) async {
+    final normalizedFolder = _normalizeVirtualFolderPath(virtualFolderPath);
+    final targets = <_ScopedOwnerRecacheTarget>[];
+    for (final cache in _ownerSharedCaches) {
+      final isSelection = cache.rootPath.startsWith('selection://');
+      if (isSelection) {
+        if (normalizedFolder.isNotEmpty) {
+          continue;
+        }
+        targets.add(
+          _ScopedOwnerRecacheTarget(
+            cache: cache,
+            relativeFolderPath: '',
+            estimatedFileCount: math.max(cache.itemCount, 0),
+          ),
+        );
+        continue;
+      }
+
+      final cacheVirtualRoot = _normalizeVirtualFolderPath(cache.displayName);
+      if (normalizedFolder.isNotEmpty &&
+          normalizedFolder != cacheVirtualRoot &&
+          !normalizedFolder.startsWith('$cacheVirtualRoot/')) {
+        continue;
+      }
+
+      final relativeFolderPath =
+          normalizedFolder.isEmpty || normalizedFolder == cacheVirtualRoot
+          ? ''
+          : normalizedFolder.substring(cacheVirtualRoot.length + 1);
+
+      var estimatedFiles = math.max(cache.itemCount, 0);
+      if (relativeFolderPath.isNotEmpty) {
+        estimatedFiles = await _countFilesInCacheFolder(
+          cacheId: cache.cacheId,
+          relativeFolderPath: relativeFolderPath,
+        );
+      }
+
+      targets.add(
+        _ScopedOwnerRecacheTarget(
+          cache: cache,
+          relativeFolderPath: relativeFolderPath,
+          estimatedFileCount: estimatedFiles,
+        ),
+      );
+    }
+    return targets;
+  }
+
+  Future<int> _countFilesInCacheFolder({
+    required String cacheId,
+    required String relativeFolderPath,
+  }) async {
+    final normalizedFolder = _normalizeVirtualFolderPath(relativeFolderPath);
+    final entries = await _readOwnerIndexEntriesCached(cacheId);
+    if (normalizedFolder.isEmpty) {
+      return entries.length;
+    }
+    var count = 0;
+    for (final entry in entries) {
+      if (_isCacheEntryWithinFolder(entry.relativePath, normalizedFolder)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  bool _isCacheEntryWithinFolder(String relativePath, String folderPath) {
+    final normalizedRelative = _normalizeVirtualFolderPath(relativePath);
+    final normalizedFolder = _normalizeVirtualFolderPath(folderPath);
+    if (normalizedFolder.isEmpty) {
+      return true;
+    }
+    return normalizedRelative == normalizedFolder ||
+        normalizedRelative.startsWith('$normalizedFolder/');
+  }
+
+  double _resolveSharedRecacheProgressValue(SharedRecacheProgress progress) {
+    if (progress.totalFiles > 0) {
+      final value = progress.processedFiles / progress.totalFiles;
+      return value.clamp(0, 1).toDouble();
+    }
+    if (progress.totalCaches <= 0) {
+      return 0;
+    }
+    final value = progress.processedCaches / progress.totalCaches;
+    return value.clamp(0, 1).toDouble();
+  }
+
+  Duration? _estimateRecacheEta({
+    required Duration elapsed,
+    required int processedFiles,
+    required int totalFiles,
+  }) {
+    if (processedFiles <= 0 || totalFiles <= processedFiles) {
+      return null;
+    }
+    final elapsedMs = elapsed.inMilliseconds;
+    if (elapsedMs <= 0) {
+      return null;
+    }
+    final remainingFiles = totalFiles - processedFiles;
+    final etaMs = ((elapsedMs * remainingFiles) / processedFiles).round();
+    if (etaMs <= 0) {
+      return Duration.zero;
+    }
+    return Duration(milliseconds: etaMs);
+  }
+
+  double _estimateSharedFolderScanProgress(int discoveredFiles) {
+    if (discoveredFiles <= 0) {
+      return 0;
+    }
+    final normalized = 1 - math.exp(-(discoveredFiles / 3000));
+    final weighted = normalized * _sharedFolderScanProgressWeight;
+    return weighted.clamp(0, _sharedFolderScanProgressWeight).toDouble();
+  }
+
+  int? _resolveRecacheParallelWorkersOverride() {
+    final configured = _settings.recacheParallelWorkers;
+    if (configured <= 0) {
+      return null;
+    }
+    return configured;
   }
 
   Future<void> addSharedFiles() async {
@@ -1454,6 +1941,7 @@ class DiscoveryController extends ChangeNotifier {
     await _loadOwnerCaches();
     final files = <ShareableLocalFile>[];
     final seenPaths = <String>{};
+    var processed = 0;
 
     for (final cache in _ownerSharedCaches) {
       final entries = await _sharedFolderCacheRepository.readIndexEntries(
@@ -1472,24 +1960,22 @@ class DiscoveryController extends ChangeNotifier {
           continue;
         }
 
-        final file = File(absolutePath);
-        if (!await file.exists()) {
-          continue;
-        }
-        final stat = await file.stat();
-        if (stat.type != FileSystemEntityType.file) {
-          continue;
-        }
-
         files.add(
           ShareableLocalFile(
             cacheId: cache.cacheId,
             cacheDisplayName: cache.displayName,
             relativePath: entry.relativePath,
+            virtualPath: _buildShareVirtualPath(cache: cache, entry: entry),
             absolutePath: absolutePath,
+            sizeBytes: entry.sizeBytes,
+            modifiedAtMs: entry.modifiedAtMs,
             isSelectionCache: cache.rootPath.startsWith('selection://'),
           ),
         );
+        processed += 1;
+        if (processed % 500 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
     }
 
@@ -1512,6 +1998,190 @@ class DiscoveryController extends ChangeNotifier {
       );
     });
     return files;
+  }
+
+  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
+    required String virtualFolderPath,
+  }) async {
+    if (_ownerSharedCaches.isEmpty) {
+      await _loadOwnerCaches();
+    }
+
+    final folder = _normalizeVirtualFolderPath(virtualFolderPath);
+    final foldersByPath = <String, ShareableLocalFolder>{};
+    final files = <ShareableLocalFile>[];
+    final seenFilePaths = <String>{};
+    var processed = 0;
+
+    for (final cache in _ownerSharedCaches) {
+      final isSelection = cache.rootPath.startsWith('selection://');
+      final cacheVirtualRoot = _normalizeVirtualFolderPath(cache.displayName);
+
+      if (folder.isEmpty && !isSelection) {
+        if (cacheVirtualRoot.isNotEmpty) {
+          final key = Platform.isWindows
+              ? cacheVirtualRoot.toLowerCase()
+              : cacheVirtualRoot;
+          foldersByPath.putIfAbsent(
+            key,
+            () => ShareableLocalFolder(
+              name: cache.displayName,
+              virtualPath: cacheVirtualRoot,
+              removableSharedCacheId: cache.cacheId,
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (!isSelection &&
+          folder != cacheVirtualRoot &&
+          !folder.startsWith('$cacheVirtualRoot/')) {
+        continue;
+      }
+      if (isSelection && folder.isNotEmpty) {
+        continue;
+      }
+
+      final subFolder = !isSelection && folder != cacheVirtualRoot
+          ? folder.substring(cacheVirtualRoot.length + 1)
+          : '';
+      final entries = await _readOwnerIndexEntriesCached(cache.cacheId);
+      for (final entry in entries) {
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+
+        final virtualPath = _buildShareVirtualPath(cache: cache, entry: entry);
+        final relativeInsideCache = isSelection
+            ? _normalizeVirtualFolderPath(virtualPath)
+            : _normalizeVirtualFolderPath(entry.relativePath);
+        final rest = _relativeRestForFolder(
+          folder: subFolder,
+          targetPath: relativeInsideCache,
+        );
+        if (rest == null || rest.isEmpty) {
+          continue;
+        }
+
+        final slashIndex = rest.indexOf('/');
+        if (!isSelection && slashIndex != -1) {
+          final folderName = rest.substring(0, slashIndex);
+          final folderPath = folder.isEmpty
+              ? folderName
+              : '$folder/$folderName';
+          final normalizedFolderPath = _normalizeVirtualFolderPath(folderPath);
+          final dedupeKey = Platform.isWindows
+              ? normalizedFolderPath.toLowerCase()
+              : normalizedFolderPath;
+          foldersByPath.putIfAbsent(
+            dedupeKey,
+            () => ShareableLocalFolder(
+              name: folderName,
+              virtualPath: normalizedFolderPath,
+            ),
+          );
+          continue;
+        }
+
+        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
+        final fileKey = Platform.isWindows
+            ? normalizedPath.toLowerCase()
+            : normalizedPath;
+        if (!seenFilePaths.add(fileKey)) {
+          continue;
+        }
+
+        files.add(
+          ShareableLocalFile(
+            cacheId: cache.cacheId,
+            cacheDisplayName: cache.displayName,
+            relativePath: entry.relativePath,
+            virtualPath: virtualPath,
+            absolutePath: absolutePath,
+            sizeBytes: entry.sizeBytes,
+            modifiedAtMs: entry.modifiedAtMs,
+            isSelectionCache: isSelection,
+          ),
+        );
+        processed += 1;
+        if (processed % 500 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    }
+
+    final folders = foldersByPath.values.toList(growable: false)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    files.sort((a, b) {
+      final nameCmp = p
+          .basename(a.virtualPath)
+          .toLowerCase()
+          .compareTo(p.basename(b.virtualPath).toLowerCase());
+      if (nameCmp != 0) {
+        return nameCmp;
+      }
+      return a.virtualPath.toLowerCase().compareTo(b.virtualPath.toLowerCase());
+    });
+
+    return ShareableLocalDirectoryListing(folders: folders, files: files);
+  }
+
+  Future<List<SharedFolderIndexEntry>> _readOwnerIndexEntriesCached(
+    String cacheId,
+  ) async {
+    final cached = _ownerIndexEntriesByCacheId[cacheId];
+    if (cached != null) {
+      return cached;
+    }
+    final entries = await _sharedFolderCacheRepository.readIndexEntries(
+      cacheId,
+    );
+    _ownerIndexEntriesByCacheId[cacheId] = entries;
+    return entries;
+  }
+
+  String _buildShareVirtualPath({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+  }) {
+    final normalizedRelative = _normalizeVirtualFolderPath(entry.relativePath);
+    if (cache.rootPath.startsWith('selection://')) {
+      return p.basename(normalizedRelative);
+    }
+    final cacheRoot = _normalizeVirtualFolderPath(cache.displayName);
+    if (cacheRoot.isEmpty) {
+      return normalizedRelative;
+    }
+    if (normalizedRelative.isEmpty) {
+      return cacheRoot;
+    }
+    return '$cacheRoot/$normalizedRelative';
+  }
+
+  String _normalizeVirtualFolderPath(String value) {
+    return value
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((part) => part.isNotEmpty && part != '.')
+        .join('/');
+  }
+
+  String? _relativeRestForFolder({
+    required String folder,
+    required String targetPath,
+  }) {
+    if (folder.isEmpty) {
+      return targetPath;
+    }
+    if (targetPath == folder) {
+      return '';
+    }
+    if (!targetPath.startsWith('$folder/')) {
+      return null;
+    }
+    return targetPath.substring(folder.length + 1);
   }
 
   Future<void> publishVideoLinkShare({
@@ -3174,6 +3844,7 @@ class DiscoveryController extends ChangeNotifier {
         role: SharedFolderCacheRole.owner,
         ownerMacAddress: _localDeviceMac,
       );
+      _ownerIndexEntriesByCacheId.clear();
       _ownerSharedCaches
         ..clear()
         ..addAll(caches);
@@ -3242,7 +3913,8 @@ class DiscoveryController extends ChangeNotifier {
         'trayOnClose=${_settings.minimizeToTrayOnClose}, '
         'previewMaxSizeGb=${_settings.previewCacheMaxSizeGb}, '
         'previewMaxAgeDays=${_settings.previewCacheMaxAgeDays}, '
-        'clipboardMaxEntries=${_settings.clipboardHistoryMaxEntries}',
+        'clipboardMaxEntries=${_settings.clipboardHistoryMaxEntries}, '
+        'recacheWorkers=${_settings.recacheParallelWorkers}',
       );
       unawaited(_cleanupPreviewCacheBySettings());
       unawaited(_trimClipboardHistoryToSettingsLimit());

@@ -145,10 +145,18 @@ class MainActivity : FlutterActivity() {
                         call.argument<Number>("processedCaches")?.toInt() ?: 0
                     val totalCaches = call.argument<Number>("totalCaches")?.toInt() ?: 0
                     val currentCacheLabel = call.argument<String>("currentCacheLabel") ?: ""
+                    val processedFiles = call.argument<Number>("processedFiles")?.toInt()
+                    val totalFiles = call.argument<Number>("totalFiles")?.toInt()
+                    val etaSeconds = call.argument<Number>("etaSeconds")?.toInt()
+                    val currentFileLabel = call.argument<String>("currentFileLabel")
                     showSharedRecacheProgressNotification(
                         processedCaches = processedCaches,
                         totalCaches = totalCaches,
                         currentCacheLabel = currentCacheLabel,
+                        processedFiles = processedFiles,
+                        totalFiles = totalFiles,
+                        etaSeconds = etaSeconds,
+                        currentFileLabel = currentFileLabel,
                     )
                     result.success(null)
                 }
@@ -487,6 +495,10 @@ class MainActivity : FlutterActivity() {
         processedCaches: Int,
         totalCaches: Int,
         currentCacheLabel: String,
+        processedFiles: Int?,
+        totalFiles: Int?,
+        etaSeconds: Int?,
+        currentFileLabel: String?,
     ) {
         if (!canPostNotifications()) {
             return
@@ -500,21 +512,49 @@ class MainActivity : FlutterActivity() {
         } else {
             ((safeProcessed * 100L) / safeTotal).toInt()
         }
-
-        val label = currentCacheLabel.trim()
-        val statusText = if (indeterminate) {
-            "Preparing re-cache..."
-        } else if (label.isEmpty()) {
-            "Re-cached $safeProcessed/$safeTotal"
+        val safeTotalFiles = totalFiles?.coerceAtLeast(0)
+        val safeProcessedFiles = if (safeTotalFiles == null) {
+            processedFiles?.coerceAtLeast(0)
         } else {
-            "Re-cached $safeProcessed/$safeTotal: $label"
+            (processedFiles ?: 0).coerceAtLeast(0).coerceAtMost(safeTotalFiles)
+        }
+
+        val cacheSummary = if (indeterminate) {
+            "Preparing re-cache..."
+        } else {
+            "Caches $safeProcessed/$safeTotal"
+        }
+        val filesSummary = if (safeTotalFiles != null && safeProcessedFiles != null && safeTotalFiles > 0) {
+            "Files $safeProcessedFiles/$safeTotalFiles"
+        } else {
+            null
+        }
+        val etaSummary = etaSeconds
+            ?.takeIf { it > 0 }
+            ?.let { "ETA ${formatEtaSeconds(it)}" }
+
+        val statusParts = mutableListOf(cacheSummary)
+        if (!filesSummary.isNullOrBlank()) {
+            statusParts.add(filesSummary)
+        }
+        if (!etaSummary.isNullOrBlank()) {
+            statusParts.add(etaSummary)
+        }
+        val currentTarget = currentFileLabel?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: currentCacheLabel.trim().takeIf { it.isNotEmpty() }
+        val statusText = statusParts.joinToString(separator = " • ")
+        val bodyText = if (currentTarget == null) {
+            statusText
+        } else {
+            "$statusText\n$currentTarget"
         }
 
         val notification = NotificationCompat.Builder(this, DOWNLOAD_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setContentTitle("Re-caching shared folders/files")
             .setContentText(statusText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(statusText))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(bodyText))
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setAutoCancel(false)
@@ -526,6 +566,18 @@ class MainActivity : FlutterActivity() {
             SHARED_RECACHE_NOTIFICATION_ID,
             notification,
         )
+    }
+
+    private fun formatEtaSeconds(seconds: Int): String {
+        val safeSeconds = seconds.coerceAtLeast(0).coerceAtMost(359999)
+        val hours = safeSeconds / 3600
+        val minutes = (safeSeconds % 3600) / 60
+        val remainingSeconds = safeSeconds % 60
+        return if (hours > 0) {
+            "%02d:%02d:%02d".format(hours, minutes, remainingSeconds)
+        } else {
+            "%02d:%02d".format(minutes, remainingSeconds)
+        }
     }
 
     private fun showSharedRecacheCompletedNotification(

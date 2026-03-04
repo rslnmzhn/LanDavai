@@ -537,6 +537,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               onClipboardHistoryMaxEntriesChanged: (value) {
                 unawaited(_controller.setClipboardHistoryMaxEntries(value));
               },
+              onRecacheParallelWorkersChanged: (value) {
+                unawaited(_controller.setRecacheParallelWorkers(value));
+              },
             );
           },
         );
@@ -591,7 +594,14 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
   }
 
-  Future<SharedRecacheActionResult> _handleSharedRecacheFromFiles() async {
+  Future<SharedRecacheActionResult> _handleSharedRecacheFromFiles(
+    String virtualFolderPath,
+  ) async {
+    final normalizedFolder = virtualFolderPath
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((part) => part.isNotEmpty && part != '.')
+        .join('/');
     if (_controller.isSharedRecacheInProgress) {
       return SharedRecacheActionResult.refreshedOnly;
     }
@@ -599,25 +609,36 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       return SharedRecacheActionResult.refreshedOnly;
     }
 
-    final before = await _controller.summarizeOwnerSharedContent();
+    final before = await _controller.summarizeOwnerSharedContent(
+      virtualFolderPath: normalizedFolder,
+    );
     if (!mounted) {
       return SharedRecacheActionResult.cancelled;
     }
     if (before.totalCaches == 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No shared folders/files to re-cache yet.'),
+        SnackBar(
+          content: Text(
+            normalizedFolder.isEmpty
+                ? 'No shared folders/files to re-cache yet.'
+                : 'Selected folder has no shared files to re-cache.',
+          ),
         ),
       );
       return SharedRecacheActionResult.refreshedOnly;
     }
 
-    final agreed = await _confirmSharedRecacheAgreement(before);
+    final agreed = await _confirmSharedRecacheAgreement(
+      before,
+      virtualFolderPath: normalizedFolder,
+    );
     if (!agreed) {
       return SharedRecacheActionResult.cancelled;
     }
 
-    final report = await _controller.recacheSharedContent();
+    final report = await _controller.recacheSharedContent(
+      virtualFolderPath: normalizedFolder,
+    );
     if (!mounted) {
       return SharedRecacheActionResult.started;
     }
@@ -635,7 +656,35 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     return SharedRecacheActionResult.started;
   }
 
-  Future<bool> _confirmSharedRecacheAgreement(SharedCacheSummary before) async {
+  Future<bool> _handleRemoveSharedCacheFromFiles(
+    String cacheId,
+    String cacheLabel,
+  ) async {
+    final removed = await _controller.removeSharedCacheById(cacheId);
+    if (!mounted) {
+      return removed;
+    }
+
+    if (removed) {
+      await _reloadShareableVideoFiles();
+      if (!mounted) {
+        return removed;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed from sharing: $cacheLabel')),
+      );
+    } else if (_controller.errorMessage != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
+    }
+    return removed;
+  }
+
+  Future<bool> _confirmSharedRecacheAgreement(
+    SharedCacheSummary before, {
+    required String virtualFolderPath,
+  }) async {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
@@ -644,12 +693,14 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         final selectionText = before.selectionCaches > 0
             ? '\nSelection caches: ${before.selectionCaches}'
             : '';
+        final scopeText = virtualFolderPath.isEmpty
+            ? 'Re-cache will rebuild indexes for all shared folders/files.'
+            : 'Re-cache will rebuild indexes only in: $virtualFolderPath';
         return AlertDialog(
           title: const Text('Start re-cache?'),
           content: Text(
             'Currently cached: ${before.folderCaches} $folderLabel, '
-            '${before.totalFiles} $fileLabel.$selectionText\n\n'
-            'Re-cache will rebuild indexes for all shared folders/files.',
+            '${before.totalFiles} $fileLabel.$selectionText\n\n$scopeText',
           ),
           actions: [
             TextButton(
@@ -919,7 +970,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       }
     }
     await _controller.reloadOwnerSharedCaches();
-    final sharedFiles = await _controller.listShareableLocalFiles();
+    final sharedSummary = await _controller.summarizeOwnerSharedContent();
 
     final roots = <FileExplorerRoot>[];
     final seenPaths = <String>{};
@@ -930,14 +981,21 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       bool isSharedFolder = false,
       List<FileExplorerVirtualFile> virtualFiles =
           const <FileExplorerVirtualFile>[],
+      Future<List<FileExplorerVirtualFile>> Function()? virtualFilesLoader,
+      Future<FileExplorerVirtualDirectory> Function(String folderPath)?
+      virtualDirectoryLoader,
     }) {
-      if (virtualFiles.isNotEmpty) {
+      if (virtualFiles.isNotEmpty ||
+          virtualFilesLoader != null ||
+          virtualDirectoryLoader != null) {
         roots.add(
           FileExplorerRoot(
             label: label,
             path: path,
             isSharedFolder: isSharedFolder,
             virtualFiles: virtualFiles,
+            virtualFilesLoader: virtualFilesLoader,
+            virtualDirectoryLoader: virtualDirectoryLoader,
           ),
         );
         return;
@@ -956,6 +1014,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           path: path,
           isSharedFolder: isSharedFolder,
           virtualFiles: virtualFiles,
+          virtualFilesLoader: virtualFilesLoader,
+          virtualDirectoryLoader: virtualDirectoryLoader,
         ),
       );
     }
@@ -964,22 +1024,43 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       addRoot(label: 'Landa Downloads', path: publicDownloadsDirectory.path);
     }
     addRoot(label: 'Incoming', path: receiveDirectory.path);
-    if (sharedFiles.isNotEmpty) {
+    if (sharedSummary.totalFiles > 0) {
       addRoot(
         label: 'My files',
         path: 'virtual://my-files',
         isSharedFolder: true,
-        virtualFiles: sharedFiles
-            .map(
-              (file) => FileExplorerVirtualFile(
-                path: file.absolutePath,
-                subtitle: '${file.cacheDisplayName} / ${file.relativePath}',
-                virtualPath: file.isSelectionCache
-                    ? p.basename(file.relativePath.replaceAll('\\', '/'))
-                    : '${file.cacheDisplayName}/${file.relativePath.replaceAll('\\', '/')}',
-              ),
-            )
-            .toList(growable: false),
+        virtualDirectoryLoader: (folderPath) async {
+          final directory = await _controller.listShareableLocalDirectory(
+            virtualFolderPath: folderPath,
+          );
+          return FileExplorerVirtualDirectory(
+            folders: directory.folders
+                .map(
+                  (folder) => FileExplorerVirtualFolder(
+                    name: folder.name,
+                    folderPath: folder.virtualPath,
+                    removableSharedCacheId: folder.removableSharedCacheId,
+                  ),
+                )
+                .toList(growable: false),
+            files: directory.files
+                .map(
+                  (file) => FileExplorerVirtualFile(
+                    path: file.absolutePath,
+                    subtitle: '${file.cacheDisplayName} / ${file.relativePath}',
+                    virtualPath: file.virtualPath,
+                    sizeBytes: file.sizeBytes,
+                    modifiedAt: DateTime.fromMillisecondsSinceEpoch(
+                      file.modifiedAtMs,
+                    ),
+                    changedAt: DateTime.fromMillisecondsSinceEpoch(
+                      file.modifiedAtMs,
+                    ),
+                  ),
+                )
+                .toList(growable: false),
+          );
+        },
       );
     }
 
@@ -998,10 +1079,24 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         builder: (_) => FileExplorerPage(
           roots: roots,
           onRecacheSharedFolders: _handleSharedRecacheFromFiles,
+          onRemoveSharedCache: _handleRemoveSharedCacheFromFiles,
           recacheStateListenable: _controller,
           isSharedRecacheInProgress: () =>
               _controller.isSharedRecacheInProgress,
           sharedRecacheProgress: () => _controller.sharedRecacheProgress,
+          sharedRecacheDetails: () {
+            final details = _controller.sharedRecacheDetails;
+            if (details == null) {
+              return null;
+            }
+            return SharedRecacheProgressDetails(
+              processedFiles: details.processedFiles,
+              totalFiles: details.totalFiles,
+              currentCacheLabel: details.currentCacheLabel,
+              currentRelativePath: details.currentRelativePath,
+              eta: details.eta,
+            );
+          },
         ),
       ),
     );
@@ -2941,6 +3036,7 @@ class _ActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final indexingProgress = controller.sharedFolderIndexingProgress;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
@@ -2960,11 +3056,21 @@ class _ActionBar extends StatelessWidget {
             ),
             const SizedBox(width: AppSpacing.xs),
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: controller.isAddingShare ? null : onAdd,
-                icon: const Icon(Icons.add),
-                label: const Text('Общий доступ'),
-              ),
+              child: controller.isSharedRecacheInProgress
+                  ? _SharedRecacheActionButton(
+                      progress: controller.sharedRecacheProgress,
+                      eta: controller.sharedRecacheDetails?.eta,
+                    )
+                  : indexingProgress != null
+                  ? _SharedRecacheActionButton(
+                      progress: controller.sharedFolderIndexingProgressValue,
+                      eta: indexingProgress.eta,
+                    )
+                  : OutlinedButton.icon(
+                      onPressed: controller.isAddingShare ? null : onAdd,
+                      icon: const Icon(Icons.add),
+                      label: const Text('Общий доступ'),
+                    ),
             ),
             const SizedBox(width: AppSpacing.xs),
             Expanded(
@@ -2978,5 +3084,85 @@ class _ActionBar extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _SharedRecacheActionButton extends StatelessWidget {
+  const _SharedRecacheActionButton({required this.progress, required this.eta});
+
+  final double? progress;
+  final Duration? eta;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedProgress = (progress ?? 0).clamp(0.0, 1.0).toDouble();
+    final percentText = '${(normalizedProgress * 100).round()}%';
+    final etaText = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta!)}';
+    final platform = Theme.of(context).platform;
+    final buttonHeight =
+        platform == TargetPlatform.windows ||
+            platform == TargetPlatform.linux ||
+            platform == TargetPlatform.macOS
+        ? 40.0
+        : 44.0;
+
+    return SizedBox(
+      height: buttonHeight,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: AppColors.mutedBorder),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  widthFactor: normalizedProgress,
+                  child: Container(
+                    color: AppColors.brandPrimary.withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+                child: Row(
+                  children: [
+                    Text(
+                      percentText,
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      etaText,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _formatEta(Duration eta) {
+    final totalSeconds = eta.inSeconds.clamp(0, 359999);
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    }
+    return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 }
