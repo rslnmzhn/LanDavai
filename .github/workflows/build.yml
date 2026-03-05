@@ -69,7 +69,8 @@ jobs:
           shopt -s nullglob
           manifests=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/AndroidManifest.xml)
           gradle_files=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/build.gradle)
-          if [ "${#manifests[@]}" -eq 0 ] && [ "${#gradle_files[@]}" -eq 0 ]; then
+          java_files=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/java/com/alexmercerind/flutter_media_metadata/FlutterMediaMetadataPlugin.java)
+          if [ "${#manifests[@]}" -eq 0 ] && [ "${#gradle_files[@]}" -eq 0 ] && [ "${#java_files[@]}" -eq 0 ]; then
             echo "flutter_media_metadata plugin files not found in pub cache."
             exit 0
           fi
@@ -82,6 +83,11 @@ jobs:
           for gradle_file in "${gradle_files[@]}"; do
             sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' "$gradle_file"
             echo "Patched compileSdkVersion in: $gradle_file"
+          done
+
+          for java_file in "${java_files[@]}"; do
+            sed -i -E 's/retriever\.release\(\);/try { retriever.release(); } catch (java.io.IOException ignored) {}/g' "$java_file"
+            echo "Patched release() exception handling in: $java_file"
           done
 
       - name: Build APK (release)

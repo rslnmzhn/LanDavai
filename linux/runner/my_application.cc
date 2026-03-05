@@ -42,6 +42,7 @@ static gboolean my_application_has_tray_support(MyApplication* self) {
 #endif
 }
 
+#ifdef HAVE_APPINDICATOR
 static const gchar* my_application_detect_display_backend() {
   GdkDisplay* display = gdk_display_get_default();
   if (display == nullptr) {
@@ -80,6 +81,7 @@ static void my_application_log_tray_environment(MyApplication* self) {
         "\"AppIndicator and KStatusNotifierItem Support\" extension.");
   }
 }
+#endif
 
 static void my_application_show_window(MyApplication* self) {
   if (self->window == nullptr) {
