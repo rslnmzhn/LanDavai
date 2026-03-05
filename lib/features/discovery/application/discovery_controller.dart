@@ -3460,7 +3460,12 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onShareQuery(ShareQueryEvent event) {
-    unawaited(_handleShareQuery(event));
+    unawaited(
+      _handleShareQuery(event).catchError((Object error, StackTrace stack) {
+        _log('Unhandled share query error from ${event.requesterIp}: $error');
+        _log(stack.toString());
+      }),
+    );
   }
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {

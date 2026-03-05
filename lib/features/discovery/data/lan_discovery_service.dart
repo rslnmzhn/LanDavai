@@ -540,6 +540,11 @@ class LanDiscoveryService {
       Datagram? datagram = _socket?.receive();
       while (datagram != null) {
         final senderIp = datagram.address.address;
+        if (!_isUsablePacketSenderIp(senderIp)) {
+          _log('Ignoring packet from invalid sender IP: $senderIp');
+          datagram = _socket?.receive();
+          continue;
+        }
         if (_localIps.contains(senderIp)) {
           datagram = _socket?.receive();
           continue;
@@ -568,10 +573,11 @@ class LanDiscoveryService {
             _log('Discover request from $senderIp');
             final responsePayload = _encodeDiscoveryPayload(deviceName);
             final response = '$_responsePrefix|$_instanceId|$responsePayload';
-            _socket?.send(
-              utf8.encode(response),
-              datagram.address,
-              datagram.port,
+            _safeSocketSend(
+              bytes: utf8.encode(response),
+              address: datagram.address,
+              port: datagram.port,
+              context: 'discover-response',
             );
             _log('Discover response sent to $senderIp');
           } else if (discoveryPacket.prefix == _responsePrefix) {
@@ -1145,12 +1151,19 @@ class LanDiscoveryService {
     required Map<String, Object?> payload,
     required String targetIp,
   }) async {
+    final targetAddress = _resolveUnicastTargetIp(targetIp);
+    if (targetAddress == null) {
+      _log('Skipping $prefix packet: invalid target IP "$targetIp".');
+      return;
+    }
+
     final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
     final message = '$prefix|$encodedPayload';
-    _socket?.send(
-      utf8.encode(message),
-      InternetAddress(targetIp),
-      discoveryPort,
+    _safeSocketSend(
+      bytes: utf8.encode(message),
+      address: targetAddress,
+      port: discoveryPort,
+      context: prefix,
     );
   }
 
@@ -1160,11 +1173,21 @@ class LanDiscoveryService {
     final bytes = utf8.encode(request);
 
     _log('Broadcasting discover packet');
-    _socket?.send(bytes, InternetAddress('255.255.255.255'), discoveryPort);
+    _safeSocketSend(
+      bytes: bytes,
+      address: InternetAddress('255.255.255.255'),
+      port: discoveryPort,
+      context: 'discover-broadcast',
+    );
     for (final localIp in _localIps) {
       final broadcast = _toBroadcastAddress(localIp);
       if (broadcast != null) {
-        _socket?.send(bytes, broadcast, discoveryPort);
+        _safeSocketSend(
+          bytes: bytes,
+          address: broadcast,
+          port: discoveryPort,
+          context: 'discover-subnet',
+        );
         _log('Discover packet sent to ${broadcast.address}');
       }
     }
@@ -1174,8 +1197,57 @@ class LanDiscoveryService {
       if (address == null || address.type != InternetAddressType.IPv4) {
         continue;
       }
-      _socket?.send(bytes, address, peer.port);
+      _safeSocketSend(
+        bytes: bytes,
+        address: address,
+        port: peer.port,
+        context: 'discover-friend-endpoint',
+      );
       _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
+    }
+  }
+
+  InternetAddress? _resolveUnicastTargetIp(String rawTargetIp) {
+    final normalized = rawTargetIp.trim();
+    final parsed = InternetAddress.tryParse(normalized);
+    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
+      return null;
+    }
+    if (!_isUsablePacketSenderIp(parsed.address)) {
+      return null;
+    }
+    return parsed;
+  }
+
+  bool _isUsablePacketSenderIp(String ip) {
+    final parsed = InternetAddress.tryParse(ip);
+    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
+      return false;
+    }
+    if (parsed.address == '0.0.0.0' ||
+        parsed.isLoopback ||
+        parsed.isMulticast) {
+      return false;
+    }
+    return parsed.address != '255.255.255.255';
+  }
+
+  void _safeSocketSend({
+    required List<int> bytes,
+    required InternetAddress address,
+    required int port,
+    required String context,
+  }) {
+    final socket = _socket;
+    if (socket == null) {
+      return;
+    }
+    try {
+      socket.send(bytes, address, port);
+    } on SocketException catch (error) {
+      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
+    } catch (error) {
+      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
     }
   }
 
