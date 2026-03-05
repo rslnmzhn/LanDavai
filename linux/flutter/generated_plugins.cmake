@@ -3,7 +3,6 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  flutter_media_metadata
   irondash_engine_context
   media_kit_libs_linux
   media_kit_video
