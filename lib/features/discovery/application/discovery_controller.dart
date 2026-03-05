@@ -3470,6 +3470,16 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
     try {
+      final requesterAddress = InternetAddress.tryParse(event.requesterIp);
+      if (requesterAddress == null ||
+          requesterAddress.type != InternetAddressType.IPv4 ||
+          requesterAddress.address == '0.0.0.0') {
+        _log(
+          'Ignoring share query with invalid requester IP: ${event.requesterIp}',
+        );
+        return;
+      }
+
       final removedCacheIds = <String>[];
       final canPruneUnavailableCaches =
           !Platform.isAndroid || await _hasAndroidSharedStorageAccess();

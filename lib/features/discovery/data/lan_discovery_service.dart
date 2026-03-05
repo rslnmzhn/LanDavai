@@ -448,6 +448,10 @@ class ThumbnailPacketEvent {
 
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
+  static const int _maxUdpPacketBytes = 60 * 1024;
+  static const int _maxShareCatalogEntriesPerPacket = 64;
+  static const int _maxShareCatalogFilesPerPacket = 240;
+  static const int _maxShareCatalogFilesPerEntry = 80;
   static const String _discoverPrefix = 'LANDA_DISCOVER_V1';
   static const String _responsePrefix = 'LANDA_HERE_V1';
   static const String _transferRequestPrefix = 'LANDA_TRANSFER_REQUEST_V1';
@@ -1008,12 +1012,31 @@ class LanDiscoveryService {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
+    final fittedEntries = _fitShareCatalogEntries(entries);
+    final originalFiles = entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.files.length,
+    );
+    final fittedFiles = fittedEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.files.length,
+    );
+    if (fittedEntries.length < entries.length || fittedFiles < originalFiles) {
+      _log(
+        'Share catalog trimmed for UDP: '
+        'entries=${fittedEntries.length}/${entries.length}, '
+        'files=$fittedFiles/$originalFiles',
+      );
+    }
+
     final payload = <String, Object?>{
       'instanceId': _instanceId,
       'requestId': requestId,
       'ownerName': ownerName,
       'ownerMacAddress': ownerMacAddress,
-      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'entries': fittedEntries
+          .map((entry) => entry.toJson())
+          .toList(growable: false),
       'removedCacheIds': removedCacheIds,
       'createdAtMs': DateTime.now().millisecondsSinceEpoch,
     };
@@ -1146,6 +1169,42 @@ class LanDiscoveryService {
     );
   }
 
+  List<SharedCatalogEntryItem> _fitShareCatalogEntries(
+    List<SharedCatalogEntryItem> entries,
+  ) {
+    if (entries.isEmpty) {
+      return const <SharedCatalogEntryItem>[];
+    }
+
+    final limited = <SharedCatalogEntryItem>[];
+    var remainingFilesBudget = _maxShareCatalogFilesPerPacket;
+    final entryLimit = min(entries.length, _maxShareCatalogEntriesPerPacket);
+
+    for (var i = 0; i < entryLimit; i += 1) {
+      final entry = entries[i];
+      final perEntryBudget = min(
+        _maxShareCatalogFilesPerEntry,
+        max(0, remainingFilesBudget),
+      );
+      final keepFilesCount = min(entry.files.length, perEntryBudget);
+      final keptFiles = keepFilesCount == entry.files.length
+          ? entry.files
+          : entry.files.take(keepFilesCount).toList(growable: false);
+      remainingFilesBudget -= keepFilesCount;
+      limited.add(
+        SharedCatalogEntryItem(
+          cacheId: entry.cacheId,
+          displayName: entry.displayName,
+          itemCount: entry.itemCount,
+          totalBytes: entry.totalBytes,
+          files: keptFiles,
+        ),
+      );
+    }
+
+    return limited;
+  }
+
   Future<void> _sendEncodedPacket({
     required String prefix,
     required Map<String, Object?> payload,
@@ -1159,8 +1218,16 @@ class LanDiscoveryService {
 
     final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
     final message = '$prefix|$encodedPayload';
+    final messageBytes = utf8.encode(message);
+    if (messageBytes.length > _maxUdpPacketBytes) {
+      _log(
+        'Skipping $prefix packet: payload ${messageBytes.length}B exceeds '
+        'UDP safe limit ${_maxUdpPacketBytes}B.',
+      );
+      return;
+    }
     _safeSocketSend(
-      bytes: utf8.encode(message),
+      bytes: messageBytes,
       address: targetAddress,
       port: discoveryPort,
       context: prefix,
@@ -1240,6 +1307,17 @@ class LanDiscoveryService {
   }) {
     final socket = _socket;
     if (socket == null) {
+      return;
+    }
+    if (bytes.isEmpty) {
+      return;
+    }
+    if (address.type != InternetAddressType.IPv4) {
+      _log('Skipping UDP send ($context): non-IPv4 target ${address.address}.');
+      return;
+    }
+    if (address.address == '0.0.0.0') {
+      _log('Skipping UDP send ($context): invalid target 0.0.0.0.');
       return;
     }
     try {
