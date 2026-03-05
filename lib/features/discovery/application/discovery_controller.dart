@@ -604,6 +604,7 @@ class DiscoveryController extends ChangeNotifier {
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
       _syncInternetPeers();
+      final discoveryPreferredSourceIp = Platform.isAndroid ? null : _localIp;
       await _lanDiscoveryService.start(
         deviceName: _localName,
         localPeerId: _localPeerId,
@@ -619,7 +620,7 @@ class DiscoveryController extends ChangeNotifier {
         onThumbnailPacket: _onThumbnailPacket,
         onClipboardQuery: _onClipboardQuery,
         onClipboardCatalog: _onClipboardCatalog,
-        preferredSourceIp: _localIp,
+        preferredSourceIp: discoveryPreferredSourceIp,
       );
 
       await _refresh(isManual: false);
@@ -2556,8 +2557,9 @@ class DiscoveryController extends ChangeNotifier {
 
     try {
       _log('${isManual ? "Manual" : "Auto"} refresh scan started');
+      final scanPreferredSourceIp = Platform.isAndroid ? null : _localIp;
       final hosts = await _networkHostScanner.scanActiveHosts(
-        preferredSourceIp: _localIp,
+        preferredSourceIp: scanPreferredSourceIp,
       );
       final now = DateTime.now();
       _log(

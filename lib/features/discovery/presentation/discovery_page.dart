@@ -77,7 +77,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
-      networkHostScanner: NetworkHostScanner(),
+      networkHostScanner: NetworkHostScanner(
+        allowTcpFallback: Platform.isAndroid,
+      ),
     );
     _controller.addListener(_handleInfoMessages);
     unawaited(_initializeController());

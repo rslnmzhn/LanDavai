@@ -470,7 +470,6 @@ class LanDiscoveryService {
   Timer? _beaconTimer;
   Set<String> _localIps = <String>{};
   bool _started = false;
-  String? _preferredSourceIp;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
   final String _operatingSystem = Platform.operatingSystem;
@@ -519,7 +518,6 @@ class LanDiscoveryService {
     _started = true;
     _localPeerId = localPeerId.trim();
 
-    _preferredSourceIp = preferredSourceIp;
     _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
     _log('Starting UDP discovery on $discoveryPort. localIps=$_localIps');
     await _acquireAndroidMulticastLock();
@@ -547,8 +545,11 @@ class LanDiscoveryService {
           continue;
         }
         final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
-        if (_preferredSourceIp != null &&
-            !_isSame24Subnet(senderIp, _preferredSourceIp!) &&
+        final isSenderInLocalSubnet = _localIps.any(
+          (localIp) => _isSame24Subnet(senderIp, localIp),
+        );
+        if (_localIps.isNotEmpty &&
+            !isSenderInLocalSubnet &&
             !isAllowedInternetSender) {
           _log('Ignoring packet from foreign subnet: $senderIp');
           datagram = _socket?.receive();
@@ -1766,29 +1767,36 @@ class LanDiscoveryService {
   }
 
   Future<Set<String>> _loadLocalIps({String? preferredSourceIp}) async {
-    if (preferredSourceIp != null && _isValidIpv4(preferredSourceIp)) {
-      _log('Using preferred source IP for UDP discovery: $preferredSourceIp');
-      return <String>{preferredSourceIp};
-    }
-
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-      includeLinkLocal: false,
-    );
     final ips = <String>{};
     final fallbackIps = <String>{};
-    for (final interface in interfaces) {
-      final lowerName = interface.name.toLowerCase();
-      final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
-      for (final address in interface.addresses) {
-        if (isVirtual) {
-          fallbackIps.add(address.address);
-          continue;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      for (final interface in interfaces) {
+        final lowerName = interface.name.toLowerCase();
+        final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
+        for (final address in interface.addresses) {
+          if (isVirtual) {
+            fallbackIps.add(address.address);
+            continue;
+          }
+          ips.add(address.address);
         }
-        ips.add(address.address);
       }
+    } catch (error) {
+      _log('Failed to enumerate local interfaces for UDP discovery: $error');
     }
+
+    final preferredIp = preferredSourceIp?.trim();
+    if (preferredIp != null && _isValidIpv4(preferredIp)) {
+      ips.add(preferredIp);
+      fallbackIps.add(preferredIp);
+      _log('Preferred source IP candidate for UDP discovery: $preferredIp');
+    }
+
     return ips.isNotEmpty ? ips : fallbackIps;
   }
 

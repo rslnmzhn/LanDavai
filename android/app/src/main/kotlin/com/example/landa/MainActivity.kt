@@ -32,7 +32,7 @@ class MainActivity : FlutterActivity() {
         private const val DOWNLOAD_CHANNEL_ID = "landa_downloads"
         private const val DOWNLOAD_CHANNEL_NAME = "Landa downloads"
         private const val DOWNLOAD_CHANNEL_DESCRIPTION = "File transfer progress and completion"
-        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1401
+        private const val RUNTIME_PERMISSION_REQUEST_CODE = 1401
         private const val SHARED_RECACHE_NOTIFICATION_ID = 91021
     }
 
@@ -41,7 +41,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureDownloadNotificationChannel()
-        requestNotificationPermissionIfNeeded()
+        requestRuntimePermissionsIfNeeded()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -284,18 +284,38 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+    private fun requestRuntimePermissionsIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return
         }
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
+
+        val missingPermissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.POST_NOTIFICATIONS
+            }
+            if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.NEARBY_WIFI_DEVICES
+            }
+        } else {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.ACCESS_FINE_LOCATION
+            }
+        }
+
+        if (missingPermissions.isEmpty()) {
             return
         }
+
         requestPermissions(
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            NOTIFICATION_PERMISSION_REQUEST_CODE,
+            missingPermissions.toTypedArray(),
+            RUNTIME_PERMISSION_REQUEST_CODE,
         )
     }
 
