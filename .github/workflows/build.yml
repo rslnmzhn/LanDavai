@@ -62,19 +62,26 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Patch flutter_media_metadata Android manifest
+      - name: Patch flutter_media_metadata Android plugin
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           manifests=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/AndroidManifest.xml)
-          if [ "${#manifests[@]}" -eq 0 ]; then
-            echo "flutter_media_metadata manifest not found in pub cache."
+          gradle_files=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/build.gradle)
+          if [ "${#manifests[@]}" -eq 0 ] && [ "${#gradle_files[@]}" -eq 0 ]; then
+            echo "flutter_media_metadata plugin files not found in pub cache."
             exit 0
           fi
+
           for manifest in "${manifests[@]}"; do
             sed -i -E 's/[[:space:]]package=\"[^\"]*\"//g' "$manifest"
             echo "Patched: $manifest"
+          done
+
+          for gradle_file in "${gradle_files[@]}"; do
+            sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' "$gradle_file"
+            echo "Patched compileSdkVersion in: $gradle_file"
           done
 
       - name: Build APK (release)

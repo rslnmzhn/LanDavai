@@ -383,8 +383,8 @@ static void my_application_startup(GApplication* application) {
 
 // Implements GApplication::shutdown.
 static void my_application_shutdown(GApplication* application) {
-  MyApplication* self = MY_APPLICATION(application);
 #ifdef HAVE_APPINDICATOR
+  MyApplication* self = MY_APPLICATION(application);
   if (self->tray_indicator != nullptr) {
     app_indicator_set_status(self->tray_indicator, APP_INDICATOR_STATUS_PASSIVE);
   }
