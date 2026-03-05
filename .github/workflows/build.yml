@@ -62,6 +62,21 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
+      - name: Patch flutter_media_metadata Android manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          manifests=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/AndroidManifest.xml)
+          if [ "${#manifests[@]}" -eq 0 ]; then
+            echo "flutter_media_metadata manifest not found in pub cache."
+            exit 0
+          fi
+          for manifest in "${manifests[@]}"; do
+            sed -i -E 's/[[:space:]]package=\"[^\"]*\"//g' "$manifest"
+            echo "Patched: $manifest"
+          done
+
       - name: Build APK (release)
         run: flutter build apk --release
 
@@ -105,7 +120,7 @@ jobs:
         run: flutter pub get
 
       - name: Build Linux (release)
-        run: flutter build linux --release
+        run: CXXFLAGS="-Wno-error=unused-but-set-variable" flutter build linux --release
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
