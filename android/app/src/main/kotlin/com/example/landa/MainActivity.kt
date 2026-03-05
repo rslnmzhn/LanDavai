@@ -38,6 +38,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var multicastLock: WifiManager.MulticastLock? = null
+    private val terminalDownloadNotificationIds = mutableSetOf<Int>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -441,6 +442,12 @@ class MainActivity : FlutterActivity() {
         } else {
             ((boundedReceived.coerceAtMost(boundedTotal) * 100L) / boundedTotal).toInt()
         }
+        if (!indeterminate && boundedReceived <= 0L) {
+            terminalDownloadNotificationIds.remove(notificationId)
+        }
+        if (terminalDownloadNotificationIds.contains(notificationId)) {
+            return
+        }
         val text = if (indeterminate) {
             "Preparing transfer..."
         } else {
@@ -471,6 +478,8 @@ class MainActivity : FlutterActivity() {
         }
 
         val notificationId = notificationIdForRequest(requestId)
+        terminalDownloadNotificationIds.add(notificationId)
+        NotificationManagerCompat.from(this).cancel(notificationId)
         val targetIntent = buildOpenTargetIntent(savedPaths, directoryPath)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -480,7 +489,7 @@ class MainActivity : FlutterActivity() {
         )
 
         val text = if (savedPaths.size <= 1) {
-            "Tap to open downloaded file"
+            "Tap to open download folder"
         } else {
             "Tap to open download folder"
         }
@@ -493,6 +502,7 @@ class MainActivity : FlutterActivity() {
             .setOngoing(false)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(pendingIntent)
+            .setProgress(0, 0, false)
             .build()
 
         NotificationManagerCompat.from(this).notify(notificationId, notification)
@@ -507,6 +517,8 @@ class MainActivity : FlutterActivity() {
         }
 
         val notificationId = notificationIdForRequest(requestId)
+        terminalDownloadNotificationIds.add(notificationId)
+        NotificationManagerCompat.from(this).cancel(notificationId)
         val fallbackIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -715,11 +727,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun buildOpenTargetIntent(savedPaths: List<String>, directoryPath: String?): Intent {
-        val intent = if (savedPaths.size == 1) {
-            buildOpenFileIntent(savedPaths.first())
-        } else {
-            buildOpenDirectoryIntent(directoryPath)
+        val preferredDirectory = when {
+            savedPaths.isNotEmpty() -> File(savedPaths.first()).parent
+            !directoryPath.isNullOrBlank() -> directoryPath
+            else -> null
         }
+        val intent = buildOpenDirectoryIntent(preferredDirectory)
 
         if (intent.resolveActivity(packageManager) != null) {
             return intent
@@ -746,7 +759,16 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun buildOpenDirectoryIntent(directoryPath: String?): Intent {
-        val directory = directoryPath?.let(::File)
+        val normalizedDirectoryPath = directoryPath?.trim()?.takeIf { it.isNotEmpty() }
+        val downloadsDocumentIntent = normalizedDirectoryPath
+            ?.let { buildDownloadsDocumentIntent(it) }
+        if (downloadsDocumentIntent != null &&
+            downloadsDocumentIntent.resolveActivity(packageManager) != null
+        ) {
+            return downloadsDocumentIntent
+        }
+
+        val directory = normalizedDirectoryPath?.let(::File)
         if (directory != null && directory.exists()) {
             val uri = fileUri(directory)
             val folderIntent = Intent(Intent.ACTION_VIEW).apply {
@@ -761,6 +783,39 @@ class MainActivity : FlutterActivity() {
 
         return Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        }
+    }
+
+    private fun buildDownloadsDocumentIntent(directoryPath: String): Intent? {
+        val downloadsRoot = Environment
+            .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            ?.absolutePath
+            ?.replace('\\', '/')
+            ?.trimEnd('/')
+            ?: return null
+        val normalizedTarget = directoryPath
+            .replace('\\', '/')
+            .trimEnd('/')
+        if (!normalizedTarget.startsWith(downloadsRoot)) {
+            return null
+        }
+
+        val relative = normalizedTarget
+            .removePrefix(downloadsRoot)
+            .trimStart('/')
+        val documentId = if (relative.isEmpty()) {
+            "primary:Download"
+        } else {
+            "primary:Download/$relative"
+        }
+        val uri = DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            documentId,
+        )
+        return Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 
