@@ -420,13 +420,69 @@ class FileTransferService {
     final raw = input.replaceAll('\\', '/');
     final parts = raw
         .split('/')
-        .map((part) => part.trim())
+        .map((part) => _sanitizeRelativePathPart(part.trim()))
         .where((part) => part.isNotEmpty && part != '.' && part != '..')
         .toList(growable: false);
     if (parts.isEmpty) {
       return 'file.bin';
     }
     return p.joinAll(parts);
+  }
+
+  String _sanitizeRelativePathPart(String input) {
+    if (input.isEmpty) {
+      return '';
+    }
+
+    // Remove control chars and separators that may be accepted on Unix
+    // but are invalid file name chars on Windows.
+    var value = input
+        .replaceAll(RegExp(r'[\x00-\x1F]'), '')
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+
+    if (Platform.isWindows) {
+      value = value.trimRight();
+      value = value.replaceFirst(RegExp(r'[. ]+$'), '');
+      if (value.isEmpty) {
+        return '_';
+      }
+
+      final reserved = <String>{
+        'con',
+        'prn',
+        'aux',
+        'nul',
+        'com1',
+        'com2',
+        'com3',
+        'com4',
+        'com5',
+        'com6',
+        'com7',
+        'com8',
+        'com9',
+        'lpt1',
+        'lpt2',
+        'lpt3',
+        'lpt4',
+        'lpt5',
+        'lpt6',
+        'lpt7',
+        'lpt8',
+        'lpt9',
+      };
+      final base = value.split('.').first.toLowerCase();
+      if (reserved.contains(base)) {
+        value = '_$value';
+      }
+    }
+
+    // Prevent very long path segments.
+    if (value.length > 120) {
+      value = value.substring(0, 120);
+    }
+
+    return value.isEmpty ? '_' : value;
   }
 }
 

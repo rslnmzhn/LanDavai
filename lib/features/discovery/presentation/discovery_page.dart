@@ -77,7 +77,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
-      networkHostScanner: NetworkHostScanner(),
+      networkHostScanner: NetworkHostScanner(
+        allowTcpFallback: Platform.isAndroid,
+      ),
     );
     _controller.addListener(_handleInfoMessages);
     unawaited(_initializeController());
@@ -1967,6 +1969,7 @@ class _ReceivePanelSheet extends StatefulWidget {
 }
 
 class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
+  static const int _maxVisibleRemoteFiles = 2500;
   String? _selectedOwnerIp;
   final Set<String> _selectedFileIds = <String>{};
   final Set<String> _selectedFolderIds = <String>{};
@@ -1993,7 +1996,14 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
             : _buildFileChoices(
                 remoteOptions: remoteOptions,
                 ownerIp: _selectedOwnerIp!,
+                maxItems: _maxVisibleRemoteFiles,
               );
+        final isFileListCapped =
+            selectedOwner != null &&
+            fileChoices.length < selectedOwner.fileCount;
+        final hiddenFilesCount = isFileListCapped
+            ? selectedOwner.fileCount - fileChoices.length
+            : 0;
         final folderChoices = _selectedOwnerIp == null
             ? const <_RemoteFolderChoice>[]
             : _buildFolderChoices(fileChoices);
@@ -2084,6 +2094,15 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                               'Доступно: ${selectedOwner.fileCount} файлов',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
+                            if (isFileListCapped) ...[
+                              const SizedBox(height: AppSpacing.xxs),
+                              Text(
+                                'Показаны первые ${fileChoices.length} файлов '
+                                '(скрыто: $hiddenFilesCount) для стабильной работы.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: AppColors.textSecondary),
+                              ),
+                            ],
                             const SizedBox(height: AppSpacing.xs),
                             Wrap(
                               spacing: AppSpacing.xs,
@@ -2100,7 +2119,19 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                         );
                                     });
                                   },
-                                  child: const Text('Выбрать все файлы'),
+                                  child: Text(
+                                    isFileListCapped
+                                        ? 'Выбрать все видимые'
+                                        : 'Выбрать все файлы',
+                                  ),
+                                ),
+                                FilledButton.tonalIcon(
+                                  onPressed: () => _requestAllSharesFromOwner(
+                                    owner: selectedOwner,
+                                    remoteOptions: remoteOptions,
+                                  ),
+                                  icon: const Icon(Icons.download_for_offline),
+                                  label: const Text('Скачать всё с устройства'),
                                 ),
                                 TextButton(
                                   onPressed: () {
@@ -2112,7 +2143,8 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                   child: const Text('Очистить'),
                                 ),
                                 OutlinedButton.icon(
-                                  onPressed: folderChoices.isEmpty
+                                  onPressed:
+                                      folderChoices.isEmpty || isFileListCapped
                                       ? null
                                       : () => _pickFolders(folderChoices),
                                   icon: const Icon(Icons.folder_copy_outlined),
@@ -2487,6 +2519,28 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     });
   }
 
+  Future<void> _requestAllSharesFromOwner({
+    required _RemoteOwnerChoice owner,
+    required List<RemoteShareOption> remoteOptions,
+  }) async {
+    final selectedByCache = <String, Set<String>>{};
+    for (final option in remoteOptions) {
+      if (option.ownerIp != owner.ip) {
+        continue;
+      }
+      selectedByCache[option.entry.cacheId] = <String>{};
+    }
+    if (selectedByCache.isEmpty) {
+      return;
+    }
+
+    await widget.controller.requestDownloadFromRemoteFiles(
+      ownerIp: owner.ip,
+      ownerName: owner.name,
+      selectedRelativePathsByCache: selectedByCache,
+    );
+  }
+
   _RemoteOwnerChoice? _findOwnerByIp(
     List<_RemoteOwnerChoice> owners,
     String ip,
@@ -2511,9 +2565,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
         ),
       );
       draft.shareCount += 1;
-      for (final file in option.entry.files) {
-        draft.uniqueFiles.add('${option.entry.cacheId}|${file.relativePath}');
-      }
+      draft.fileCount += option.entry.itemCount;
     }
 
     final list = ownersByIp.values
@@ -2523,7 +2575,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
             name: draft.name,
             macAddress: draft.macAddress,
             shareCount: draft.shareCount,
-            fileCount: draft.uniqueFiles.length,
+            fileCount: draft.fileCount,
           ),
         )
         .toList(growable: false);
@@ -2534,6 +2586,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   List<_RemoteFileChoice> _buildFileChoices({
     required List<RemoteShareOption> remoteOptions,
     required String ownerIp,
+    required int maxItems,
   }) {
     final files = <_RemoteFileChoice>[];
     for (final option in remoteOptions) {
@@ -2541,6 +2594,9 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
         continue;
       }
       for (final file in option.entry.files) {
+        if (files.length >= maxItems) {
+          break;
+        }
         files.add(
           _RemoteFileChoice(
             ownerIp: option.ownerIp,
@@ -2556,6 +2612,9 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
             ),
           ),
         );
+      }
+      if (files.length >= maxItems) {
+        break;
       }
     }
     files.sort((a, b) {
@@ -2900,7 +2959,7 @@ class _RemoteOwnerDraft {
   final String name;
   final String macAddress;
   int shareCount = 0;
-  final Set<String> uniqueFiles = <String>{};
+  int fileCount = 0;
 }
 
 class _RemoteFolderChoice {

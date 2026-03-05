@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -32,7 +33,7 @@ class MainActivity : FlutterActivity() {
         private const val DOWNLOAD_CHANNEL_ID = "landa_downloads"
         private const val DOWNLOAD_CHANNEL_NAME = "Landa downloads"
         private const val DOWNLOAD_CHANNEL_DESCRIPTION = "File transfer progress and completion"
-        private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 1401
+        private const val RUNTIME_PERMISSION_REQUEST_CODE = 1401
         private const val SHARED_RECACHE_NOTIFICATION_ID = 91021
     }
 
@@ -41,7 +42,7 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         ensureDownloadNotificationChannel()
-        requestNotificationPermissionIfNeeded()
+        requestRuntimePermissionsIfNeeded()
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -51,6 +52,13 @@ class MainActivity : FlutterActivity() {
                 }
                 "releaseMulticastLock" -> {
                     releaseMulticastLock()
+                    result.success(null)
+                }
+                "canAccessSharedStorage" -> {
+                    result.success(canAccessSharedStorage())
+                }
+                "requestSharedStorageAccess" -> {
+                    requestSharedStorageAccess()
                     result.success(null)
                 }
                 "getPublicDownloadsPath" -> {
@@ -284,19 +292,102 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+    private fun requestRuntimePermissionsIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return
         }
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
-            PackageManager.PERMISSION_GRANTED
-        ) {
+
+        val missingPermissions = mutableListOf<String>()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.POST_NOTIFICATIONS
+            }
+            if (checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.NEARBY_WIFI_DEVICES
+            }
+        } else {
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missingPermissions += Manifest.permission.ACCESS_FINE_LOCATION
+            }
+        }
+
+        if (missingPermissions.isEmpty()) {
             return
         }
+
         requestPermissions(
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            NOTIFICATION_PERMISSION_REQUEST_CODE,
+            missingPermissions.toTypedArray(),
+            RUNTIME_PERMISSION_REQUEST_CODE,
         )
+    }
+
+    private fun canAccessSharedStorage(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun requestSharedStorageAccess() {
+        if (canAccessSharedStorage()) {
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val appUri = Uri.parse("package:$packageName")
+            val appSettingsIntent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                appUri,
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                startActivity(appSettingsIntent)
+            } catch (_: Throwable) {
+                val fallbackIntent = Intent(
+                    Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION,
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    startActivity(fallbackIntent)
+                } catch (_: Throwable) {
+                    // Ignore: user can still open permission manually from settings.
+                }
+            }
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val missing = mutableListOf<String>()
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missing += Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missing += Manifest.permission.WRITE_EXTERNAL_STORAGE
+            }
+            if (missing.isNotEmpty()) {
+                requestPermissions(
+                    missing.toTypedArray(),
+                    RUNTIME_PERMISSION_REQUEST_CODE,
+                )
+            }
+        }
     }
 
     private fun ensureDownloadNotificationChannel() {

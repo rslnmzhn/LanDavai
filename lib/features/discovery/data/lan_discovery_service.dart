@@ -448,6 +448,10 @@ class ThumbnailPacketEvent {
 
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
+  static const int _maxUdpPacketBytes = 60 * 1024;
+  static const int _maxShareCatalogEntriesPerPacket = 64;
+  static const int _maxShareCatalogFilesPerPacket = 240;
+  static const int _maxShareCatalogFilesPerEntry = 80;
   static const String _discoverPrefix = 'LANDA_DISCOVER_V1';
   static const String _responsePrefix = 'LANDA_HERE_V1';
   static const String _transferRequestPrefix = 'LANDA_TRANSFER_REQUEST_V1';
@@ -470,7 +474,6 @@ class LanDiscoveryService {
   Timer? _beaconTimer;
   Set<String> _localIps = <String>{};
   bool _started = false;
-  String? _preferredSourceIp;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
   final String _operatingSystem = Platform.operatingSystem;
@@ -519,7 +522,6 @@ class LanDiscoveryService {
     _started = true;
     _localPeerId = localPeerId.trim();
 
-    _preferredSourceIp = preferredSourceIp;
     _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
     _log('Starting UDP discovery on $discoveryPort. localIps=$_localIps');
     await _acquireAndroidMulticastLock();
@@ -542,13 +544,21 @@ class LanDiscoveryService {
       Datagram? datagram = _socket?.receive();
       while (datagram != null) {
         final senderIp = datagram.address.address;
+        if (!_isUsablePacketSenderIp(senderIp)) {
+          _log('Ignoring packet from invalid sender IP: $senderIp');
+          datagram = _socket?.receive();
+          continue;
+        }
         if (_localIps.contains(senderIp)) {
           datagram = _socket?.receive();
           continue;
         }
         final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
-        if (_preferredSourceIp != null &&
-            !_isSame24Subnet(senderIp, _preferredSourceIp!) &&
+        final isSenderInLocalSubnet = _localIps.any(
+          (localIp) => _isSame24Subnet(senderIp, localIp),
+        );
+        if (_localIps.isNotEmpty &&
+            !isSenderInLocalSubnet &&
             !isAllowedInternetSender) {
           _log('Ignoring packet from foreign subnet: $senderIp');
           datagram = _socket?.receive();
@@ -567,10 +577,11 @@ class LanDiscoveryService {
             _log('Discover request from $senderIp');
             final responsePayload = _encodeDiscoveryPayload(deviceName);
             final response = '$_responsePrefix|$_instanceId|$responsePayload';
-            _socket?.send(
-              utf8.encode(response),
-              datagram.address,
-              datagram.port,
+            _safeSocketSend(
+              bytes: utf8.encode(response),
+              address: datagram.address,
+              port: datagram.port,
+              context: 'discover-response',
             );
             _log('Discover response sent to $senderIp');
           } else if (discoveryPacket.prefix == _responsePrefix) {
@@ -1001,12 +1012,31 @@ class LanDiscoveryService {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
+    final fittedEntries = _fitShareCatalogEntries(entries);
+    final originalFiles = entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.files.length,
+    );
+    final fittedFiles = fittedEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.files.length,
+    );
+    if (fittedEntries.length < entries.length || fittedFiles < originalFiles) {
+      _log(
+        'Share catalog trimmed for UDP: '
+        'entries=${fittedEntries.length}/${entries.length}, '
+        'files=$fittedFiles/$originalFiles',
+      );
+    }
+
     final payload = <String, Object?>{
       'instanceId': _instanceId,
       'requestId': requestId,
       'ownerName': ownerName,
       'ownerMacAddress': ownerMacAddress,
-      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'entries': fittedEntries
+          .map((entry) => entry.toJson())
+          .toList(growable: false),
       'removedCacheIds': removedCacheIds,
       'createdAtMs': DateTime.now().millisecondsSinceEpoch,
     };
@@ -1139,17 +1169,68 @@ class LanDiscoveryService {
     );
   }
 
+  List<SharedCatalogEntryItem> _fitShareCatalogEntries(
+    List<SharedCatalogEntryItem> entries,
+  ) {
+    if (entries.isEmpty) {
+      return const <SharedCatalogEntryItem>[];
+    }
+
+    final limited = <SharedCatalogEntryItem>[];
+    var remainingFilesBudget = _maxShareCatalogFilesPerPacket;
+    final entryLimit = min(entries.length, _maxShareCatalogEntriesPerPacket);
+
+    for (var i = 0; i < entryLimit; i += 1) {
+      final entry = entries[i];
+      final perEntryBudget = min(
+        _maxShareCatalogFilesPerEntry,
+        max(0, remainingFilesBudget),
+      );
+      final keepFilesCount = min(entry.files.length, perEntryBudget);
+      final keptFiles = keepFilesCount == entry.files.length
+          ? entry.files
+          : entry.files.take(keepFilesCount).toList(growable: false);
+      remainingFilesBudget -= keepFilesCount;
+      limited.add(
+        SharedCatalogEntryItem(
+          cacheId: entry.cacheId,
+          displayName: entry.displayName,
+          itemCount: entry.itemCount,
+          totalBytes: entry.totalBytes,
+          files: keptFiles,
+        ),
+      );
+    }
+
+    return limited;
+  }
+
   Future<void> _sendEncodedPacket({
     required String prefix,
     required Map<String, Object?> payload,
     required String targetIp,
   }) async {
+    final targetAddress = _resolveUnicastTargetIp(targetIp);
+    if (targetAddress == null) {
+      _log('Skipping $prefix packet: invalid target IP "$targetIp".');
+      return;
+    }
+
     final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
     final message = '$prefix|$encodedPayload';
-    _socket?.send(
-      utf8.encode(message),
-      InternetAddress(targetIp),
-      discoveryPort,
+    final messageBytes = utf8.encode(message);
+    if (messageBytes.length > _maxUdpPacketBytes) {
+      _log(
+        'Skipping $prefix packet: payload ${messageBytes.length}B exceeds '
+        'UDP safe limit ${_maxUdpPacketBytes}B.',
+      );
+      return;
+    }
+    _safeSocketSend(
+      bytes: messageBytes,
+      address: targetAddress,
+      port: discoveryPort,
+      context: prefix,
     );
   }
 
@@ -1159,11 +1240,21 @@ class LanDiscoveryService {
     final bytes = utf8.encode(request);
 
     _log('Broadcasting discover packet');
-    _socket?.send(bytes, InternetAddress('255.255.255.255'), discoveryPort);
+    _safeSocketSend(
+      bytes: bytes,
+      address: InternetAddress('255.255.255.255'),
+      port: discoveryPort,
+      context: 'discover-broadcast',
+    );
     for (final localIp in _localIps) {
       final broadcast = _toBroadcastAddress(localIp);
       if (broadcast != null) {
-        _socket?.send(bytes, broadcast, discoveryPort);
+        _safeSocketSend(
+          bytes: bytes,
+          address: broadcast,
+          port: discoveryPort,
+          context: 'discover-subnet',
+        );
         _log('Discover packet sent to ${broadcast.address}');
       }
     }
@@ -1173,8 +1264,68 @@ class LanDiscoveryService {
       if (address == null || address.type != InternetAddressType.IPv4) {
         continue;
       }
-      _socket?.send(bytes, address, peer.port);
+      _safeSocketSend(
+        bytes: bytes,
+        address: address,
+        port: peer.port,
+        context: 'discover-friend-endpoint',
+      );
       _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
+    }
+  }
+
+  InternetAddress? _resolveUnicastTargetIp(String rawTargetIp) {
+    final normalized = rawTargetIp.trim();
+    final parsed = InternetAddress.tryParse(normalized);
+    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
+      return null;
+    }
+    if (!_isUsablePacketSenderIp(parsed.address)) {
+      return null;
+    }
+    return parsed;
+  }
+
+  bool _isUsablePacketSenderIp(String ip) {
+    final parsed = InternetAddress.tryParse(ip);
+    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
+      return false;
+    }
+    if (parsed.address == '0.0.0.0' ||
+        parsed.isLoopback ||
+        parsed.isMulticast) {
+      return false;
+    }
+    return parsed.address != '255.255.255.255';
+  }
+
+  void _safeSocketSend({
+    required List<int> bytes,
+    required InternetAddress address,
+    required int port,
+    required String context,
+  }) {
+    final socket = _socket;
+    if (socket == null) {
+      return;
+    }
+    if (bytes.isEmpty) {
+      return;
+    }
+    if (address.type != InternetAddressType.IPv4) {
+      _log('Skipping UDP send ($context): non-IPv4 target ${address.address}.');
+      return;
+    }
+    if (address.address == '0.0.0.0') {
+      _log('Skipping UDP send ($context): invalid target 0.0.0.0.');
+      return;
+    }
+    try {
+      socket.send(bytes, address, port);
+    } on SocketException catch (error) {
+      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
+    } catch (error) {
+      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
     }
   }
 
@@ -1766,29 +1917,36 @@ class LanDiscoveryService {
   }
 
   Future<Set<String>> _loadLocalIps({String? preferredSourceIp}) async {
-    if (preferredSourceIp != null && _isValidIpv4(preferredSourceIp)) {
-      _log('Using preferred source IP for UDP discovery: $preferredSourceIp');
-      return <String>{preferredSourceIp};
-    }
-
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-      includeLinkLocal: false,
-    );
     final ips = <String>{};
     final fallbackIps = <String>{};
-    for (final interface in interfaces) {
-      final lowerName = interface.name.toLowerCase();
-      final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
-      for (final address in interface.addresses) {
-        if (isVirtual) {
-          fallbackIps.add(address.address);
-          continue;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+        includeLinkLocal: false,
+      );
+      for (final interface in interfaces) {
+        final lowerName = interface.name.toLowerCase();
+        final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
+        for (final address in interface.addresses) {
+          if (isVirtual) {
+            fallbackIps.add(address.address);
+            continue;
+          }
+          ips.add(address.address);
         }
-        ips.add(address.address);
       }
+    } catch (error) {
+      _log('Failed to enumerate local interfaces for UDP discovery: $error');
     }
+
+    final preferredIp = preferredSourceIp?.trim();
+    if (preferredIp != null && _isValidIpv4(preferredIp)) {
+      ips.add(preferredIp);
+      fallbackIps.add(preferredIp);
+      _log('Preferred source IP candidate for UDP discovery: $preferredIp');
+    }
+
     return ips.isNotEmpty ? ips : fallbackIps;
   }
 

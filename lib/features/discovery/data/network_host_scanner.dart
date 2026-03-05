@@ -50,9 +50,12 @@ class NetworkHostScanner {
       'candidates=${candidates.length}, parallelism=$_defaultParallelism',
     );
 
+    final arpPreferredSourceIp = Platform.isAndroid || localIps.length > 1
+        ? null
+        : preferredSourceIp;
     final arpHosts = await _scanUsingNeighborTable(
       candidates,
-      preferredSourceIp: preferredSourceIp,
+      preferredSourceIp: arpPreferredSourceIp,
     );
     if (arpHosts.isNotEmpty) {
       _log('Neighbor-table scan complete. reachable=${arpHosts.length}');
@@ -448,30 +451,35 @@ class NetworkHostScanner {
   Future<Set<String>> _getLocalIpv4Addresses({
     String? preferredSourceIp,
   }) async {
-    if (preferredSourceIp != null && _isValidIpv4(preferredSourceIp)) {
-      _log('Using preferred source IP only: $preferredSourceIp');
-      return <String>{preferredSourceIp};
-    }
-
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLinkLocal: false,
-      includeLoopback: false,
-    );
-
+    final preferredIp = preferredSourceIp?.trim();
     final localIps = <String>{};
     final fallbackIps = <String>{};
-    for (final interface in interfaces) {
-      final name = interface.name.toLowerCase();
-      final isVirtual = _virtualInterfaceHints.any(name.contains);
 
-      for (final address in interface.addresses) {
-        if (isVirtual) {
-          fallbackIps.add(address.address);
-          continue;
+    try {
+      final interfaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLinkLocal: false,
+        includeLoopback: false,
+      );
+      for (final interface in interfaces) {
+        final name = interface.name.toLowerCase();
+        final isVirtual = _virtualInterfaceHints.any(name.contains);
+
+        for (final address in interface.addresses) {
+          if (isVirtual) {
+            fallbackIps.add(address.address);
+            continue;
+          }
+          localIps.add(address.address);
         }
-        localIps.add(address.address);
       }
+    } catch (error) {
+      _log('Failed to enumerate local interfaces: $error');
+    }
+
+    if (preferredIp != null && _isValidIpv4(preferredIp)) {
+      localIps.add(preferredIp);
+      fallbackIps.add(preferredIp);
     }
 
     final result = localIps.isNotEmpty ? localIps : fallbackIps;
