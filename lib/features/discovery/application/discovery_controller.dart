@@ -329,6 +329,8 @@ class DiscoveryController extends ChangeNotifier {
     milliseconds: 900,
   );
   static const double _sharedFolderScanProgressWeight = 0.35;
+  static const int _maxRemoteFilesPerCacheForUi = 4000;
+  static const int _maxThumbnailSyncItemsPerCatalog = 240;
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
@@ -3531,87 +3533,129 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    unawaited(_handleShareCatalog(event));
+    unawaited(
+      _handleShareCatalog(event).catchError((Object error, StackTrace stack) {
+        _log('Unhandled share catalog error from ${event.ownerIp}: $error');
+        _log(stack.toString());
+      }),
+    );
   }
 
   Future<void> _handleShareCatalog(ShareCatalogEvent event) async {
-    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
-    final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
-    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
-    final existing = _devicesByIp[event.ownerIp];
-    _devicesByIp[event.ownerIp] =
-        (existing ??
-                DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
-            .copyWith(
-              macAddress: ownerMac ?? existing?.macAddress,
-              aliasName: aliasName ?? existing?.aliasName,
-              deviceName: event.ownerName,
-              isTrusted: trusted,
-              isAppDetected: true,
-              isReachable: true,
-              lastSeen: event.observedAt,
+    try {
+      final ownerMac = DeviceAliasRepository.normalizeMac(
+        event.ownerMacAddress,
+      );
+      final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
+      final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
+      final existing = _devicesByIp[event.ownerIp];
+      _devicesByIp[event.ownerIp] =
+          (existing ??
+                  DiscoveredDevice(
+                    ip: event.ownerIp,
+                    lastSeen: event.observedAt,
+                  ))
+              .copyWith(
+                macAddress: ownerMac ?? existing?.macAddress,
+                aliasName: aliasName ?? existing?.aliasName,
+                deviceName: event.ownerName,
+                isTrusted: trusted,
+                isAppDetected: true,
+                isReachable: true,
+                lastSeen: event.observedAt,
+              );
+
+      if (ownerMac != null) {
+        final activeCacheIds = event.entries
+            .map((entry) => entry.cacheId)
+            .where((id) => id.trim().isNotEmpty)
+            .toSet();
+        final removedLocal = await _sharedFolderCacheRepository
+            .pruneReceiverCachesForOwner(
+              ownerMacAddress: ownerMac,
+              receiverMacAddress: _localDeviceMac,
+              activeCacheIds: activeCacheIds,
             );
-
-    if (ownerMac != null) {
-      final activeCacheIds = event.entries
-          .map((entry) => entry.cacheId)
-          .where((id) => id.trim().isNotEmpty)
-          .toSet();
-      final removedLocal = await _sharedFolderCacheRepository
-          .pruneReceiverCachesForOwner(
-            ownerMacAddress: ownerMac,
-            receiverMacAddress: _localDeviceMac,
-            activeCacheIds: activeCacheIds,
+        if (removedLocal.isNotEmpty) {
+          _log(
+            'Pruned ${removedLocal.length} stale receiver cache(s) '
+            'for owner ${event.ownerIp}',
           );
-      if (removedLocal.isNotEmpty) {
-        _log(
-          'Pruned ${removedLocal.length} stale receiver cache(s) '
-          'for owner ${event.ownerIp}',
-        );
-        _infoMessage =
-            'Remote shares updated: removed ${removedLocal.length} stale cache(s).';
-      } else if (event.removedCacheIds.isNotEmpty) {
-        _log(
-          'Owner ${event.ownerIp} reported '
-          '${event.removedCacheIds.length} removed cache(s).',
-        );
+          _infoMessage =
+              'Remote shares updated: removed ${removedLocal.length} stale cache(s).';
+        } else if (event.removedCacheIds.isNotEmpty) {
+          _log(
+            'Owner ${event.ownerIp} reported '
+            '${event.removedCacheIds.length} removed cache(s).',
+          );
+        }
       }
-    }
 
-    _remoteShareOptions.removeWhere(
-      (option) => option.ownerIp == event.ownerIp,
-    );
-    _remoteThumbnailPathsByFileKey.removeWhere(
-      (key, _) => key.startsWith('${event.ownerIp}|'),
-    );
-    for (final entry in event.entries) {
-      _remoteShareOptions.add(
-        RemoteShareOption(
-          requestId: event.requestId,
-          ownerIp: event.ownerIp,
-          ownerName: aliasName ?? event.ownerName,
-          ownerMacAddress: ownerMac ?? event.ownerMacAddress,
-          entry: entry,
-        ),
+      _remoteShareOptions.removeWhere(
+        (option) => option.ownerIp == event.ownerIp,
       );
-    }
-    _remoteShareOptions.sort((a, b) {
-      final ownerCmp = a.ownerName.toLowerCase().compareTo(
-        b.ownerName.toLowerCase(),
+      _remoteThumbnailPathsByFileKey.removeWhere(
+        (key, _) => key.startsWith('${event.ownerIp}|'),
       );
-      if (ownerCmp != 0) {
-        return ownerCmp;
+
+      var trimmedEntries = 0;
+      var trimmedFilesTotal = 0;
+      for (final entry in event.entries) {
+        final uiEntry = _trimRemoteShareEntryForUi(entry);
+        if (!identical(uiEntry, entry)) {
+          trimmedEntries += 1;
+          trimmedFilesTotal += entry.files.length - uiEntry.files.length;
+        }
+        _remoteShareOptions.add(
+          RemoteShareOption(
+            requestId: event.requestId,
+            ownerIp: event.ownerIp,
+            ownerName: aliasName ?? event.ownerName,
+            ownerMacAddress: ownerMac ?? event.ownerMacAddress,
+            entry: uiEntry,
+          ),
+        );
       }
-      return a.entry.displayName.toLowerCase().compareTo(
-        b.entry.displayName.toLowerCase(),
-      );
-    });
-    unawaited(_syncRemoteThumbnails(event));
-    notifyListeners();
+      if (trimmedEntries > 0) {
+        _log(
+          'Remote catalog trimmed for UI: owner=${event.ownerIp}, '
+          'entries=$trimmedEntries filesHidden=$trimmedFilesTotal',
+        );
+      }
+
+      _remoteShareOptions.sort((a, b) {
+        final ownerCmp = a.ownerName.toLowerCase().compareTo(
+          b.ownerName.toLowerCase(),
+        );
+        if (ownerCmp != 0) {
+          return ownerCmp;
+        }
+        return a.entry.displayName.toLowerCase().compareTo(
+          b.entry.displayName.toLowerCase(),
+        );
+      });
+      unawaited(_syncRemoteThumbnails(event));
+      notifyListeners();
+    } catch (error, stackTrace) {
+      _errorMessage = 'Failed to process remote share list: $error';
+      _log('Share catalog handling failed: $error');
+      _log(stackTrace.toString());
+      notifyListeners();
+    }
   }
 
   void _onThumbnailSyncRequest(ThumbnailSyncRequestEvent event) {
-    unawaited(_handleThumbnailSyncRequest(event));
+    unawaited(
+      _handleThumbnailSyncRequest(event).catchError((
+        Object error,
+        StackTrace stack,
+      ) {
+        _log(
+          'Unhandled thumbnail sync request error from ${event.requesterIp}: $error',
+        );
+        _log(stack.toString());
+      }),
+    );
   }
 
   Future<void> _handleThumbnailSyncRequest(
@@ -3665,7 +3709,15 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onThumbnailPacket(ThumbnailPacketEvent event) {
-    unawaited(_handleThumbnailPacket(event));
+    unawaited(
+      _handleThumbnailPacket(event).catchError((
+        Object error,
+        StackTrace stack,
+      ) {
+        _log('Unhandled thumbnail packet error from ${event.ownerIp}: $error');
+        _log(stack.toString());
+      }),
+    );
   }
 
   Future<void> _handleThumbnailPacket(ThumbnailPacketEvent event) async {
@@ -3699,6 +3751,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final requested = <ThumbnailSyncItem>[];
+    var syncLimitReached = false;
     for (final entry in event.entries) {
       for (final file in entry.files) {
         final thumbId = file.thumbnailId;
@@ -3734,6 +3787,13 @@ class DiscoveryController extends ChangeNotifier {
             thumbnailId: thumbId,
           ),
         );
+        if (requested.length >= _maxThumbnailSyncItemsPerCatalog) {
+          syncLimitReached = true;
+          break;
+        }
+      }
+      if (syncLimitReached) {
+        break;
       }
     }
 
@@ -3751,9 +3811,33 @@ class DiscoveryController extends ChangeNotifier {
         requesterName: _localName,
         items: requested,
       );
+      if (syncLimitReached) {
+        _log(
+          'Thumbnail sync request capped at '
+          '$_maxThumbnailSyncItemsPerCatalog items for ${event.ownerIp}.',
+        );
+      }
     } catch (error) {
       _log('Failed to request remote thumbnails: $error');
     }
+  }
+
+  SharedCatalogEntryItem _trimRemoteShareEntryForUi(
+    SharedCatalogEntryItem entry,
+  ) {
+    if (entry.files.length <= _maxRemoteFilesPerCacheForUi) {
+      return entry;
+    }
+    final cappedFiles = entry.files
+        .take(_maxRemoteFilesPerCacheForUi)
+        .toList(growable: false);
+    return SharedCatalogEntryItem(
+      cacheId: entry.cacheId,
+      displayName: entry.displayName,
+      itemCount: entry.itemCount,
+      totalBytes: entry.totalBytes,
+      files: cappedFiles,
+    );
   }
 
   String _remoteThumbnailKey({
