@@ -421,6 +421,7 @@ class DiscoveryController extends ChangeNotifier {
   final String _localName = Platform.localHostname;
   String _localDeviceMac = '02:00:00:00:00:01';
   String _localPeerId = '';
+  bool _ownerCacheMacRebindChecked = false;
   VideoLinkShareSession? _videoLinkShareSession;
   bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
@@ -597,8 +598,8 @@ class DiscoveryController extends ChangeNotifier {
     _started = true;
 
     await _resolveLocalAddress();
-    _resolveLocalDeviceMac();
     _localPeerId = await _friendRepository.loadOrCreateLocalPeerId();
+    _resolveLocalDeviceMac();
     await _loadAliases();
     await _loadTrustedDevices();
     await _loadSettings();
@@ -4009,8 +4010,11 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _resolveLocalDeviceMac() {
-    final seed = '${_localIp ?? "0.0.0.0"}|$_localName';
-    final digest = sha256.convert(utf8.encode(seed)).bytes;
+    final peerId = _localPeerId.trim();
+    final stableIdentitySeed = peerId.isNotEmpty
+        ? 'peer:$peerId'
+        : '${_localIp ?? "0.0.0.0"}|$_localName';
+    final digest = sha256.convert(utf8.encode(stableIdentitySeed)).bytes;
     final bytes = digest.take(6).toList(growable: false);
     bytes[0] = (bytes[0] & 0xfe) | 0x02;
     _localDeviceMac = bytes
@@ -4020,6 +4024,16 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _loadOwnerCaches() async {
     try {
+      if (!_ownerCacheMacRebindChecked) {
+        _ownerCacheMacRebindChecked = true;
+        final reboundCount = await _sharedFolderCacheRepository
+            .rebindOwnerCachesToMac(ownerMacAddress: _localDeviceMac);
+        if (reboundCount > 0) {
+          _log(
+            'Rebound $reboundCount owner shared cache(s) to local MAC $_localDeviceMac',
+          );
+        }
+      }
       final caches = await _sharedFolderCacheRepository.listCaches(
         role: SharedFolderCacheRole.owner,
         ownerMacAddress: _localDeviceMac,

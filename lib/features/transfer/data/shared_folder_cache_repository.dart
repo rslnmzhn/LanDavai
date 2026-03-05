@@ -606,6 +606,22 @@ class SharedFolderCacheRepository {
     return removedCacheIds;
   }
 
+  Future<int> rebindOwnerCachesToMac({
+    required String ownerMacAddress,
+  }) async {
+    final ownerMac = _normalizeOrThrow(
+      ownerMacAddress,
+      field: 'ownerMacAddress',
+    );
+    final db = await _database.database;
+    return db.update(
+      AppDatabase.sharedFolderCachesTable,
+      <String, Object?>{'owner_mac_address': ownerMac},
+      where: 'role = ? AND owner_mac_address != ?',
+      whereArgs: <Object?>[SharedFolderCacheRole.owner.name, ownerMac],
+    );
+  }
+
   Future<List<String>> pruneReceiverCachesForOwner({
     required String ownerMacAddress,
     required String receiverMacAddress,

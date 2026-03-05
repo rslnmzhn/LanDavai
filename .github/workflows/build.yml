@@ -16,6 +16,9 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  RELEASE_BASE_VERSION: "0.1.0"
+
 jobs:
   quality:
     name: Analyze and test
@@ -61,34 +64,6 @@ jobs:
 
       - name: Flutter pub get
         run: flutter pub get
-
-      - name: Patch flutter_media_metadata Android plugin
-        shell: bash
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          manifests=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/AndroidManifest.xml)
-          gradle_files=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/build.gradle)
-          java_files=("$HOME"/.pub-cache/hosted/pub.dev/flutter_media_metadata-*/android/src/main/java/com/alexmercerind/flutter_media_metadata/FlutterMediaMetadataPlugin.java)
-          if [ "${#manifests[@]}" -eq 0 ] && [ "${#gradle_files[@]}" -eq 0 ] && [ "${#java_files[@]}" -eq 0 ]; then
-            echo "flutter_media_metadata plugin files not found in pub cache."
-            exit 0
-          fi
-
-          for manifest in "${manifests[@]}"; do
-            sed -i -E 's/[[:space:]]package=\"[^\"]*\"//g' "$manifest"
-            echo "Patched: $manifest"
-          done
-
-          for gradle_file in "${gradle_files[@]}"; do
-            sed -i -E 's/compileSdkVersion[[:space:]]+[0-9]+/compileSdkVersion 34/g' "$gradle_file"
-            echo "Patched compileSdkVersion in: $gradle_file"
-          done
-
-          for java_file in "${java_files[@]}"; do
-            sed -i -E 's/retriever\.release\(\);/try { retriever.release(); } catch (java.io.IOException ignored) {}/g' "$java_file"
-            echo "Patched release() exception handling in: $java_file"
-          done
 
       - name: Build APK (release)
         run: flutter build apk --release
@@ -182,7 +157,7 @@ jobs:
           if-no-files-found: error
 
   create_tag:
-    name: Create release tag
+    name: Create pre-release tag
     runs-on: ubuntu-latest
     needs:
       - build_android
@@ -206,17 +181,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP_VERSION=$(awk '/^version:/{print $2; exit}' pubspec.yaml)
-          BASE_VERSION="${APP_VERSION%%+*}"
-          BUILD_PART="${APP_VERSION#*+}"
-          if [[ "${BUILD_PART}" == "${APP_VERSION}" ]]; then
-            BUILD_PART="0"
+          BASE_VERSION="${RELEASE_BASE_VERSION}"
+          git fetch --tags
+          EXISTING_NUMBERS=$(
+            git tag --list "v${BASE_VERSION}-pre.*" \
+            | sed -n -E "s/^v${BASE_VERSION}-pre\\.([0-9]+)$/\\1/p" \
+            | sort -n
+          )
+          if [[ -z "${EXISTING_NUMBERS}" ]]; then
+            PRERELEASE_NUMBER=0
+          else
+            LAST_NUMBER=$(echo "${EXISTING_NUMBERS}" | tail -n 1)
+            PRERELEASE_NUMBER=$((LAST_NUMBER + 1))
           fi
-
-          TAG="v${BASE_VERSION}-${BUILD_PART}.${GITHUB_RUN_NUMBER}"
+          TAG="v${BASE_VERSION}-pre.${PRERELEASE_NUMBER}"
           echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
-          git fetch --tags
           if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "Tag ${TAG} already exists, skipping."
             echo "created=false" >> "${GITHUB_OUTPUT}"
@@ -225,7 +205,7 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${TAG}" "${GITHUB_SHA}" -m "Release ${TAG}"
+          git tag -a "${TAG}" "${GITHUB_SHA}" -m "Pre-release ${TAG}"
           git push origin "${TAG}"
           echo "created=true" >> "${GITHUB_OUTPUT}"
 
@@ -260,7 +240,9 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          name: Pre-release ${{ needs.create_tag.outputs.tag }}
           tag_name: ${{ needs.create_tag.outputs.tag }}
+          prerelease: true
           generate_release_notes: true
           files: |
             release_assets/landa-${{ needs.create_tag.outputs.tag }}-android.apk

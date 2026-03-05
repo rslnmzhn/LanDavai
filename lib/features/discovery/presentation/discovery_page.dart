@@ -3104,45 +3104,194 @@ class _ActionBar extends StatelessWidget {
           AppSpacing.md,
           AppSpacing.md,
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: onReceive,
-                icon: const Icon(Icons.arrow_downward),
-                label: const Text('Принять'),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.xs),
-            Expanded(
-              child: controller.isSharedRecacheInProgress
-                  ? _SharedRecacheActionButton(
-                      progress: controller.sharedRecacheProgress,
-                      eta: controller.sharedRecacheDetails?.eta,
-                    )
-                  : indexingProgress != null
-                  ? _SharedRecacheActionButton(
-                      progress: controller.sharedFolderIndexingProgressValue,
-                      eta: indexingProgress.eta,
-                    )
-                  : OutlinedButton.icon(
-                      onPressed: controller.isAddingShare ? null : onAdd,
-                      icon: const Icon(Icons.add),
-                      label: const Text('Общий доступ'),
-                    ),
-            ),
-            const SizedBox(width: AppSpacing.xs),
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: controller.isSendingTransfer ? null : onSend,
-                icon: const Icon(Icons.arrow_upward),
-                label: const Text('Отправить'),
-              ),
-            ),
-          ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final totalSpacing = AppSpacing.xs * 2;
+            final availableWidth = (constraints.maxWidth - totalSpacing)
+                .clamp(0, double.infinity)
+                .toDouble();
+            final perButtonWidth = availableWidth / 3;
+            return Row(
+              children: [
+                Expanded(
+                  child: _AdaptiveActionButton.filled(
+                    onPressed: onReceive,
+                    icon: Icons.arrow_downward,
+                    label: 'Принять',
+                    compactLabel: 'Приём',
+                    tooltip: 'Принять файлы',
+                    availableWidth: perButtonWidth,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: controller.isSharedRecacheInProgress
+                      ? _SharedRecacheActionButton(
+                          progress: controller.sharedRecacheProgress,
+                          eta: controller.sharedRecacheDetails?.eta,
+                        )
+                      : indexingProgress != null
+                      ? _SharedRecacheActionButton(
+                          progress:
+                              controller.sharedFolderIndexingProgressValue,
+                          eta: indexingProgress.eta,
+                        )
+                      : _AdaptiveActionButton.outlined(
+                          onPressed: controller.isAddingShare ? null : onAdd,
+                          icon: Icons.add,
+                          label: 'Общий доступ',
+                          compactLabel: 'Доступ',
+                          tooltip: 'Добавить общий доступ',
+                          availableWidth: perButtonWidth,
+                        ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: _AdaptiveActionButton.filled(
+                    onPressed: controller.isSendingTransfer ? null : onSend,
+                    icon: Icons.arrow_upward,
+                    label: 'Отправить',
+                    compactLabel: 'Отпр.',
+                    tooltip: 'Отправить файлы',
+                    availableWidth: perButtonWidth,
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
+  }
+}
+
+enum _ActionButtonDensity { regular, compact, iconOnly }
+
+class _AdaptiveActionButton extends StatelessWidget {
+  const _AdaptiveActionButton.filled({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+    required this.compactLabel,
+    required this.tooltip,
+    required this.availableWidth,
+  }) : _outlined = false;
+
+  const _AdaptiveActionButton.outlined({
+    required this.onPressed,
+    required this.icon,
+    required this.label,
+    required this.compactLabel,
+    required this.tooltip,
+    required this.availableWidth,
+  }) : _outlined = true;
+
+  final VoidCallback? onPressed;
+  final IconData icon;
+  final String label;
+  final String compactLabel;
+  final String tooltip;
+  final double availableWidth;
+  final bool _outlined;
+
+  @override
+  Widget build(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    final buttonHeight =
+        platform == TargetPlatform.windows ||
+            platform == TargetPlatform.linux ||
+            platform == TargetPlatform.macOS
+        ? 40.0
+        : 44.0;
+    final density = _resolveDensity(context);
+    final horizontalPadding = switch (density) {
+      _ActionButtonDensity.regular => AppSpacing.sm,
+      _ActionButtonDensity.compact => AppSpacing.xs,
+      _ActionButtonDensity.iconOnly => AppSpacing.xs,
+    };
+    final labelText = switch (density) {
+      _ActionButtonDensity.regular => label,
+      _ActionButtonDensity.compact => compactLabel,
+      _ActionButtonDensity.iconOnly => '',
+    };
+
+    final content = density == _ActionButtonDensity.iconOnly
+        ? Icon(icon, size: 18)
+        : Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  labelText,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  softWrap: false,
+                ),
+              ),
+            ],
+          );
+
+    final style = (_outlined
+        ? OutlinedButton.styleFrom(
+            minimumSize: Size.fromHeight(buttonHeight),
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          )
+        : FilledButton.styleFrom(
+            minimumSize: Size.fromHeight(buttonHeight),
+            padding: EdgeInsets.symmetric(horizontal: horizontalPadding),
+          ));
+
+    final button = SizedBox(
+      height: buttonHeight,
+      child: _outlined
+          ? OutlinedButton(onPressed: onPressed, style: style, child: content)
+          : FilledButton(onPressed: onPressed, style: style, child: content),
+    );
+
+    if (density == _ActionButtonDensity.iconOnly) {
+      return Tooltip(message: tooltip, child: button);
+    }
+    return button;
+  }
+
+  _ActionButtonDensity _resolveDensity(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelLarge;
+    final fullWidth = _requiredLabelWidth(
+      context: context,
+      labelText: label,
+      style: style,
+    );
+    if (availableWidth >= fullWidth) {
+      return _ActionButtonDensity.regular;
+    }
+
+    final compactWidth = _requiredLabelWidth(
+      context: context,
+      labelText: compactLabel,
+      style: style,
+    );
+    if (availableWidth >= compactWidth) {
+      return _ActionButtonDensity.compact;
+    }
+
+    return _ActionButtonDensity.iconOnly;
+  }
+
+  double _requiredLabelWidth({
+    required BuildContext context,
+    required String labelText,
+    required TextStyle? style,
+  }) {
+    return AppSpacing.sm * 2 +
+        18 +
+        6 +
+        _measureSingleLineTextWidth(
+          context: context,
+          text: labelText,
+          style: style,
+        );
   }
 }
 
@@ -3156,7 +3305,8 @@ class _SharedRecacheActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final normalizedProgress = (progress ?? 0).clamp(0.0, 1.0).toDouble();
     final percentText = '${(normalizedProgress * 100).round()}%';
-    final etaText = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta!)}';
+    final etaTextFull = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta!)}';
+    final etaTextCompact = eta == null ? '--:--' : _formatEta(eta!);
     final platform = Theme.of(context).platform;
     final buttonHeight =
         platform == TargetPlatform.windows ||
@@ -3164,6 +3314,13 @@ class _SharedRecacheActionButton extends StatelessWidget {
             platform == TargetPlatform.macOS
         ? 40.0
         : 44.0;
+
+    final percentStyle = Theme.of(
+      context,
+    ).textTheme.labelLarge?.copyWith(color: AppColors.textPrimary);
+    final etaStyle = Theme.of(
+      context,
+    ).textTheme.labelMedium?.copyWith(color: AppColors.textSecondary);
 
     return SizedBox(
       height: buttonHeight,
@@ -3175,43 +3332,109 @@ class _SharedRecacheActionButton extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FractionallySizedBox(
-                  widthFactor: normalizedProgress,
-                  child: Container(
-                    color: AppColors.brandPrimary.withValues(alpha: 0.22),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final hasSpaceForFullEta = _fitsProgressContent(
+                context: context,
+                maxWidth: constraints.maxWidth,
+                percentText: percentText,
+                etaText: etaTextFull,
+                percentStyle: percentStyle,
+                etaStyle: etaStyle,
+                horizontalPadding: AppSpacing.sm,
+              );
+              final hasSpaceForCompactEta =
+                  !hasSpaceForFullEta &&
+                  _fitsProgressContent(
+                    context: context,
+                    maxWidth: constraints.maxWidth,
+                    percentText: percentText,
+                    etaText: etaTextCompact,
+                    percentStyle: percentStyle,
+                    etaStyle: etaStyle,
+                    horizontalPadding: AppSpacing.xs,
+                  );
+              final shownEtaText = hasSpaceForFullEta
+                  ? etaTextFull
+                  : hasSpaceForCompactEta
+                  ? etaTextCompact
+                  : null;
+              final horizontalPadding = shownEtaText == etaTextFull
+                  ? AppSpacing.sm
+                  : AppSpacing.xs;
+
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FractionallySizedBox(
+                      widthFactor: normalizedProgress,
+                      child: Container(
+                        color: AppColors.brandPrimary.withValues(alpha: 0.22),
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-                child: Row(
-                  children: [
-                    Text(
-                      percentText,
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: AppColors.textPrimary,
-                      ),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: horizontalPadding,
                     ),
-                    const Spacer(),
-                    Text(
-                      etaText,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
+                    child: Row(
+                      children: [
+                        Text(
+                          percentText,
+                          maxLines: 1,
+                          overflow: TextOverflow.fade,
+                          softWrap: false,
+                          style: percentStyle,
+                        ),
+                        if (shownEtaText != null) ...[
+                          const SizedBox(width: AppSpacing.xs),
+                          Expanded(
+                            child: Text(
+                              shownEtaText,
+                              maxLines: 1,
+                              overflow: TextOverflow.fade,
+                              softWrap: false,
+                              textAlign: TextAlign.right,
+                              style: etaStyle,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
+  }
+
+  bool _fitsProgressContent({
+    required BuildContext context,
+    required double maxWidth,
+    required String percentText,
+    required String etaText,
+    required TextStyle? percentStyle,
+    required TextStyle? etaStyle,
+    required double horizontalPadding,
+  }) {
+    final percentWidth = _measureSingleLineTextWidth(
+      context: context,
+      text: percentText,
+      style: percentStyle,
+    );
+    final etaWidth = _measureSingleLineTextWidth(
+      context: context,
+      text: etaText,
+      style: etaStyle,
+    );
+    final requiredWidth =
+        horizontalPadding * 2 + percentWidth + AppSpacing.xs + etaWidth;
+    return requiredWidth <= maxWidth;
   }
 
   static String _formatEta(Duration eta) {
@@ -3224,4 +3447,21 @@ class _SharedRecacheActionButton extends StatelessWidget {
     }
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
+}
+
+double _measureSingleLineTextWidth({
+  required BuildContext context,
+  required String text,
+  required TextStyle? style,
+}) {
+  if (text.isEmpty) {
+    return 0;
+  }
+  final painter = TextPainter(
+    text: TextSpan(text: text, style: style),
+    textDirection: Directionality.of(context),
+    textScaler: MediaQuery.textScalerOf(context),
+    maxLines: 1,
+  )..layout(minWidth: 0, maxWidth: double.infinity);
+  return painter.width;
 }
