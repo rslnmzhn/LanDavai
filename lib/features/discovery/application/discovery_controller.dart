@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
@@ -328,6 +329,9 @@ class DiscoveryController extends ChangeNotifier {
     milliseconds: 900,
   );
   static const double _sharedFolderScanProgressWeight = 0.35;
+  static const MethodChannel _androidNetworkChannel = MethodChannel(
+    'landa/network',
+  );
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
@@ -1307,6 +1311,10 @@ class DiscoveryController extends ChangeNotifier {
     _sharedFolderIndexingVisualProgress = null;
     notifyListeners();
     try {
+      if (!await _ensureAndroidSharedStorageAccessForFolderCache()) {
+        return;
+      }
+
       final folderPath = await FilePicker.platform.getDirectoryPath();
       if (folderPath == null || folderPath.trim().isEmpty) {
         return;
@@ -1850,6 +1858,46 @@ class DiscoveryController extends ChangeNotifier {
       return null;
     }
     return configured;
+  }
+
+  Future<bool> _hasAndroidSharedStorageAccess() async {
+    if (!Platform.isAndroid) {
+      return true;
+    }
+
+    try {
+      final granted = await _androidNetworkChannel.invokeMethod<bool>(
+        'canAccessSharedStorage',
+      );
+      return granted ?? false;
+    } catch (error) {
+      _log('Failed to check shared storage permission: $error');
+      return false;
+    }
+  }
+
+  Future<bool> _ensureAndroidSharedStorageAccessForFolderCache() async {
+    if (!Platform.isAndroid) {
+      return true;
+    }
+    if (await _hasAndroidSharedStorageAccess()) {
+      return true;
+    }
+
+    _errorMessage =
+        'Android storage access is required. '
+        'Allow "All files access" for Landa in Settings and retry.';
+    notifyListeners();
+
+    try {
+      await _androidNetworkChannel.invokeMethod<void>(
+        'requestSharedStorageAccess',
+      );
+    } catch (error) {
+      _log('Failed to request shared storage permission: $error');
+    }
+
+    return _hasAndroidSharedStorageAccess();
   }
 
   Future<void> addSharedFiles() async {
@@ -3019,105 +3067,124 @@ class DiscoveryController extends ChangeNotifier {
     required bool sendCompletionNotification,
     Completer<String?>? previewCompleter,
   }) async {
-    final result = await session.result;
-    _activeReceiveSessions.remove(request.requestId);
-
-    if (result.success) {
-      var savedPaths = result.savedPaths;
-      if (persistToUserDownloads) {
-        try {
-          savedPaths = await _transferStorageService.publishToUserDownloads(
-            sourcePaths: result.savedPaths,
-            relativePaths: acceptedItems
-                .map((item) => item.fileName)
-                .toList(growable: false),
-            appFolderName: 'Landa',
-          );
-        } catch (error) {
-          _log('Failed to publish files into user downloads: $error');
+    try {
+      final result = await session.result;
+      if (result.success) {
+        var savedPaths = result.savedPaths;
+        if (persistToUserDownloads) {
+          try {
+            savedPaths = await _transferStorageService.publishToUserDownloads(
+              sourcePaths: result.savedPaths,
+              relativePaths: acceptedItems
+                  .map((item) => item.fileName)
+                  .toList(growable: false),
+              appFolderName: 'Landa',
+            );
+          } catch (error) {
+            _log('Failed to publish files into user downloads: $error');
+          }
         }
-      }
 
-      final rootPath = savedPaths.isEmpty
-          ? result.destinationDirectory
-          : File(savedPaths.first).parent.path;
+        final rootPath = savedPaths.isEmpty
+            ? result.destinationDirectory
+            : File(savedPaths.first).parent.path;
 
-      if (recordHistory) {
-        try {
-          await _transferHistoryRepository.addRecord(
-            id: _fileHashService.buildStableId(
-              'download-history|${request.requestId}|'
-              '${DateTime.now().microsecondsSinceEpoch}',
+        if (recordHistory) {
+          try {
+            await _transferHistoryRepository.addRecord(
+              id: _fileHashService.buildStableId(
+                'download-history|${request.requestId}|'
+                '${DateTime.now().microsecondsSinceEpoch}',
+              ),
+              requestId: request.requestId,
+              direction: TransferHistoryDirection.download,
+              peerName: request.senderName,
+              peerIp: request.senderIp,
+              rootPath: rootPath,
+              savedPaths: savedPaths,
+              fileCount: savedPaths.length,
+              totalBytes: result.totalBytes,
+              status: TransferHistoryStatus.completed,
+              createdAtMs: DateTime.now().millisecondsSinceEpoch,
+            );
+            await _loadDownloadHistory();
+          } catch (error) {
+            _log('Failed to persist transfer history: $error');
+          }
+        }
+
+        if (sendCompletionNotification) {
+          unawaited(
+            _transferStorageService.showAndroidDownloadCompletedNotification(
+              requestId: request.requestId,
+              savedPaths: savedPaths,
+              directoryPath: rootPath,
             ),
-            requestId: request.requestId,
-            direction: TransferHistoryDirection.download,
-            peerName: request.senderName,
-            peerIp: request.senderIp,
-            rootPath: rootPath,
-            savedPaths: savedPaths,
-            fileCount: savedPaths.length,
-            totalBytes: result.totalBytes,
-            status: TransferHistoryStatus.completed,
-            createdAtMs: DateTime.now().millisecondsSinceEpoch,
           );
-          await _loadDownloadHistory();
-        } catch (error) {
-          _log('Failed to persist transfer history: $error');
         }
-      }
 
-      if (sendCompletionNotification) {
-        unawaited(
-          _transferStorageService.showAndroidDownloadCompletedNotification(
-            requestId: request.requestId,
-            savedPaths: savedPaths,
-            directoryPath: rootPath,
-          ),
-        );
-      }
-
-      final hashStatus = result.hashVerified ? ' Hash verified.' : '';
-      if (previewCompleter != null) {
-        final previewPath = savedPaths.isEmpty ? null : savedPaths.first;
-        if (!previewCompleter.isCompleted) {
-          previewCompleter.complete(previewPath);
+        final hashStatus = result.hashVerified ? ' Hash verified.' : '';
+        if (previewCompleter != null) {
+          final previewPath = savedPaths.isEmpty ? null : savedPaths.first;
+          if (!previewCompleter.isCompleted) {
+            previewCompleter.complete(previewPath);
+          }
+          _infoMessage = previewPath == null
+              ? 'Preview received but file is unavailable.'
+              : 'Preview ready: ${p.basename(previewPath)}.$hashStatus';
+        } else {
+          _infoMessage =
+              'Received ${savedPaths.length} file(s) from ${request.senderName}. '
+              'Saved to $rootPath.$hashStatus';
         }
-        _infoMessage = previewPath == null
-            ? 'Preview received but file is unavailable.'
-            : 'Preview ready: ${p.basename(previewPath)}.$hashStatus';
+
+        _errorMessage = null;
+        _downloadReceivedBytes = _downloadTotalBytes;
+        _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
       } else {
-        _infoMessage =
-            'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-            'Saved to $rootPath.$hashStatus';
+        if (previewCompleter != null && !previewCompleter.isCompleted) {
+          previewCompleter.complete(null);
+        }
+        _errorMessage = previewCompleter != null
+            ? 'Preview from ${request.senderName} failed: ${result.message}'
+            : 'Transfer from ${request.senderName} failed: ${result.message}';
+        _log(_errorMessage!);
+        if (sendCompletionNotification) {
+          unawaited(
+            _transferStorageService.showAndroidDownloadFailedNotification(
+              requestId: request.requestId,
+              message: result.message,
+            ),
+          );
+        }
       }
-
-      _errorMessage = null;
-      _downloadReceivedBytes = _downloadTotalBytes;
-      _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
-    } else {
+    } catch (error, stackTrace) {
       if (previewCompleter != null && !previewCompleter.isCompleted) {
         previewCompleter.complete(null);
       }
-      _errorMessage = previewCompleter != null
-          ? 'Preview from ${request.senderName} failed: ${result.message}'
-          : 'Transfer from ${request.senderName} failed: ${result.message}';
-      _log(_errorMessage!);
+      final message = previewCompleter != null
+          ? 'Preview from ${request.senderName} failed: $error'
+          : 'Transfer from ${request.senderName} failed: $error';
+      _errorMessage = message;
+      _log('$message\n$stackTrace');
       if (sendCompletionNotification) {
         unawaited(
           _transferStorageService.showAndroidDownloadFailedNotification(
             requestId: request.requestId,
-            message: result.message,
+            message: error.toString(),
           ),
         );
       }
-    }
-    Future<void>.delayed(const Duration(seconds: 1), () {
-      _downloadReceivedBytes = 0;
-      _downloadTotalBytes = 0;
-      _clearDownloadSpeedTracking();
+    } finally {
+      _activeReceiveSessions.remove(request.requestId);
+      Future<void>.delayed(const Duration(seconds: 1), () {
+        _downloadReceivedBytes = 0;
+        _downloadTotalBytes = 0;
+        _clearDownloadSpeedTracking();
+        notifyListeners();
+      });
       notifyListeners();
-    });
-    notifyListeners();
+    }
   }
 
   Future<void> openHistoryPath(String path) async {
@@ -3396,8 +3463,20 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
     try {
-      final removedCacheIds = await _sharedFolderCacheRepository
-          .pruneUnavailableOwnerCaches(ownerMacAddress: _localDeviceMac);
+      final removedCacheIds = <String>[];
+      final canPruneUnavailableCaches =
+          !Platform.isAndroid || await _hasAndroidSharedStorageAccess();
+      if (canPruneUnavailableCaches) {
+        removedCacheIds.addAll(
+          await _sharedFolderCacheRepository.pruneUnavailableOwnerCaches(
+            ownerMacAddress: _localDeviceMac,
+          ),
+        );
+      } else {
+        _log(
+          'Skipping owner cache pruning: Android shared storage access is not granted.',
+        );
+      }
       await _loadOwnerCaches();
 
       final catalog = <SharedCatalogEntryItem>[];
@@ -4349,13 +4428,66 @@ class DiscoveryController extends ChangeNotifier {
     final raw = input.replaceAll('\\', '/');
     final parts = raw
         .split('/')
-        .map((part) => part.trim())
+        .map((part) => _sanitizeTransferRelativePathPart(part.trim()))
         .where((part) => part.isNotEmpty && part != '.' && part != '..')
         .toList(growable: false);
     if (parts.isEmpty) {
       return 'file.bin';
     }
     return p.joinAll(parts);
+  }
+
+  String _sanitizeTransferRelativePathPart(String input) {
+    if (input.isEmpty) {
+      return '';
+    }
+
+    var value = input
+        .replaceAll(RegExp(r'[\x00-\x1F]'), '')
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
+
+    if (Platform.isWindows) {
+      value = value.trimRight();
+      value = value.replaceFirst(RegExp(r'[. ]+$'), '');
+      if (value.isEmpty) {
+        return '_';
+      }
+
+      final reserved = <String>{
+        'con',
+        'prn',
+        'aux',
+        'nul',
+        'com1',
+        'com2',
+        'com3',
+        'com4',
+        'com5',
+        'com6',
+        'com7',
+        'com8',
+        'com9',
+        'lpt1',
+        'lpt2',
+        'lpt3',
+        'lpt4',
+        'lpt5',
+        'lpt6',
+        'lpt7',
+        'lpt8',
+        'lpt9',
+      };
+      final base = value.split('.').first.toLowerCase();
+      if (reserved.contains(base)) {
+        value = '_$value';
+      }
+    }
+
+    if (value.length > 120) {
+      value = value.substring(0, 120);
+    }
+
+    return value.isEmpty ? '_' : value;
   }
 
   Duration? _estimateEta({

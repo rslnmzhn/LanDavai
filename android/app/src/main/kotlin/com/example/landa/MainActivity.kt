@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.FileProvider
@@ -51,6 +52,13 @@ class MainActivity : FlutterActivity() {
                 }
                 "releaseMulticastLock" -> {
                     releaseMulticastLock()
+                    result.success(null)
+                }
+                "canAccessSharedStorage" -> {
+                    result.success(canAccessSharedStorage())
+                }
+                "requestSharedStorageAccess" -> {
+                    requestSharedStorageAccess()
                     result.success(null)
                 }
                 "getPublicDownloadsPath" -> {
@@ -317,6 +325,69 @@ class MainActivity : FlutterActivity() {
             missingPermissions.toTypedArray(),
             RUNTIME_PERMISSION_REQUEST_CODE,
         )
+    }
+
+    private fun canAccessSharedStorage(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun requestSharedStorageAccess() {
+        if (canAccessSharedStorage()) {
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val appUri = Uri.parse("package:$packageName")
+            val appSettingsIntent = Intent(
+                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                appUri,
+            ).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                startActivity(appSettingsIntent)
+            } catch (_: Throwable) {
+                val fallbackIntent = Intent(
+                    Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION,
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                try {
+                    startActivity(fallbackIntent)
+                } catch (_: Throwable) {
+                    // Ignore: user can still open permission manually from settings.
+                }
+            }
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val missing = mutableListOf<String>()
+            if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missing += Manifest.permission.READ_EXTERNAL_STORAGE
+            }
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                missing += Manifest.permission.WRITE_EXTERNAL_STORAGE
+            }
+            if (missing.isNotEmpty()) {
+                requestPermissions(
+                    missing.toTypedArray(),
+                    RUNTIME_PERMISSION_REQUEST_CODE,
+                )
+            }
+        }
     }
 
     private fun ensureDownloadNotificationChannel() {
