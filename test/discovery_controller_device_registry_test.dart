@@ -6,6 +6,7 @@ import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
+import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -105,10 +106,14 @@ DiscoveryController _buildController({
   required NetworkHostScanner networkHostScanner,
 }) {
   final trustRepository = DeviceAliasRepository(database: database);
+  final endpointRepository = FriendRepository(database: database);
   return DiscoveryController(
     lanDiscoveryService: LanDiscoveryService(),
     networkHostScanner: networkHostScanner,
     deviceRegistry: deviceRegistry,
+    internetPeerEndpointStore: InternetPeerEndpointStore(
+      friendRepository: endpointRepository,
+    ),
     trustedLanPeerStore: TrustedLanPeerStore(
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: trustRepository,

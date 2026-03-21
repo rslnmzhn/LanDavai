@@ -12,7 +12,7 @@ import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
-import 'package:landa/features/discovery/domain/discovered_device.dart';
+import 'package:landa/features/discovery/domain/friend_peer.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
@@ -25,89 +25,84 @@ import 'test_support/test_app_database.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
-  late DeviceAliasRepository repository;
-  late DeviceRegistry deviceRegistry;
-  late TrackingTrustedLanPeerStore trustedLanPeerStore;
+  late FriendRepository storeRepository;
+  late ThrowingEndpointFriendRepository controllerRepository;
+  late InternetPeerEndpointStore endpointStore;
   late RecordingLanDiscoveryService lanDiscoveryService;
   DiscoveryController? controller;
 
   setUp(() async {
     harness = await TestAppDatabaseHarness.create(
-      prefix: 'landa_discovery_trust_store_',
+      prefix: 'landa_discovery_endpoint_store_',
     );
-    repository = DeviceAliasRepository(database: harness.database);
-    deviceRegistry = DeviceRegistry(deviceAliasRepository: repository);
-    trustedLanPeerStore = TrackingTrustedLanPeerStore(
-      deviceRegistry: deviceRegistry,
-      deviceAliasRepository: repository,
+    storeRepository = FriendRepository(database: harness.database);
+    controllerRepository = ThrowingEndpointFriendRepository(
+      database: harness.database,
+    );
+    endpointStore = InternetPeerEndpointStore(
+      friendRepository: storeRepository,
     );
     lanDiscoveryService = RecordingLanDiscoveryService();
   });
 
   tearDown(() async {
     controller?.dispose();
-    trustedLanPeerStore.dispose();
-    deviceRegistry.dispose();
+    endpointStore.dispose();
     await harness.dispose();
   });
 
   test(
-    'requestRemoteClipboardHistory reads trust from TrustedLanPeerStore instead of controller mirror',
+    'saveFriend routes endpoint writes and legacy projection refresh through InternetPeerEndpointStore',
     () async {
-      const mac = 'AA-BB-CC-DD-EE-FF';
-      const ip = '192.168.1.80';
-      await deviceRegistry.recordSeenDevices(<String, String>{mac: ip});
-      await trustedLanPeerStore.trustDevice(macAddress: mac);
       controller = _buildController(
         database: harness.database,
         lanDiscoveryService: lanDiscoveryService,
-        deviceRegistry: deviceRegistry,
-        trustedLanPeerStore: trustedLanPeerStore,
+        endpointStore: endpointStore,
+        friendRepository: controllerRepository,
       );
 
-      await controller!.requestRemoteClipboardHistory(
-        DiscoveredDevice(
-          ip: ip,
-          macAddress: mac,
-          isAppDetected: true,
-          lastSeen: DateTime(2026),
-        ),
+      await controller!.saveFriend(
+        friendId: 'peer-1',
+        displayName: 'Remote peer',
+        endpoint: '203.0.113.7:40404',
       );
 
-      expect(lanDiscoveryService.clipboardQueryCalls, 1);
+      expect(controller!.friends, hasLength(1));
+      expect(controller!.friends.single.friendId, 'peer-1');
+      expect(controller!.friends.single.endpointHost, '203.0.113.7');
+      expect(lanDiscoveryService.lastInternetPeers, hasLength(1));
+      expect(lanDiscoveryService.lastInternetPeers.single.friendId, 'peer-1');
       expect(controller!.errorMessage, isNull);
-      expect(trustedLanPeerStore.isTrustedMac(mac), isTrue);
     },
   );
 
   test(
-    'removeDeviceFromFriends revokes trust through TrustedLanPeerStore and does not touch friends table',
+    'setFriendEnabled and removeFriend no longer use FriendRepository as endpoint owner API',
     () async {
-      const mac = 'AA-BB-CC-DD-EE-FF';
-      await trustedLanPeerStore.trustDevice(macAddress: mac);
+      await endpointStore.saveEndpoint(
+        friendId: 'peer-1',
+        displayName: 'Remote peer',
+        endpointHost: '203.0.113.7',
+        endpointPort: 40404,
+        isEnabled: true,
+      );
       controller = _buildController(
         database: harness.database,
         lanDiscoveryService: lanDiscoveryService,
-        deviceRegistry: deviceRegistry,
-        trustedLanPeerStore: trustedLanPeerStore,
+        endpointStore: endpointStore,
+        friendRepository: controllerRepository,
       );
 
-      await controller!.removeDeviceFromFriends(
-        DiscoveredDevice(
-          ip: '192.168.1.90',
-          macAddress: mac,
-          isTrusted: true,
-          lastSeen: DateTime(2026),
-        ),
-      );
+      await controller!.setFriendEnabled(friendId: 'peer-1', enabled: false);
 
-      final friends = await FriendRepository(
-        database: harness.database,
-      ).listFriends();
+      expect(controller!.friends, hasLength(1));
+      expect(controller!.friends.single.isEnabled, isFalse);
+      expect(lanDiscoveryService.lastInternetPeers, isEmpty);
 
-      expect(trustedLanPeerStore.revokeTrustCalls, 1);
-      expect(trustedLanPeerStore.isTrustedMac(mac), isFalse);
-      expect(friends, isEmpty);
+      await controller!.removeFriend('peer-1');
+
+      expect(controller!.friends, isEmpty);
+      expect(lanDiscoveryService.lastInternetPeers, isEmpty);
       expect(controller!.errorMessage, isNull);
     },
   );
@@ -115,20 +110,24 @@ void main() {
 
 DiscoveryController _buildController({
   required AppDatabase database,
-  required LanDiscoveryService lanDiscoveryService,
-  required DeviceRegistry deviceRegistry,
-  required TrackingTrustedLanPeerStore trustedLanPeerStore,
+  required RecordingLanDiscoveryService lanDiscoveryService,
+  required InternetPeerEndpointStore endpointStore,
+  required FriendRepository friendRepository,
 }) {
-  final endpointRepository = FriendRepository(database: database);
+  final deviceAliasRepository = DeviceAliasRepository(database: database);
+  final deviceRegistry = DeviceRegistry(
+    deviceAliasRepository: deviceAliasRepository,
+  );
   return DiscoveryController(
     lanDiscoveryService: lanDiscoveryService,
     networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
     deviceRegistry: deviceRegistry,
-    internetPeerEndpointStore: InternetPeerEndpointStore(
-      friendRepository: endpointRepository,
+    internetPeerEndpointStore: endpointStore,
+    trustedLanPeerStore: TrustedLanPeerStore(
+      deviceRegistry: deviceRegistry,
+      deviceAliasRepository: deviceAliasRepository,
     ),
-    trustedLanPeerStore: trustedLanPeerStore,
-    friendRepository: FriendRepository(database: database),
+    friendRepository: friendRepository,
     appSettingsRepository: AppSettingsRepository(database: database),
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -145,40 +144,53 @@ DiscoveryController _buildController({
   );
 }
 
-class TrackingTrustedLanPeerStore extends TrustedLanPeerStore {
-  TrackingTrustedLanPeerStore({
-    required super.deviceRegistry,
-    required super.deviceAliasRepository,
-  });
-
-  int trustDeviceCalls = 0;
-  int revokeTrustCalls = 0;
+class ThrowingEndpointFriendRepository extends FriendRepository {
+  ThrowingEndpointFriendRepository({required super.database});
 
   @override
-  Future<void> trustDevice({required String macAddress}) async {
-    trustDeviceCalls += 1;
-    await super.trustDevice(macAddress: macAddress);
+  Future<List<FriendPeer>> listFriends() {
+    throw StateError(
+      'DiscoveryController must not read endpoint rows directly',
+    );
   }
 
   @override
-  Future<void> revokeTrust({required String macAddress}) async {
-    revokeTrustCalls += 1;
-    await super.revokeTrust(macAddress: macAddress);
+  Future<void> upsertFriend({
+    required String friendId,
+    required String displayName,
+    required String endpointHost,
+    required int endpointPort,
+    required bool isEnabled,
+  }) {
+    throw StateError(
+      'DiscoveryController must not write endpoint rows directly',
+    );
+  }
+
+  @override
+  Future<void> removeFriend(String friendId) {
+    throw StateError(
+      'DiscoveryController must not remove endpoint rows directly',
+    );
+  }
+
+  @override
+  Future<void> setFriendEnabled({
+    required String friendId,
+    required bool isEnabled,
+  }) {
+    throw StateError(
+      'DiscoveryController must not toggle endpoint rows directly',
+    );
   }
 }
 
 class RecordingLanDiscoveryService extends LanDiscoveryService {
-  int clipboardQueryCalls = 0;
+  List<InternetPeerEndpoint> lastInternetPeers = const <InternetPeerEndpoint>[];
 
   @override
-  Future<void> sendClipboardQuery({
-    required String targetIp,
-    required String requestId,
-    required String requesterName,
-    required String requesterMacAddress,
-    required int maxEntries,
-  }) async {
-    clipboardQueryCalls += 1;
+  void updateInternetPeers(List<InternetPeerEndpoint> peers) {
+    lastInternetPeers = List<InternetPeerEndpoint>.from(peers);
   }
 }
 

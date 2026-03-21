@@ -28,6 +28,7 @@ import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import 'device_registry.dart';
+import 'internet_peer_endpoint_store.dart';
 import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
@@ -289,6 +290,7 @@ class DiscoveryController extends ChangeNotifier {
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceRegistry deviceRegistry,
+    required InternetPeerEndpointStore internetPeerEndpointStore,
     required TrustedLanPeerStore trustedLanPeerStore,
     required FriendRepository friendRepository,
     required AppSettingsRepository appSettingsRepository,
@@ -305,6 +307,7 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceRegistry = deviceRegistry,
+       _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
        _friendRepository = friendRepository,
        _appSettingsRepository = appSettingsRepository,
@@ -342,6 +345,7 @@ class DiscoveryController extends ChangeNotifier {
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceRegistry _deviceRegistry;
+  final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
   final FriendRepository _friendRepository;
   final AppSettingsRepository _appSettingsRepository;
@@ -717,14 +721,14 @@ class DiscoveryController extends ChangeNotifier {
     _isFriendMutationInProgress = true;
     notifyListeners();
     try {
-      await _friendRepository.upsertFriend(
+      await _internetPeerEndpointStore.saveEndpoint(
         friendId: normalizedId,
         displayName: displayName.trim(),
         endpointHost: parsedEndpoint.$1,
         endpointPort: parsedEndpoint.$2,
         isEnabled: isEnabled,
       );
-      await _loadFriends();
+      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       _infoMessage = 'Friend saved: $normalizedId';
@@ -741,8 +745,8 @@ class DiscoveryController extends ChangeNotifier {
     _isFriendMutationInProgress = true;
     notifyListeners();
     try {
-      await _friendRepository.removeFriend(friendId);
-      await _loadFriends();
+      await _internetPeerEndpointStore.removeEndpoint(friendId);
+      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       _infoMessage = 'Friend removed: ${friendId.trim()}';
@@ -760,11 +764,11 @@ class DiscoveryController extends ChangeNotifier {
     required bool enabled,
   }) async {
     try {
-      await _friendRepository.setFriendEnabled(
+      await _internetPeerEndpointStore.setEndpointEnabled(
         friendId: friendId,
         isEnabled: enabled,
       );
-      await _loadFriends();
+      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       notifyListeners();
@@ -4742,24 +4746,15 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _loadFriends() async {
     try {
-      final friends = await _friendRepository.listFriends();
-      _friends
-        ..clear()
-        ..addAll(friends);
-      _friendNameById
-        ..clear()
-        ..addEntries(
-          friends.map(
-            (friend) => MapEntry(friend.friendId, friend.displayName),
-          ),
-        );
+      await _internetPeerEndpointStore.load();
+      _syncLegacyInternetPeerProjection();
     } catch (error) {
       _log('Failed to load friends: $error');
     }
   }
 
   void _syncInternetPeers() {
-    final peers = _friends
+    final peers = _internetPeerEndpointStore.peers
         .where((friend) => friend.isEnabled)
         .map(
           (friend) => InternetPeerEndpoint(
@@ -4770,6 +4765,18 @@ class DiscoveryController extends ChangeNotifier {
         )
         .toList(growable: false);
     _lanDiscoveryService.updateInternetPeers(peers);
+  }
+
+  void _syncLegacyInternetPeerProjection() {
+    final peers = _internetPeerEndpointStore.peers;
+    _friends
+      ..clear()
+      ..addAll(peers);
+    _friendNameById
+      ..clear()
+      ..addEntries(
+        peers.map((friend) => MapEntry(friend.friendId, friend.displayName)),
+      );
   }
 
   (String, int)? _parseEndpoint(String endpoint) {

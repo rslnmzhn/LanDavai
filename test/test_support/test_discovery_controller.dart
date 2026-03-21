@@ -5,6 +5,7 @@ import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
+import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -35,6 +36,7 @@ class TestDiscoveryControllerHarness {
     );
     final database = databaseHarness.database;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
+    final friendRepository = FriendRepository(database: database);
     final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
     );
@@ -42,11 +44,14 @@ class TestDiscoveryControllerHarness {
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
       deviceRegistry: deviceRegistry,
+      internetPeerEndpointStore: InternetPeerEndpointStore(
+        friendRepository: friendRepository,
+      ),
       trustedLanPeerStore: TrustedLanPeerStore(
         deviceRegistry: deviceRegistry,
         deviceAliasRepository: deviceAliasRepository,
       ),
-      friendRepository: FriendRepository(database: database),
+      friendRepository: friendRepository,
       appSettingsRepository: AppSettingsRepository(database: database),
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -83,6 +88,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.lanDiscoveryService,
     required super.networkHostScanner,
     required super.deviceRegistry,
+    required super.internetPeerEndpointStore,
     required super.trustedLanPeerStore,
     required super.friendRepository,
     required super.appSettingsRepository,
