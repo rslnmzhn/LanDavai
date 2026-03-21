@@ -27,6 +27,7 @@ import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
+import 'device_registry.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
@@ -287,6 +288,7 @@ class DiscoveryController extends ChangeNotifier {
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
     required DeviceAliasRepository deviceAliasRepository,
+    required DeviceRegistry deviceRegistry,
     required FriendRepository friendRepository,
     required AppSettingsRepository appSettingsRepository,
     required AppNotificationService appNotificationService,
@@ -302,6 +304,7 @@ class DiscoveryController extends ChangeNotifier {
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceAliasRepository = deviceAliasRepository,
+       _deviceRegistry = deviceRegistry,
        _friendRepository = friendRepository,
        _appSettingsRepository = appSettingsRepository,
        _appNotificationService = appNotificationService,
@@ -338,6 +341,7 @@ class DiscoveryController extends ChangeNotifier {
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
   final DeviceAliasRepository _deviceAliasRepository;
+  final DeviceRegistry _deviceRegistry;
   final FriendRepository _friendRepository;
   final AppSettingsRepository _appSettingsRepository;
   final AppNotificationService _appNotificationService;
@@ -1273,7 +1277,11 @@ class DiscoveryController extends ChangeNotifier {
     required DiscoveredDevice device,
     required String alias,
   }) async {
-    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    final mac = _resolveStableDeviceMac(
+      ip: device.ip,
+      observedMac: device.macAddress,
+      existingMac: device.macAddress,
+    );
     if (mac == null) {
       _errorMessage = 'Cannot rename device until MAC address is known.';
       notifyListeners();
@@ -1282,16 +1290,9 @@ class DiscoveryController extends ChangeNotifier {
 
     final normalizedAlias = alias.trim();
     try {
-      await _deviceAliasRepository.setAlias(
-        macAddress: mac,
-        alias: normalizedAlias,
-      );
+      await _deviceRegistry.setAlias(macAddress: mac, alias: normalizedAlias);
+      _syncLegacyAliasProjection();
       final aliasOrNull = normalizedAlias.isEmpty ? null : normalizedAlias;
-      if (normalizedAlias.isEmpty) {
-        _aliasByMac.remove(mac);
-      } else {
-        _aliasByMac[mac] = normalizedAlias;
-      }
 
       _devicesByIp.updateAll((_, value) {
         if (DeviceAliasRepository.normalizeMac(value.macAddress) != mac) {
@@ -2619,13 +2620,26 @@ class DiscoveryController extends ChangeNotifier {
 
       final seenMacToIp = <String, String>{};
       for (final host in hosts.entries) {
-        final ip = host.key;
         final normalizedMac = DeviceAliasRepository.normalizeMac(host.value);
+        if (normalizedMac != null) {
+          seenMacToIp[normalizedMac] = host.key;
+        }
+      }
+      if (seenMacToIp.isNotEmpty) {
+        await _deviceRegistry.recordSeenDevices(seenMacToIp);
+      }
+
+      for (final host in hosts.entries) {
+        final ip = host.key;
         final existing =
             _devicesByIp[ip] ?? DiscoveredDevice(ip: ip, lastSeen: now);
-        final aliasName = normalizedMac == null
-            ? existing.aliasName
-            : _aliasByMac[normalizedMac];
+        final normalizedMac = _resolveStableDeviceMac(
+          ip: ip,
+          observedMac: host.value,
+          existingMac: existing.macAddress,
+        );
+        final aliasName =
+            _deviceRegistry.aliasForMac(normalizedMac) ?? existing.aliasName;
         final isTrusted =
             normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
 
@@ -2636,13 +2650,6 @@ class DiscoveryController extends ChangeNotifier {
           isReachable: true,
           lastSeen: now,
         );
-        if (normalizedMac != null) {
-          seenMacToIp[normalizedMac] = ip;
-        }
-      }
-
-      if (seenMacToIp.isNotEmpty) {
-        await _deviceAliasRepository.recordSeenDevices(seenMacToIp);
       }
 
       final staleIps = <String>[];
@@ -2687,10 +2694,12 @@ class DiscoveryController extends ChangeNotifier {
   void _onAppDetected(AppPresenceEvent event) {
     _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
-    final normalizedMac = DeviceAliasRepository.normalizeMac(
-      existing?.macAddress,
+    final normalizedMac = _resolveStableDeviceMac(
+      ip: event.ip,
+      observedMac: null,
+      existingMac: existing?.macAddress,
     );
-    final aliasName = normalizedMac == null ? null : _aliasByMac[normalizedMac];
+    final aliasName = _deviceRegistry.aliasForMac(normalizedMac);
     final isTrusted =
         normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
@@ -3304,10 +3313,14 @@ class DiscoveryController extends ChangeNotifier {
     mapped.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     _remoteClipboardByOwnerIp[event.ownerIp] = mapped;
 
-    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
-    final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
-    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
     final existing = _devicesByIp[event.ownerIp];
+    final ownerMac = _resolveStableDeviceMac(
+      ip: event.ownerIp,
+      observedMac: event.ownerMacAddress,
+      existingMac: existing?.macAddress,
+    );
+    final aliasName = _deviceRegistry.aliasForMac(ownerMac);
+    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
     _devicesByIp[event.ownerIp] =
         (existing ??
                 DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
@@ -3559,12 +3572,14 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _handleShareCatalog(ShareCatalogEvent event) async {
     try {
-      final ownerMac = DeviceAliasRepository.normalizeMac(
-        event.ownerMacAddress,
-      );
-      final aliasName = ownerMac == null ? null : _aliasByMac[ownerMac];
-      final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
       final existing = _devicesByIp[event.ownerIp];
+      final ownerMac = _resolveStableDeviceMac(
+        ip: event.ownerIp,
+        observedMac: event.ownerMacAddress,
+        existingMac: existing?.macAddress,
+      );
+      final aliasName = _deviceRegistry.aliasForMac(ownerMac);
+      final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
       _devicesByIp[event.ownerIp] =
           (existing ??
                   DiscoveredDevice(
@@ -4814,15 +4829,39 @@ class DiscoveryController extends ChangeNotifier {
     developer.log(message, name: 'DiscoveryController');
   }
 
+  String? _resolveStableDeviceMac({
+    required String ip,
+    required String? observedMac,
+    required String? existingMac,
+  }) {
+    final normalizedObservedMac = DeviceAliasRepository.normalizeMac(
+      observedMac,
+    );
+    if (normalizedObservedMac != null) {
+      return normalizedObservedMac;
+    }
+
+    final knownMac = _deviceRegistry.macForIp(ip);
+    if (knownMac != null) {
+      return knownMac;
+    }
+
+    return DeviceAliasRepository.normalizeMac(existingMac);
+  }
+
+  void _syncLegacyAliasProjection() {
+    _aliasByMac
+      ..clear()
+      ..addAll(_deviceRegistry.aliases);
+  }
+
   Future<void> _loadAliases() async {
     try {
-      final aliases = await _deviceAliasRepository.loadAliasMap();
-      _aliasByMac
-        ..clear()
-        ..addAll(aliases);
-      _log('Loaded aliases from DB. count=${aliases.length}');
+      await _deviceRegistry.load();
+      _syncLegacyAliasProjection();
+      _log('Loaded aliases from registry. count=${_aliasByMac.length}');
     } catch (error) {
-      _log('Failed to load aliases from DB: $error');
+      _log('Failed to load aliases from registry: $error');
     }
   }
 

@@ -62,6 +62,30 @@ class DeviceAliasRepository {
     return aliases;
   }
 
+  Future<Map<String, String>> loadLastKnownIpMap() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      AppDatabase.knownDevicesTable,
+      columns: <String>['mac_address', 'last_known_ip'],
+      where: 'last_known_ip IS NOT NULL AND LENGTH(TRIM(last_known_ip)) > 0',
+    );
+
+    final lastKnownIps = <String, String>{};
+    for (final row in rows) {
+      final mac = row['mac_address'] as String?;
+      final ip = row['last_known_ip'] as String?;
+      if (mac == null || ip == null) {
+        continue;
+      }
+      final normalizedIp = ip.trim();
+      if (normalizedIp.isEmpty) {
+        continue;
+      }
+      lastKnownIps[mac] = normalizedIp;
+    }
+    return lastKnownIps;
+  }
+
   Future<Set<String>> loadTrustedMacs() async {
     final db = await _database.database;
     final rows = await db.query(

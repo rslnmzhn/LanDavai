@@ -8,6 +8,7 @@ import '../core/utils/path_opener.dart';
 import '../features/clipboard/data/clipboard_capture_service.dart';
 import '../features/clipboard/data/clipboard_history_repository.dart';
 import '../features/discovery/application/discovery_controller.dart';
+import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/data/device_alias_repository.dart';
 import '../features/discovery/data/friend_repository.dart';
 import '../features/discovery/data/lan_discovery_service.dart';
@@ -95,9 +96,13 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
 
   DiscoveryController _buildDiscoveryController() {
     final database = AppDatabase.instance;
+    final deviceAliasRepository = DeviceAliasRepository(database: database);
     final settingsRepository = AppSettingsRepository(database: database);
     return DiscoveryController(
-      deviceAliasRepository: DeviceAliasRepository(database: database),
+      deviceAliasRepository: deviceAliasRepository,
+      deviceRegistry: DeviceRegistry(
+        deviceAliasRepository: deviceAliasRepository,
+      ),
       friendRepository: FriendRepository(database: database),
       appSettingsRepository: settingsRepository,
       appNotificationService: AppNotificationService.instance,
