@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class AppPresenceEvent {
@@ -497,6 +498,78 @@ class LanDiscoveryService {
     'tap',
     'bridge',
   ];
+
+  @visibleForTesting
+  static const Map<String, String> protocolPrefixesForTest = <String, String>{
+    'discover': _discoverPrefix,
+    'response': _responsePrefix,
+    'transferRequest': _transferRequestPrefix,
+    'transferDecision': _transferDecisionPrefix,
+    'friendRequest': _friendRequestPrefix,
+    'friendResponse': _friendResponsePrefix,
+    'shareQuery': _shareQueryPrefix,
+    'shareCatalog': _shareCatalogPrefix,
+    'downloadRequest': _downloadRequestPrefix,
+    'thumbnailSyncRequest': _thumbnailSyncRequestPrefix,
+    'thumbnailPacket': _thumbnailPacketPrefix,
+    'clipboardQuery': _clipboardQueryPrefix,
+    'clipboardCatalog': _clipboardCatalogPrefix,
+  };
+
+  @visibleForTesting
+  void setLocalPeerIdForTest(String value) {
+    _localPeerId = value.trim();
+  }
+
+  @visibleForTesting
+  String buildDiscoveryMessageForTest(String deviceName) {
+    final payload = _encodeDiscoveryPayload(deviceName);
+    return '$_discoverPrefix|$_instanceId|$payload';
+  }
+
+  @visibleForTesting
+  Map<String, Object?>? parseDiscoveryMessageForTest(String message) {
+    final packet = _parseDiscoveryPacket(message);
+    if (packet == null) {
+      return null;
+    }
+    return <String, Object?>{
+      'prefix': packet.prefix,
+      'instanceId': packet.instanceId,
+      'deviceName': packet.deviceName,
+      'operatingSystem': packet.operatingSystem,
+      'deviceType': packet.deviceType,
+      'peerId': packet.peerId,
+    };
+  }
+
+  @visibleForTesting
+  List<SharedCatalogEntryItem> fitShareCatalogEntriesForTest(
+    List<SharedCatalogEntryItem> entries,
+  ) {
+    return _fitShareCatalogEntries(entries);
+  }
+
+  @visibleForTesting
+  static String encodeEnvelopeForTest({
+    required String prefix,
+    required Map<String, Object?> payload,
+  }) {
+    final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
+    return '$prefix|$encodedPayload';
+  }
+
+  @visibleForTesting
+  static Map<String, dynamic>? decodeEnvelopeForTest({
+    required String message,
+    required String expectedPrefix,
+  }) {
+    final service = LanDiscoveryService();
+    return service._decodeTransferEnvelope(
+      message: message,
+      expectedPrefix: expectedPrefix,
+    );
+  }
 
   Future<void> start({
     required String deviceName,
