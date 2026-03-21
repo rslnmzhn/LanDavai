@@ -15,11 +15,13 @@ import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
+import '../application/discovery_read_model.dart';
 import '../domain/discovered_device.dart';
 
 class DiscoveryPage extends StatefulWidget {
   const DiscoveryPage({
     required this.controller,
+    required this.readModel,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -27,6 +29,7 @@ class DiscoveryPage extends StatefulWidget {
   });
 
   final DiscoveryController controller;
+  final DiscoveryReadModel readModel;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -42,6 +45,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   bool _isLoadingShareableVideoFiles = false;
 
   DiscoveryController get _controller => widget.controller;
+  DiscoveryReadModel get _readModel => widget.readModel;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -95,10 +99,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _controller,
+      animation: Listenable.merge(<Listenable>[_controller, _readModel]),
       builder: (context, _) {
-        final devices = _controller.devices;
-        final isLeftHanded = _controller.settings.isLeftHandedMode;
+        final devices = _readModel.devices;
+        final isLeftHanded = _readModel.settings.isLeftHandedMode;
         final isTabletLayout = MediaQuery.sizeOf(context).width >= 900;
         final sideMenu = _SideMenuDrawer(
           onOpenFriends: _openFriendsSheet,
@@ -162,10 +166,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
             children: [
-              _NetworkSummaryCard(
-                controller: _controller,
-                total: devices.length,
-              ),
+              _NetworkSummaryCard(readModel: _readModel, total: devices.length),
               const SizedBox(height: AppSpacing.md),
               if (_controller.errorMessage != null) ...[
                 _ErrorBanner(message: _controller.errorMessage!),
@@ -193,7 +194,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                         itemBuilder: (_, index) => _DeviceTile(
                           device: devices[index],
                           selected:
-                              _controller.selectedDevice?.ip ==
+                              _readModel.selectedDevice?.ip ==
                               devices[index].ip,
                           onSelect: _controller.selectDeviceByIp,
                           onOpenActionsMenu: _openDeviceActionsMenu,
@@ -285,9 +286,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           child: DefaultTabController(
             length: 2,
             child: AnimatedBuilder(
-              animation: _controller,
+              animation: Listenable.merge(<Listenable>[
+                _controller,
+                _readModel,
+              ]),
               builder: (context, _) {
-                final friends = _controller.friendDevices;
+                final friends = _readModel.friendDevices;
                 final requests = _controller.incomingFriendRequests;
                 return SafeArea(
                   child: Padding(
@@ -467,7 +471,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       builder: (context) {
         return FractionallySizedBox(
           heightFactor: 0.9,
-          child: ClipboardSheet(controller: _controller),
+          child: ClipboardSheet(controller: _controller, readModel: _readModel),
         );
       },
     );
@@ -479,10 +483,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       isScrollControlled: true,
       builder: (context) {
         return AnimatedBuilder(
-          animation: _controller,
+          animation: Listenable.merge(<Listenable>[_controller, _readModel]),
           builder: (context, _) {
             return AppSettingsSheet(
-              settings: _controller.settings,
+              settings: _readModel.settings,
               onBackgroundIntervalChanged: (interval) {
                 unawaited(_controller.updateBackgroundScanInterval(interval));
               },
@@ -762,7 +766,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       );
       return;
     }
-    final password = _controller.settings.videoLinkPassword.trim();
+    final password = _readModel.settings.videoLinkPassword.trim();
     if (password.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Set a web-link password in Settings.')),
@@ -1429,14 +1433,14 @@ class _SideMenuActions extends StatelessWidget {
 }
 
 class _NetworkSummaryCard extends StatelessWidget {
-  const _NetworkSummaryCard({required this.controller, required this.total});
+  const _NetworkSummaryCard({required this.readModel, required this.total});
 
-  final DiscoveryController controller;
+  final DiscoveryReadModel readModel;
   final int total;
 
   @override
   Widget build(BuildContext context) {
-    final selected = controller.selectedDevice;
+    final selected = readModel.selectedDevice;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -1457,24 +1461,24 @@ class _NetworkSummaryCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    controller.localName,
+                    readModel.localName,
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    'Local IP: ${controller.localIp ?? "Detecting..."}',
+                    'Local IP: ${readModel.localIp ?? "Detecting..."}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    'Devices: $total • App detected: ${controller.appDetectedCount}',
+                    'Devices: $total • App detected: ${readModel.appDetectedCount}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    controller.isAppInForeground
-                        ? 'Auto scan interval: ${controller.settings.backgroundScanInterval.label}'
-                        : 'Background mode: ${controller.settings.backgroundScanInterval.label}',
+                    readModel.isAppInForeground
+                        ? 'Auto scan interval: ${readModel.settings.backgroundScanInterval.label}'
+                        : 'Background mode: ${readModel.settings.backgroundScanInterval.label}',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),

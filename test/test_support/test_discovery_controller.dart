@@ -4,6 +4,7 @@ import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
+import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
@@ -26,10 +27,12 @@ class TestDiscoveryControllerHarness {
   TestDiscoveryControllerHarness._({
     required this.databaseHarness,
     required this.controller,
+    required this.readModel,
   });
 
   final TestAppDatabaseHarness databaseHarness;
   final TrackingDiscoveryController controller;
+  final DiscoveryReadModel readModel;
 
   static Future<TestDiscoveryControllerHarness> create() async {
     final databaseHarness = await TestAppDatabaseHarness.create(
@@ -44,17 +47,19 @@ class TestDiscoveryControllerHarness {
     final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
     );
+    final internetPeerEndpointStore = InternetPeerEndpointStore(
+      friendRepository: friendRepository,
+    );
+    final trustedLanPeerStore = TrustedLanPeerStore(
+      deviceRegistry: deviceRegistry,
+      deviceAliasRepository: deviceAliasRepository,
+    );
     final controller = TrackingDiscoveryController(
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
       deviceRegistry: deviceRegistry,
-      internetPeerEndpointStore: InternetPeerEndpointStore(
-        friendRepository: friendRepository,
-      ),
-      trustedLanPeerStore: TrustedLanPeerStore(
-        deviceRegistry: deviceRegistry,
-        deviceAliasRepository: deviceAliasRepository,
-      ),
+      internetPeerEndpointStore: internetPeerEndpointStore,
+      trustedLanPeerStore: trustedLanPeerStore,
       friendRepository: friendRepository,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
@@ -72,14 +77,23 @@ class TestDiscoveryControllerHarness {
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
     );
+    final readModel = DiscoveryReadModel(
+      legacyController: controller,
+      deviceRegistry: deviceRegistry,
+      internetPeerEndpointStore: internetPeerEndpointStore,
+      trustedLanPeerStore: trustedLanPeerStore,
+      settingsStore: settingsStore,
+    );
 
     return TestDiscoveryControllerHarness._(
       databaseHarness: databaseHarness,
       controller: controller,
+      readModel: readModel,
     );
   }
 
   Future<void> dispose() async {
+    readModel.dispose();
     if (!controller.wasDisposed) {
       controller.dispose();
     }

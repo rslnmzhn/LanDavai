@@ -27,6 +27,7 @@ void main() {
         MaterialApp(
           home: DiscoveryPage(
             controller: harness.controller,
+            readModel: harness.readModel,
             desktopWindowService: desktopWindowService,
             transferStorageService: transferStorageService,
             isBoundaryReady: false,
@@ -54,6 +55,7 @@ void main() {
         MaterialApp(
           home: DiscoveryPageEntry(
             controller: harness.controller,
+            readModel: harness.readModel,
             desktopWindowService: desktopWindowService,
           ),
         ),

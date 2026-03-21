@@ -6,12 +6,18 @@ import 'package:flutter/services.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
 import '../../discovery/application/discovery_controller.dart';
+import '../../discovery/application/discovery_read_model.dart';
 import '../../discovery/domain/discovered_device.dart';
 
 class ClipboardSheet extends StatefulWidget {
-  const ClipboardSheet({required this.controller, super.key});
+  const ClipboardSheet({
+    required this.controller,
+    required this.readModel,
+    super.key,
+  });
 
   final DiscoveryController controller;
+  final DiscoveryReadModel readModel;
 
   @override
   State<ClipboardSheet> createState() => _ClipboardSheetState();
@@ -30,7 +36,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
   }
 
   List<DiscoveredDevice> get _availableRemoteDevices {
-    return widget.controller.friendDevices
+    return widget.readModel.friendDevices
         .where((device) => device.isAppDetected)
         .toList(growable: false);
   }
@@ -78,7 +84,10 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: AnimatedBuilder(
-        animation: widget.controller,
+        animation: Listenable.merge(<Listenable>[
+          widget.controller,
+          widget.readModel,
+        ]),
         builder: (context, _) {
           final localEntries = widget.controller.clipboardHistory;
           final remoteDevices = _availableRemoteDevices;

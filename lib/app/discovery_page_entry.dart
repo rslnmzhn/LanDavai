@@ -8,6 +8,7 @@ import '../core/utils/path_opener.dart';
 import '../features/clipboard/data/clipboard_capture_service.dart';
 import '../features/clipboard/data/clipboard_history_repository.dart';
 import '../features/discovery/application/discovery_controller.dart';
+import '../features/discovery/application/discovery_read_model.dart';
 import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/application/internet_peer_endpoint_store.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
@@ -30,12 +31,17 @@ class DiscoveryPageEntry extends StatefulWidget {
   const DiscoveryPageEntry({
     super.key,
     this.controller,
+    this.readModel,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
-  });
+  }) : assert(
+         controller == null || readModel != null,
+         'DiscoveryPageEntry requires readModel when controller is injected.',
+       );
 
   final DiscoveryController? controller;
+  final DiscoveryReadModel? readModel;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
   final bool autoStartController;
@@ -46,18 +52,30 @@ class DiscoveryPageEntry extends StatefulWidget {
 
 class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryController _controller;
+  late final DiscoveryReadModel _readModel;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
+  late final bool _ownsReadModel;
   bool _isBoundaryReady = false;
 
   @override
   void initState() {
     super.initState();
-    _ownsController = widget.controller == null;
     _transferStorageService =
         widget.transferStorageService ?? TransferStorageService();
-    _controller = widget.controller ?? _buildDiscoveryController();
+    if (widget.controller != null) {
+      _controller = widget.controller!;
+      _readModel = widget.readModel!;
+      _ownsController = false;
+      _ownsReadModel = false;
+    } else {
+      final boundary = _buildDiscoveryBoundary();
+      _controller = boundary.controller;
+      _readModel = boundary.readModel;
+      _ownsController = true;
+      _ownsReadModel = true;
+    }
     _desktopWindowService =
         widget.desktopWindowService ?? DesktopWindowService();
 
@@ -68,6 +86,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
 
   @override
   void dispose() {
+    if (_ownsReadModel) {
+      _readModel.dispose();
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -78,6 +99,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   Widget build(BuildContext context) {
     return DiscoveryPage(
       controller: _controller,
+      readModel: _readModel,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
       isBoundaryReady: _isBoundaryReady,
@@ -87,7 +109,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   Future<void> _initializeBoundary() async {
     await _controller.start();
     await _desktopWindowService.setMinimizeToTrayEnabled(
-      _controller.settings.minimizeToTrayOnClose,
+      _readModel.settings.minimizeToTrayOnClose,
     );
     if (!mounted) {
       return;
@@ -97,7 +119,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     });
   }
 
-  DiscoveryController _buildDiscoveryController() {
+  _DiscoveryBoundary _buildDiscoveryBoundary() {
     final database = AppDatabase.instance;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
@@ -115,7 +137,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     );
-    return DiscoveryController(
+    final controller = DiscoveryController(
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
@@ -140,5 +162,20 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
         allowTcpFallback: Platform.isAndroid,
       ),
     );
+    final readModel = DiscoveryReadModel(
+      legacyController: controller,
+      deviceRegistry: deviceRegistry,
+      internetPeerEndpointStore: internetPeerEndpointStore,
+      trustedLanPeerStore: trustedLanPeerStore,
+      settingsStore: settingsStore,
+    );
+    return _DiscoveryBoundary(controller: controller, readModel: readModel);
   }
+}
+
+class _DiscoveryBoundary {
+  const _DiscoveryBoundary({required this.controller, required this.readModel});
+
+  final DiscoveryController controller;
+  final DiscoveryReadModel readModel;
 }
