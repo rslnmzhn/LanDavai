@@ -2,7 +2,7 @@
 
 ## 1. Scope
 
-- Вынести packet encode/decode authority из `LanDiscoveryService`.
+- Вынести packet encode and decode authority из `LanDiscoveryService`.
 - Оставить wire semantics неизменными.
 - Не входит: transport lifecycle extraction, scenario handler split, facade deletion.
 
@@ -15,19 +15,21 @@
 
 ## 3. Problem slice
 
-Master plan фиксирует, что packet constants, serialization и decode logic сидят в одном infra-class. Этот slice выделен отдельно, потому что codec parity нужно проверять независимо от transport ownership.
+Master plan фиксирует, что packet constants, serialization, и decode logic сидят в одном infra-class. Этот slice выделен отдельно, потому что codec parity нужно проверять независимо от transport ownership.
 
 ## 4. Legacy owner and target owner
 
 - `Legacy owner`: `LanDiscoveryService`
 - `Target owner`: packet codec set
 - `State seam closed`: wire serialization separate from transport and application orchestration
-- `Single write authority after cutover`: packet codec set for encode/decode semantics
+- `Single write authority after cutover`: packet codec set for encode and decode semantics
+- `Forbidden writers`: `LanDiscoveryService` internal helpers, handlers building ad-hoc envelopes, widgets or controller code encoding packets directly
+- `Forbidden dual-write paths`: service-internal codec paths in parallel with the extracted codec set for the same packet families
 
 ## 5. Source of truth impact
 
 - что сейчас является truth:
-  - packet encode/decode logic inside `LanDiscoveryService`
+  - packet encode and decode logic inside `LanDiscoveryService`
 - что станет truth:
   - packet codec set
 - что станет projection:
@@ -40,18 +42,18 @@ Master plan фиксирует, что packet constants, serialization и decode
 ## 6. Read/write cutover
 
 - `Legacy read path`: incoming packets decoded by service-internal helpers
-- `Target read path`: handlers decode through codec set
+- `Target read path`: handlers decode through packet codec set
 - `Read switch point`: no packet decode path depends on service-internal codec methods
 - `Legacy write path`: outgoing packet payloads built in `LanDiscoveryService`
-- `Target write path`: packet payloads built through codec set
-- `Write switch point`: all send flows build envelopes via codec set
+- `Target write path`: outgoing payloads built through packet codec set
+- `Write switch point`: all send flows build envelopes via the codec set
 - `Dual-read allowed?`: yes, in parity tests only
 - `Dual-write allowed?`: no
 
 ## 7. Temporary bridge
 
 - `Bridge name`: `ProtocolDispatchFacade`
-- `Why it exists`: keep public send/decode surface stable during codec extraction
+- `Why it exists`: keep public send and decode surface stable during codec extraction
 - `Phase introduced`: Phase 4
 - `Max allowed lifetime`: through Phase 4 only
 - `Deletion phase`: `21_phase_4_protocol_dispatch_facade_removal.md`
@@ -60,10 +62,11 @@ Master plan фиксирует, что packet constants, serialization и decode
 ## 8. Concrete migration steps
 
 1. inventory packet constants and envelope helpers
-2. route encode/decode through codec set
-3. compare old/new decode outputs under protocol parity tests
+2. route encode and decode through packet codec set
+3. compare old and new decode outputs under parity tests
 4. freeze packet identifiers and envelope semantics
 5. mark service-internal codec paths as legacy-only pending deletion
+6. run `GATE-02`
 
 ## 9. Evidence and source anchors
 
@@ -71,17 +74,23 @@ Master plan фиксирует, что packet constants, serialization и decode
 - `Source of truth`:
   - `docs/refactor_master_plan.md`
   - `lib/features/discovery/data/lan_discovery_service.dart` / packet constants, `_decodeTransferEnvelope`, send methods
+- `Compatibility anchors`:
+  - UDP packet envelope semantics
+  - handshake identifiers visible from Dart
+  - `LANDA_DISCOVER_V1`
+  - `LANDA_HERE_V1`
+  - `LANDA_TRANSFER_REQUEST_V1`
+  - `LANDA_CLIPBOARD_CATALOG_V1`
 
 ## 10. Test gate
 
-- До начала нужны: protocol compatibility tests
-- Подтверждают cutover: encode/decode parity for existing packet families
-- Hard stop failure:
-  - packet payload shape drifts from current wire contract
+- `До начала нужны`: `GATE-02`
+- `Подтверждают cutover`: encode and decode parity for existing packet families
+- `Hard stop failure`: packet payload shape drifts from the current wire contract
 
 ## 11. Completion criteria
 
-- packet encode/decode authority no longer lives in `LanDiscoveryService`
+- packet encode and decode authority no longer lives in `LanDiscoveryService`
 - packet identifiers and envelope semantics remain unchanged
 
 ## 12. Deletions unlocked
@@ -90,5 +99,5 @@ Master plan фиксирует, что packet constants, serialization и decode
 
 ## 13. Anti-regression notes
 
-- запрещено менять packet identifiers как побочный эффект “чистки”
+- запрещено менять packet identifiers как побочный эффект чистки
 - запрещён helper split, если write authority остаётся в `LanDiscoveryService`

@@ -2,9 +2,9 @@
 
 ## 1. Scope
 
-- Переключить files/discovery read paths с controller mirrors and direct repository reads на `SharedCacheCatalog`.
+- Переключить files and discovery read paths с controller mirrors and direct repository reads на `SharedCacheCatalog`.
 - Сделать catalog canonical read boundary before mirror deletion.
-- Не входит: metadata/index writer activation and mirror deletion themselves.
+- Не входит: metadata or index writer activation; это уже закрыто `10` and `11`.
 
 ## 2. Source linkage
 
@@ -15,7 +15,7 @@
 
 ## 3. Problem slice
 
-Master plan требовал отдельный read cutover slice для shared cache. Без него mirror removal в `12` становится небезопасным, а files/discovery продолжают читать конкурирующие truths.
+Master plan требовал отдельный read cutover slice for shared cache. Без него mirror removal in `12` становится небезопасным, а files and discovery продолжают читать competing truths.
 
 ## 4. Legacy owner and target owner
 
@@ -23,6 +23,8 @@ Master plan требовал отдельный read cutover slice для shared
 - `Target owner`: no new owner; `SharedCacheCatalog` read API becomes canonical
 - `State seam closed`: cache reads come from one catalog boundary only
 - `Single write authority after cutover`: unchanged from `10`; `SharedCacheCatalog`
+- `Forbidden writers`: `DiscoveryController`, `SharedFolderCacheRepository` broad read helpers promoted back into writers, widgets, feature callbacks that refresh mirrors
+- `Forbidden dual-write paths`: catalog writes combined with controller mirror refresh; direct repository read fallbacks that implicitly recreate mirror truth
 
 ## 5. Source of truth impact
 
@@ -31,20 +33,20 @@ Master plan требовал отдельный read cutover slice для shared
 - что станет truth:
   - `SharedCacheCatalog` for all cache-facing reads
 - что станет projection:
-  - files/discovery view models rebuilt from catalog queries
+  - files and discovery view models rebuilt from catalog queries
 - что станет cache:
-  - JSON index files remain index artifacts under explicit owner
+  - shared cache JSON index files remain index artifacts under explicit owner
 - что станет temporary bridge only:
   - `SharedCacheCatalogBridge`
 
 ## 6. Read/write cutover
 
-- `Legacy read path`: `DiscoveryController` mirrors and direct repository/index reads
-- `Target read path`: `SharedCacheCatalog` query surface
+- `Legacy read path`: `DiscoveryController` mirrors and direct repository or index reads
+- `Target read path`: `SharedCacheCatalog` query surface only
 - `Read switch point`: discovery and files no longer read cache state from controller or repository directly
-- `Legacy write path`: unchanged from pre-`10`/`11` state for history only; this workpack does not change writer
+- `Legacy write path`: unchanged from `10` and `11`; this workpack does not change the writer
 - `Target write path`: unchanged; `SharedCacheCatalog` remains sole writer
-- `Write switch point`: not applicable in this workpack
+- `Write switch point`: not applicable in this workpack because writer authority is already set
 - `Dual-read allowed?`: yes, until parity proof is complete
 - `Dual-write allowed?`: no
 
@@ -59,11 +61,11 @@ Master plan требовал отдельный read cutover slice для shared
 
 ## 8. Concrete migration steps
 
-1. inventory every files/discovery read path still bypassing catalog
+1. inventory every files and discovery read path still bypassing catalog
 2. switch those reads to catalog queries
 3. keep temporary dual-read only for parity verification
-4. block new direct repository/mirror reads
-5. run shared cache consistency and UI smoke tests
+4. block new direct repository and mirror reads
+5. run `GATE-05`, `GATE-06`, and `GATE-07`
 6. record proof that mirror removal is now safe
 
 ## 9. Evidence and source anchors
@@ -74,13 +76,15 @@ Master plan требовал отдельный read cutover slice для shared
   - `lib/features/discovery/application/discovery_controller.dart` / `_ownerSharedCaches`, `_ownerIndexEntriesByCacheId`
   - `lib/features/transfer/data/shared_folder_cache_repository.dart` / `readIndexEntries`, `listCaches`
   - `lib/features/files/presentation/file_explorer_page.dart` / files feature entry boundary
+- `Compatibility anchors`:
+  - `shared_folder_caches`
+  - shared cache JSON index files
 
 ## 10. Test gate
 
-- До начала нужны: shared cache consistency tests, UI smoke tests
-- Подтверждают cutover: discovery/files behave identically when reading from catalog only
-- Hard stop failure:
-  - any production read path still bypasses catalog after claimed switch
+- `До начала нужны`: `GATE-05`, `GATE-06`, `GATE-07`
+- `Подтверждают cutover`: discovery and files behave identically when reading from catalog only
+- `Hard stop failure`: any production read path still bypasses the catalog after claimed switch
 
 ## 11. Completion criteria
 
@@ -95,4 +99,4 @@ Master plan требовал отдельный read cutover slice для shared
 ## 13. Anti-regression notes
 
 - запрещено оставлять mirror fallback under feature flags
-- запрещено introduce direct repository reads “for performance” after cutover
+- запрещено introduce direct repository reads for convenience after cutover
