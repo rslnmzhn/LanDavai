@@ -4,8 +4,8 @@ import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
-import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
+import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -24,76 +24,89 @@ import 'test_support/test_app_database.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
-  late DeviceAliasRepository registryRepository;
-  TrackingDeviceRegistry? registry;
+  late DeviceAliasRepository repository;
+  late DeviceRegistry deviceRegistry;
+  late TrackingTrustedLanPeerStore trustedLanPeerStore;
+  late RecordingLanDiscoveryService lanDiscoveryService;
   DiscoveryController? controller;
 
   setUp(() async {
     harness = await TestAppDatabaseHarness.create(
-      prefix: 'landa_discovery_registry_',
+      prefix: 'landa_discovery_trust_store_',
     );
-    registryRepository = DeviceAliasRepository(database: harness.database);
+    repository = DeviceAliasRepository(database: harness.database);
+    deviceRegistry = DeviceRegistry(deviceAliasRepository: repository);
+    trustedLanPeerStore = TrackingTrustedLanPeerStore(
+      deviceRegistry: deviceRegistry,
+      deviceAliasRepository: repository,
+    );
+    lanDiscoveryService = RecordingLanDiscoveryService();
   });
 
   tearDown(() async {
     controller?.dispose();
-    registry?.dispose();
+    trustedLanPeerStore.dispose();
+    deviceRegistry.dispose();
     await harness.dispose();
   });
 
   test(
-    'renameDeviceAlias resolves stable identity through DeviceRegistry and not controller repository writes',
+    'requestRemoteClipboardHistory reads trust from TrustedLanPeerStore instead of controller mirror',
     () async {
       const mac = 'AA-BB-CC-DD-EE-FF';
-      const ip = '192.168.1.55';
-      registry = TrackingDeviceRegistry(database: harness.database);
-      await registry!.recordSeenDevices(<String, String>{mac: ip});
+      const ip = '192.168.1.80';
+      await deviceRegistry.recordSeenDevices(<String, String>{mac: ip});
+      await trustedLanPeerStore.trustDevice(macAddress: mac);
       controller = _buildController(
         database: harness.database,
-        deviceRegistry: registry!,
-        networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
+        lanDiscoveryService: lanDiscoveryService,
+        deviceRegistry: deviceRegistry,
+        trustedLanPeerStore: trustedLanPeerStore,
       );
 
-      await controller!.renameDeviceAlias(
-        device: DiscoveredDevice(ip: ip, lastSeen: DateTime(2026)),
-        alias: 'Office laptop',
+      await controller!.requestRemoteClipboardHistory(
+        DiscoveredDevice(
+          ip: ip,
+          macAddress: mac,
+          isAppDetected: true,
+          lastSeen: DateTime(2026),
+        ),
       );
 
-      final aliasMap = await registryRepository.loadAliasMap();
-
-      expect(registry!.setAliasCalls, 1);
-      expect(aliasMap['aa:bb:cc:dd:ee:ff'], 'Office laptop');
+      expect(lanDiscoveryService.clipboardQueryCalls, 1);
       expect(controller!.errorMessage, isNull);
+      expect(trustedLanPeerStore.isTrustedMac(mac), isTrue);
     },
   );
 
   test(
-    'refresh records seen devices through DeviceRegistry and projects aliases without direct repository identity writes',
+    'removeDeviceFromFriends revokes trust through TrustedLanPeerStore and does not touch friends table',
     () async {
       const mac = 'AA-BB-CC-DD-EE-FF';
-      const ip = '192.168.1.77';
-      await registryRepository.setAlias(
-        macAddress: mac,
-        alias: 'Office laptop',
-      );
-      registry = TrackingDeviceRegistry(database: harness.database);
-      await registry!.load();
+      await trustedLanPeerStore.trustDevice(macAddress: mac);
       controller = _buildController(
         database: harness.database,
-        deviceRegistry: registry!,
-        networkHostScanner: StubNetworkHostScanner(<String, String?>{ip: mac}),
+        lanDiscoveryService: lanDiscoveryService,
+        deviceRegistry: deviceRegistry,
+        trustedLanPeerStore: trustedLanPeerStore,
       );
 
-      await controller!.refresh();
+      await controller!.removeDeviceFromFriends(
+        DiscoveredDevice(
+          ip: '192.168.1.90',
+          macAddress: mac,
+          isTrusted: true,
+          lastSeen: DateTime(2026),
+        ),
+      );
 
-      final device = controller!.devices.single;
-      final lastKnownIpMap = await registryRepository.loadLastKnownIpMap();
+      final friends = await FriendRepository(
+        database: harness.database,
+      ).listFriends();
 
-      expect(registry!.recordSeenDevicesCalls, 1);
-      expect(device.ip, ip);
-      expect(device.macAddress, 'aa:bb:cc:dd:ee:ff');
-      expect(device.aliasName, 'Office laptop');
-      expect(lastKnownIpMap['aa:bb:cc:dd:ee:ff'], ip);
+      expect(trustedLanPeerStore.revokeTrustCalls, 1);
+      expect(trustedLanPeerStore.isTrustedMac(mac), isFalse);
+      expect(friends, isEmpty);
       expect(controller!.errorMessage, isNull);
     },
   );
@@ -101,18 +114,15 @@ void main() {
 
 DiscoveryController _buildController({
   required AppDatabase database,
+  required LanDiscoveryService lanDiscoveryService,
   required DeviceRegistry deviceRegistry,
-  required NetworkHostScanner networkHostScanner,
+  required TrackingTrustedLanPeerStore trustedLanPeerStore,
 }) {
-  final trustRepository = DeviceAliasRepository(database: database);
   return DiscoveryController(
-    lanDiscoveryService: LanDiscoveryService(),
-    networkHostScanner: networkHostScanner,
+    lanDiscoveryService: lanDiscoveryService,
+    networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
     deviceRegistry: deviceRegistry,
-    trustedLanPeerStore: TrustedLanPeerStore(
-      deviceRegistry: deviceRegistry,
-      deviceAliasRepository: trustRepository,
-    ),
+    trustedLanPeerStore: trustedLanPeerStore,
     friendRepository: FriendRepository(database: database),
     appSettingsRepository: AppSettingsRepository(database: database),
     appNotificationService: AppNotificationService.instance,
@@ -130,27 +140,40 @@ DiscoveryController _buildController({
   );
 }
 
-class TrackingDeviceRegistry extends DeviceRegistry {
-  TrackingDeviceRegistry({required this.database})
-    : super(deviceAliasRepository: DeviceAliasRepository(database: database));
+class TrackingTrustedLanPeerStore extends TrustedLanPeerStore {
+  TrackingTrustedLanPeerStore({
+    required super.deviceRegistry,
+    required super.deviceAliasRepository,
+  });
 
-  final AppDatabase database;
-  int recordSeenDevicesCalls = 0;
-  int setAliasCalls = 0;
+  int trustDeviceCalls = 0;
+  int revokeTrustCalls = 0;
 
   @override
-  Future<void> recordSeenDevices(Map<String, String> macToIp) async {
-    recordSeenDevicesCalls += 1;
-    await super.recordSeenDevices(macToIp);
+  Future<void> trustDevice({required String macAddress}) async {
+    trustDeviceCalls += 1;
+    await super.trustDevice(macAddress: macAddress);
   }
 
   @override
-  Future<void> setAlias({
-    required String macAddress,
-    required String alias,
+  Future<void> revokeTrust({required String macAddress}) async {
+    revokeTrustCalls += 1;
+    await super.revokeTrust(macAddress: macAddress);
+  }
+}
+
+class RecordingLanDiscoveryService extends LanDiscoveryService {
+  int clipboardQueryCalls = 0;
+
+  @override
+  Future<void> sendClipboardQuery({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int maxEntries,
   }) async {
-    setAliasCalls += 1;
-    await super.setAlias(macAddress: macAddress, alias: alias);
+    clipboardQueryCalls += 1;
   }
 }
 

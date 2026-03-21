@@ -5,6 +5,7 @@ import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
+import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
@@ -34,11 +35,15 @@ class TestDiscoveryControllerHarness {
     );
     final database = databaseHarness.database;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
+    final deviceRegistry = DeviceRegistry(
+      deviceAliasRepository: deviceAliasRepository,
+    );
     final controller = TrackingDiscoveryController(
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
-      deviceAliasRepository: deviceAliasRepository,
-      deviceRegistry: DeviceRegistry(
+      deviceRegistry: deviceRegistry,
+      trustedLanPeerStore: TrustedLanPeerStore(
+        deviceRegistry: deviceRegistry,
         deviceAliasRepository: deviceAliasRepository,
       ),
       friendRepository: FriendRepository(database: database),
@@ -77,8 +82,8 @@ class TrackingDiscoveryController extends DiscoveryController {
   TrackingDiscoveryController({
     required super.lanDiscoveryService,
     required super.networkHostScanner,
-    required super.deviceAliasRepository,
     required super.deviceRegistry,
+    required super.trustedLanPeerStore,
     required super.friendRepository,
     required super.appSettingsRepository,
     required super.appNotificationService,

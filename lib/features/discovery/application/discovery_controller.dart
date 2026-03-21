@@ -28,6 +28,7 @@ import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../../transfer/domain/transfer_request.dart';
 import 'device_registry.dart';
+import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
@@ -287,8 +288,8 @@ class DiscoveryController extends ChangeNotifier {
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
-    required DeviceAliasRepository deviceAliasRepository,
     required DeviceRegistry deviceRegistry,
+    required TrustedLanPeerStore trustedLanPeerStore,
     required FriendRepository friendRepository,
     required AppSettingsRepository appSettingsRepository,
     required AppNotificationService appNotificationService,
@@ -303,8 +304,8 @@ class DiscoveryController extends ChangeNotifier {
     required PathOpener pathOpener,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
-       _deviceAliasRepository = deviceAliasRepository,
        _deviceRegistry = deviceRegistry,
+       _trustedLanPeerStore = trustedLanPeerStore,
        _friendRepository = friendRepository,
        _appSettingsRepository = appSettingsRepository,
        _appNotificationService = appNotificationService,
@@ -340,8 +341,8 @@ class DiscoveryController extends ChangeNotifier {
 
   final LanDiscoveryService _lanDiscoveryService;
   final NetworkHostScanner _networkHostScanner;
-  final DeviceAliasRepository _deviceAliasRepository;
   final DeviceRegistry _deviceRegistry;
+  final TrustedLanPeerStore _trustedLanPeerStore;
   final FriendRepository _friendRepository;
   final AppSettingsRepository _appSettingsRepository;
   final AppNotificationService _appNotificationService;
@@ -880,7 +881,7 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    if (_trustedDeviceMacs.contains(mac)) {
+    if (_trustedLanPeerStore.isTrustedMac(mac)) {
       _infoMessage = '${device.displayName} is already in your friends list.';
       notifyListeners();
       return;
@@ -1004,7 +1005,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
-    if (mac == null || !_trustedDeviceMacs.contains(mac)) {
+    if (!_trustedLanPeerStore.isTrustedMac(mac)) {
       _errorMessage =
           'Remote clipboard is available only for confirmed friends.';
       notifyListeners();
@@ -2640,8 +2641,7 @@ class DiscoveryController extends ChangeNotifier {
         );
         final aliasName =
             _deviceRegistry.aliasForMac(normalizedMac) ?? existing.aliasName;
-        final isTrusted =
-            normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+        final isTrusted = _trustedLanPeerStore.isTrustedMac(normalizedMac);
 
         _devicesByIp[ip] = existing.copyWith(
           macAddress: normalizedMac ?? existing.macAddress,
@@ -2700,8 +2700,7 @@ class DiscoveryController extends ChangeNotifier {
       existingMac: existing?.macAddress,
     );
     final aliasName = _deviceRegistry.aliasForMac(normalizedMac);
-    final isTrusted =
-        normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
+    final isTrusted = _trustedLanPeerStore.isTrustedMac(normalizedMac);
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
     final friendName = event.peerId == null
         ? null
@@ -2837,9 +2836,9 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    final isFriendSender =
-        normalizedSenderMac != null &&
-        _trustedDeviceMacs.contains(normalizedSenderMac);
+    final isFriendSender = _trustedLanPeerStore.isTrustedMac(
+      normalizedSenderMac,
+    );
 
     if (isFriendSender) {
       _infoMessage = 'Auto-accepting transfer from friend ${event.senderName}.';
@@ -2872,7 +2871,7 @@ class DiscoveryController extends ChangeNotifier {
     final senderDevice = _devicesByIp[event.requesterIp];
     final senderName = senderDevice?.displayName ?? event.requesterName;
 
-    if (_trustedDeviceMacs.contains(normalizedSenderMac)) {
+    if (_trustedLanPeerStore.isTrustedMac(normalizedSenderMac)) {
       _log('Friend request from known friend $senderName. Auto-accepting.');
       unawaited(
         _lanDiscoveryService.sendFriendResponse(
@@ -3219,7 +3218,7 @@ class DiscoveryController extends ChangeNotifier {
     final requesterMac = DeviceAliasRepository.normalizeMac(
       event.requesterMacAddress,
     );
-    if (requesterMac == null || !_trustedDeviceMacs.contains(requesterMac)) {
+    if (!_trustedLanPeerStore.isTrustedMac(requesterMac)) {
       _log('Clipboard query from ${event.requesterIp} ignored: not a friend.');
       return;
     }
@@ -3320,7 +3319,7 @@ class DiscoveryController extends ChangeNotifier {
       existingMac: existing?.macAddress,
     );
     final aliasName = _deviceRegistry.aliasForMac(ownerMac);
-    final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
+    final trusted = _trustedLanPeerStore.isTrustedMac(ownerMac);
     _devicesByIp[event.ownerIp] =
         (existing ??
                 DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
@@ -3579,7 +3578,7 @@ class DiscoveryController extends ChangeNotifier {
         existingMac: existing?.macAddress,
       );
       final aliasName = _deviceRegistry.aliasForMac(ownerMac);
-      final trusted = ownerMac != null && _trustedDeviceMacs.contains(ownerMac);
+      final trusted = _trustedLanPeerStore.isTrustedMac(ownerMac);
       _devicesByIp[event.ownerIp] =
           (existing ??
                   DiscoveredDevice(
@@ -4064,21 +4063,13 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _loadTrustedDevices() async {
     try {
-      final trustedMacs = await _deviceAliasRepository.loadTrustedMacs();
-      _trustedDeviceMacs
-        ..clear()
-        ..addAll(trustedMacs);
-      _devicesByIp.updateAll((_, value) {
-        final normalizedMac = DeviceAliasRepository.normalizeMac(
-          value.macAddress,
-        );
-        final isTrusted =
-            normalizedMac != null && _trustedDeviceMacs.contains(normalizedMac);
-        return value.copyWith(isTrusted: isTrusted);
-      });
-      _log('Loaded trusted devices from DB. count=${trustedMacs.length}');
+      await _trustedLanPeerStore.load();
+      _syncLegacyTrustedProjection();
+      _log(
+        'Loaded trusted devices from store. count=${_trustedDeviceMacs.length}',
+      );
     } catch (error) {
-      _log('Failed to load trusted devices from DB: $error');
+      _log('Failed to load trusted devices from store: $error');
     }
   }
 
@@ -4091,26 +4082,12 @@ class DiscoveryController extends ChangeNotifier {
       throw ArgumentError('Invalid MAC address: $macAddress');
     }
 
-    await _deviceAliasRepository.setTrusted(
-      macAddress: normalizedMac,
-      isTrusted: isFriend,
-    );
-
     if (isFriend) {
-      _trustedDeviceMacs.add(normalizedMac);
+      await _trustedLanPeerStore.trustDevice(macAddress: normalizedMac);
     } else {
-      _trustedDeviceMacs.remove(normalizedMac);
+      await _trustedLanPeerStore.revokeTrust(macAddress: normalizedMac);
     }
-
-    _devicesByIp.updateAll((_, device) {
-      final candidateMac = DeviceAliasRepository.normalizeMac(
-        device.macAddress,
-      );
-      if (candidateMac != normalizedMac) {
-        return device;
-      }
-      return device.copyWith(isTrusted: isFriend);
-    });
+    _syncLegacyTrustedProjection();
   }
 
   Future<void> _loadSettings() async {
@@ -4853,6 +4830,20 @@ class DiscoveryController extends ChangeNotifier {
     _aliasByMac
       ..clear()
       ..addAll(_deviceRegistry.aliases);
+  }
+
+  void _syncLegacyTrustedProjection() {
+    _trustedDeviceMacs
+      ..clear()
+      ..addAll(_trustedLanPeerStore.trustedMacs);
+    _devicesByIp.updateAll((_, device) {
+      final candidateMac = DeviceAliasRepository.normalizeMac(
+        device.macAddress,
+      );
+      return device.copyWith(
+        isTrusted: _trustedLanPeerStore.isTrustedMac(candidateMac),
+      );
+    });
   }
 
   Future<void> _loadAliases() async {

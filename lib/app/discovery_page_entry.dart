@@ -9,6 +9,7 @@ import '../features/clipboard/data/clipboard_capture_service.dart';
 import '../features/clipboard/data/clipboard_history_repository.dart';
 import '../features/discovery/application/discovery_controller.dart';
 import '../features/discovery/application/device_registry.dart';
+import '../features/discovery/application/trusted_lan_peer_store.dart';
 import '../features/discovery/data/device_alias_repository.dart';
 import '../features/discovery/data/friend_repository.dart';
 import '../features/discovery/data/lan_discovery_service.dart';
@@ -98,11 +99,16 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final database = AppDatabase.instance;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final settingsRepository = AppSettingsRepository(database: database);
-    return DiscoveryController(
+    final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
-      deviceRegistry: DeviceRegistry(
-        deviceAliasRepository: deviceAliasRepository,
-      ),
+    );
+    final trustedLanPeerStore = TrustedLanPeerStore(
+      deviceRegistry: deviceRegistry,
+      deviceAliasRepository: deviceAliasRepository,
+    );
+    return DiscoveryController(
+      deviceRegistry: deviceRegistry,
+      trustedLanPeerStore: trustedLanPeerStore,
       friendRepository: FriendRepository(database: database),
       appSettingsRepository: settingsRepository,
       appNotificationService: AppNotificationService.instance,
