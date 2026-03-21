@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../features/discovery/presentation/discovery_page.dart';
+import 'discovery_page_entry.dart';
 
 Route<dynamic> onGenerateRoute(RouteSettings settings) {
   return MaterialPageRoute<void>(
-    builder: (_) => const DiscoveryPage(),
+    builder: (_) => const DiscoveryPageEntry(),
     settings: settings,
   );
 }

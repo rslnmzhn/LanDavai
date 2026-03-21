@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../features/discovery/presentation/discovery_page.dart';
+import 'discovery_page_entry.dart';
 import 'theme/app_theme.dart';
 
 class LandaApp extends StatelessWidget {
@@ -12,8 +12,7 @@ class LandaApp extends StatelessWidget {
       title: 'Landa',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
-      home: const DiscoveryPage(),
+      home: const DiscoveryPageEntry(),
     );
   }
 }
-

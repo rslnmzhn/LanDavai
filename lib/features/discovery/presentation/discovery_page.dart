@@ -8,32 +8,28 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
-import '../../../core/storage/app_database.dart';
-import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/desktop_window_service.dart';
-import '../../../core/utils/path_opener.dart';
-import '../../history/data/transfer_history_repository.dart';
-import '../../clipboard/data/clipboard_capture_service.dart';
-import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/presentation/file_explorer_page.dart';
-import '../../settings/data/app_settings_repository.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
-import '../../transfer/data/file_hash_service.dart';
-import '../../transfer/data/file_transfer_service.dart';
-import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
-import '../../transfer/data/video_link_share_service.dart';
 import '../application/discovery_controller.dart';
-import '../data/device_alias_repository.dart';
-import '../data/friend_repository.dart';
-import '../data/lan_discovery_service.dart';
-import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
 
 class DiscoveryPage extends StatefulWidget {
-  const DiscoveryPage({super.key});
+  const DiscoveryPage({
+    required this.controller,
+    required this.desktopWindowService,
+    required this.transferStorageService,
+    required this.isBoundaryReady,
+    super.key,
+  });
+
+  final DiscoveryController controller;
+  final DesktopWindowService desktopWindowService;
+  final TransferStorageService transferStorageService;
+  final bool isBoundaryReady;
 
   @override
   State<DiscoveryPage> createState() => _DiscoveryPageState();
@@ -41,55 +37,43 @@ class DiscoveryPage extends StatefulWidget {
 
 class _DiscoveryPageState extends State<DiscoveryPage>
     with WidgetsBindingObserver {
-  late final DiscoveryController _controller;
-  final DesktopWindowService _desktopWindowService = DesktopWindowService();
   List<ShareableVideoFile> _shareableVideoFiles = const <ShareableVideoFile>[];
   String? _selectedShareableVideoId;
   bool _isLoadingShareableVideoFiles = false;
+
+  DiscoveryController get _controller => widget.controller;
+  DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
+  TransferStorageService get _transferStorageService =>
+      widget.transferStorageService;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    final settingsRepository = AppSettingsRepository(
-      database: AppDatabase.instance,
-    );
-    _controller = DiscoveryController(
-      deviceAliasRepository: DeviceAliasRepository(
-        database: AppDatabase.instance,
-      ),
-      friendRepository: FriendRepository(database: AppDatabase.instance),
-      appSettingsRepository: settingsRepository,
-      appNotificationService: AppNotificationService.instance,
-      transferHistoryRepository: TransferHistoryRepository(
-        database: AppDatabase.instance,
-      ),
-      clipboardHistoryRepository: ClipboardHistoryRepository(
-        database: AppDatabase.instance,
-      ),
-      clipboardCaptureService: ClipboardCaptureService(),
-      sharedFolderCacheRepository: SharedFolderCacheRepository(
-        database: AppDatabase.instance,
-      ),
-      fileHashService: FileHashService(),
-      fileTransferService: FileTransferService(),
-      transferStorageService: TransferStorageService(),
-      videoLinkShareService: VideoLinkShareService(),
-      pathOpener: PathOpener(),
-      lanDiscoveryService: LanDiscoveryService(),
-      networkHostScanner: NetworkHostScanner(
-        allowTcpFallback: Platform.isAndroid,
-      ),
-    );
     _controller.addListener(_handleInfoMessages);
-    unawaited(_initializeController());
+    if (widget.isBoundaryReady) {
+      unawaited(_reloadShareableVideoFiles());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DiscoveryPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleInfoMessages);
+      widget.controller.addListener(_handleInfoMessages);
+      if (widget.isBoundaryReady) {
+        unawaited(_reloadShareableVideoFiles());
+      }
+    } else if (!oldWidget.isBoundaryReady && widget.isBoundaryReady) {
+      unawaited(_reloadShareableVideoFiles());
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_handleInfoMessages);
-    _controller.dispose();
     super.dispose();
   }
 
@@ -97,17 +81,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final isForeground = state == AppLifecycleState.resumed;
     _controller.setAppForegroundState(isForeground);
-  }
-
-  Future<void> _initializeController() async {
-    await _controller.start();
-    if (!mounted) {
-      return;
-    }
-    await _reloadShareableVideoFiles();
-    await _desktopWindowService.setMinimizeToTrayEnabled(
-      _controller.settings.minimizeToTrayOnClose,
-    );
   }
 
   void _handleInfoMessages() {
@@ -961,11 +934,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   }
 
   Future<void> _openFileExplorer() async {
-    final storageService = TransferStorageService();
-    final receiveDirectory = await storageService.resolveReceiveDirectory();
+    final receiveDirectory = await _transferStorageService
+        .resolveReceiveDirectory();
     Directory? publicDownloadsDirectory;
     if (Platform.isAndroid) {
-      final basePublic = await storageService
+      final basePublic = await _transferStorageService
           .resolveAndroidPublicDownloadsDirectory();
       if (basePublic != null) {
         publicDownloadsDirectory = Directory(p.join(basePublic.path, 'Landa'));
