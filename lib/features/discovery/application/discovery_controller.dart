@@ -18,7 +18,7 @@ import '../../history/domain/transfer_history_record.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
-import '../../settings/data/app_settings_repository.dart';
+import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
@@ -293,7 +293,7 @@ class DiscoveryController extends ChangeNotifier {
     required InternetPeerEndpointStore internetPeerEndpointStore,
     required TrustedLanPeerStore trustedLanPeerStore,
     required FriendRepository friendRepository,
-    required AppSettingsRepository appSettingsRepository,
+    required SettingsStore settingsStore,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
     required ClipboardHistoryRepository clipboardHistoryRepository,
@@ -310,7 +310,7 @@ class DiscoveryController extends ChangeNotifier {
        _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
        _friendRepository = friendRepository,
-       _appSettingsRepository = appSettingsRepository,
+       _settingsStore = settingsStore,
        _appNotificationService = appNotificationService,
        _transferHistoryRepository = transferHistoryRepository,
        _clipboardHistoryRepository = clipboardHistoryRepository,
@@ -348,7 +348,7 @@ class DiscoveryController extends ChangeNotifier {
   final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
   final FriendRepository _friendRepository;
-  final AppSettingsRepository _appSettingsRepository;
+  final SettingsStore _settingsStore;
   final AppNotificationService _appNotificationService;
   final TransferHistoryRepository _transferHistoryRepository;
   final ClipboardHistoryRepository _clipboardHistoryRepository;
@@ -397,7 +397,6 @@ class DiscoveryController extends ChangeNotifier {
   final Map<String, String> _friendNameById = <String, String>{};
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
-  AppSettings _settings = AppSettings.defaults;
   bool _started = false;
   bool _isAppInForeground = true;
   bool _isRefreshInProgress = false;
@@ -501,7 +500,7 @@ class DiscoveryController extends ChangeNotifier {
   String get localPeerId => _localPeerId;
   bool get isFriendMutationInProgress => _isFriendMutationInProgress;
   List<FriendPeer> get friends => List<FriendPeer>.unmodifiable(_friends);
-  AppSettings get settings => _settings;
+  AppSettings get settings => _settingsStore.settings;
   bool get isAppInForeground => _isAppInForeground;
   Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
   String? get errorMessage => _errorMessage;
@@ -553,6 +552,8 @@ class DiscoveryController extends ChangeNotifier {
     );
     return _remoteThumbnailPathsByFileKey[key];
   }
+
+  AppSettings get _currentSettings => _settingsStore.settings;
 
   List<DiscoveredDevice> get devices {
     final values = _devicesByIp.values.toList(growable: false);
@@ -782,76 +783,88 @@ class DiscoveryController extends ChangeNotifier {
   Future<void> updateBackgroundScanInterval(
     BackgroundScanIntervalOption interval,
   ) async {
-    if (_settings.backgroundScanInterval == interval) {
-      return;
-    }
-    await _saveSettings(_settings.copyWith(backgroundScanInterval: interval));
-  }
-
-  Future<void> setDownloadAttemptNotificationsEnabled(bool enabled) async {
-    if (_settings.downloadAttemptNotificationsEnabled == enabled) {
+    if (_currentSettings.backgroundScanInterval == interval) {
       return;
     }
     await _saveSettings(
-      _settings.copyWith(downloadAttemptNotificationsEnabled: enabled),
+      _currentSettings.copyWith(backgroundScanInterval: interval),
+    );
+  }
+
+  Future<void> setDownloadAttemptNotificationsEnabled(bool enabled) async {
+    if (_currentSettings.downloadAttemptNotificationsEnabled == enabled) {
+      return;
+    }
+    await _saveSettings(
+      _currentSettings.copyWith(downloadAttemptNotificationsEnabled: enabled),
     );
   }
 
   Future<void> setMinimizeToTrayOnClose(bool enabled) async {
-    if (_settings.minimizeToTrayOnClose == enabled) {
+    if (_currentSettings.minimizeToTrayOnClose == enabled) {
       return;
     }
-    await _saveSettings(_settings.copyWith(minimizeToTrayOnClose: enabled));
+    await _saveSettings(
+      _currentSettings.copyWith(minimizeToTrayOnClose: enabled),
+    );
   }
 
   Future<void> setLeftHandedMode(bool enabled) async {
-    if (_settings.isLeftHandedMode == enabled) {
+    if (_currentSettings.isLeftHandedMode == enabled) {
       return;
     }
-    await _saveSettings(_settings.copyWith(isLeftHandedMode: enabled));
+    await _saveSettings(_currentSettings.copyWith(isLeftHandedMode: enabled));
   }
 
   Future<void> setVideoLinkPassword(String value) async {
     final normalized = value.trim();
-    if (_settings.videoLinkPassword == normalized) {
+    if (_currentSettings.videoLinkPassword == normalized) {
       return;
     }
-    await _saveSettings(_settings.copyWith(videoLinkPassword: normalized));
+    await _saveSettings(
+      _currentSettings.copyWith(videoLinkPassword: normalized),
+    );
   }
 
   Future<void> setPreviewCacheMaxSizeGb(int value) async {
     final normalized = value < 0 ? 0 : value;
-    if (_settings.previewCacheMaxSizeGb == normalized) {
+    if (_currentSettings.previewCacheMaxSizeGb == normalized) {
       return;
     }
-    await _saveSettings(_settings.copyWith(previewCacheMaxSizeGb: normalized));
+    await _saveSettings(
+      _currentSettings.copyWith(previewCacheMaxSizeGb: normalized),
+    );
   }
 
   Future<void> setPreviewCacheMaxAgeDays(int value) async {
     final normalized = value < 0 ? 0 : value;
-    if (_settings.previewCacheMaxAgeDays == normalized) {
+    if (_currentSettings.previewCacheMaxAgeDays == normalized) {
       return;
     }
-    await _saveSettings(_settings.copyWith(previewCacheMaxAgeDays: normalized));
+    await _saveSettings(
+      _currentSettings.copyWith(previewCacheMaxAgeDays: normalized),
+    );
   }
 
   Future<void> setClipboardHistoryMaxEntries(int value) async {
     final normalized = value < 0 ? 0 : value;
-    if (_settings.clipboardHistoryMaxEntries == normalized) {
+    if (_currentSettings.clipboardHistoryMaxEntries == normalized) {
       return;
     }
     await _saveSettings(
-      _settings.copyWith(clipboardHistoryMaxEntries: normalized),
+      _currentSettings.copyWith(clipboardHistoryMaxEntries: normalized),
     );
     await _trimClipboardHistoryToSettingsLimit();
   }
 
   Future<void> setRecacheParallelWorkers(int value) async {
     final normalized = value < 0 ? 0 : value;
-    if (_settings.recacheParallelWorkers == normalized) {
+    if (_currentSettings.recacheParallelWorkers == normalized) {
       return;
     }
-    await _saveSettings(_settings.copyWith(recacheParallelWorkers: normalized));
+    await _saveSettings(
+      _currentSettings.copyWith(recacheParallelWorkers: normalized),
+    );
   }
 
   void setAppForegroundState(bool isForeground) {
@@ -1030,7 +1043,7 @@ class DiscoveryController extends ChangeNotifier {
         requestId: requestId,
         requesterName: _localName,
         requesterMacAddress: _localDeviceMac,
-        maxEntries: _settings.clipboardHistoryMaxEntries,
+        maxEntries: _currentSettings.clipboardHistoryMaxEntries,
       );
       await Future<void>.delayed(const Duration(milliseconds: 900));
       _errorMessage = null;
@@ -1862,7 +1875,7 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   int? _resolveRecacheParallelWorkersOverride() {
-    final configured = _settings.recacheParallelWorkers;
+    final configured = _currentSettings.recacheParallelWorkers;
     if (configured <= 0) {
       return null;
     }
@@ -3228,9 +3241,9 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final safeLimit = event.maxEntries <= 0
-        ? (_settings.clipboardHistoryMaxEntries <= 0
+        ? (_currentSettings.clipboardHistoryMaxEntries <= 0
               ? 120
-              : _settings.clipboardHistoryMaxEntries)
+              : _currentSettings.clipboardHistoryMaxEntries)
         : event.maxEntries;
 
     final sourceEntries = _clipboardHistory.take(safeLimit);
@@ -3434,7 +3447,7 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _trimClipboardHistoryToSettingsLimit() async {
     final removed = await _clipboardHistoryRepository.trimToMaxEntries(
-      _settings.clipboardHistoryMaxEntries,
+      _currentSettings.clipboardHistoryMaxEntries,
     );
     for (final entry in removed) {
       await _deleteClipboardImageFileIfExists(entry.imagePath);
@@ -3898,7 +3911,8 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final isPreviewRequest = event.previewMode;
-    if (!isPreviewRequest && _settings.downloadAttemptNotificationsEnabled) {
+    if (!isPreviewRequest &&
+        _currentSettings.downloadAttemptNotificationsEnabled) {
       unawaited(
         _appNotificationService.showDownloadAttemptNotification(
           requesterName: event.requesterName,
@@ -4096,28 +4110,27 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _loadSettings() async {
     try {
-      _settings = await _appSettingsRepository.load();
+      await _settingsStore.load();
+      final settings = _currentSettings;
       _log(
-        'Loaded settings. background=${_settings.backgroundScanInterval.label}, '
-        'notifyDownloadAttempts=${_settings.downloadAttemptNotificationsEnabled}, '
-        'trayOnClose=${_settings.minimizeToTrayOnClose}, '
-        'previewMaxSizeGb=${_settings.previewCacheMaxSizeGb}, '
-        'previewMaxAgeDays=${_settings.previewCacheMaxAgeDays}, '
-        'clipboardMaxEntries=${_settings.clipboardHistoryMaxEntries}, '
-        'recacheWorkers=${_settings.recacheParallelWorkers}',
+        'Loaded settings. background=${settings.backgroundScanInterval.label}, '
+        'notifyDownloadAttempts=${settings.downloadAttemptNotificationsEnabled}, '
+        'trayOnClose=${settings.minimizeToTrayOnClose}, '
+        'previewMaxSizeGb=${settings.previewCacheMaxSizeGb}, '
+        'previewMaxAgeDays=${settings.previewCacheMaxAgeDays}, '
+        'clipboardMaxEntries=${settings.clipboardHistoryMaxEntries}, '
+        'recacheWorkers=${settings.recacheParallelWorkers}',
       );
       unawaited(_cleanupPreviewCacheBySettings());
       unawaited(_trimClipboardHistoryToSettingsLimit());
     } catch (error) {
       _log('Failed to load app settings: $error');
-      _settings = AppSettings.defaults;
     }
   }
 
   Future<void> _saveSettings(AppSettings settings) async {
     try {
-      await _appSettingsRepository.save(settings);
-      _settings = settings;
+      await _settingsStore.save(settings);
       _errorMessage = null;
       _restartAutoRefreshTimer();
       unawaited(_cleanupPreviewCacheBySettings());
@@ -4144,14 +4157,14 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Duration get _activeAutoRefreshInterval {
-    return _settings.backgroundScanInterval.duration;
+    return _currentSettings.backgroundScanInterval.duration;
   }
 
   Future<void> _cleanupPreviewCacheBySettings() async {
     try {
       final result = await _transferStorageService.cleanupPreviewCache(
-        maxSizeGb: _settings.previewCacheMaxSizeGb,
-        maxAgeDays: _settings.previewCacheMaxAgeDays,
+        maxSizeGb: _currentSettings.previewCacheMaxSizeGb,
+        maxAgeDays: _currentSettings.previewCacheMaxAgeDays,
         appFolderName: 'Landa',
       );
       if (result.filesDeleted > 0) {

@@ -17,6 +17,7 @@ import '../features/discovery/data/lan_discovery_service.dart';
 import '../features/discovery/data/network_host_scanner.dart';
 import '../features/discovery/presentation/discovery_page.dart';
 import '../features/history/data/transfer_history_repository.dart';
+import '../features/settings/application/settings_store.dart';
 import '../features/settings/data/app_settings_repository.dart';
 import '../features/transfer/data/file_hash_service.dart';
 import '../features/transfer/data/file_transfer_service.dart';
@@ -101,6 +102,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
     final settingsRepository = AppSettingsRepository(database: database);
+    final settingsStore = SettingsStore(
+      appSettingsRepository: settingsRepository,
+    );
     final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
     );
@@ -116,7 +120,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
       friendRepository: friendRepository,
-      appSettingsRepository: settingsRepository,
+      settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(database: database),
       clipboardHistoryRepository: ClipboardHistoryRepository(

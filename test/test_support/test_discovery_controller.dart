@@ -12,6 +12,7 @@ import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
+import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -37,6 +38,9 @@ class TestDiscoveryControllerHarness {
     final database = databaseHarness.database;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
+    final settingsStore = SettingsStore(
+      appSettingsRepository: AppSettingsRepository(database: database),
+    );
     final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
     );
@@ -52,7 +56,7 @@ class TestDiscoveryControllerHarness {
         deviceAliasRepository: deviceAliasRepository,
       ),
       friendRepository: friendRepository,
-      appSettingsRepository: AppSettingsRepository(database: database),
+      settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: TransferHistoryRepository(database: database),
       clipboardHistoryRepository: ClipboardHistoryRepository(
@@ -91,7 +95,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.internetPeerEndpointStore,
     required super.trustedLanPeerStore,
     required super.friendRepository,
-    required super.appSettingsRepository,
+    required super.settingsStore,
     required super.appNotificationService,
     required super.transferHistoryRepository,
     required super.clipboardHistoryRepository,
