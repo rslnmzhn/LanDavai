@@ -362,7 +362,6 @@ class DiscoveryController extends ChangeNotifier {
 
   final Map<String, DiscoveredDevice> _devicesByIp =
       <String, DiscoveredDevice>{};
-  final Map<String, String> _aliasByMac = <String, String>{};
   final List<IncomingTransferRequest> _incomingRequests =
       <IncomingTransferRequest>[];
   final List<IncomingFriendRequest> _incomingFriendRequests =
@@ -371,7 +370,6 @@ class DiscoveryController extends ChangeNotifier {
       <SharedFolderCacheRecord>[];
   final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
   final Map<String, String> _remoteThumbnailPathsByFileKey = <String, String>{};
-  final Set<String> _trustedDeviceMacs = <String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
   final Map<String, _PendingOutgoingFriendRequest>
@@ -387,14 +385,12 @@ class DiscoveryController extends ChangeNotifier {
       <String, TransferReceiveSession>{};
   final List<TransferHistoryRecord> _downloadHistory =
       <TransferHistoryRecord>[];
-  final List<FriendPeer> _friends = <FriendPeer>[];
   final List<ClipboardHistoryEntry> _clipboardHistory =
       <ClipboardHistoryEntry>[];
   final Map<String, List<SharedFolderIndexEntry>> _ownerIndexEntriesByCacheId =
       <String, List<SharedFolderIndexEntry>>{};
   final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
       <String, List<RemoteClipboardEntry>>{};
-  final Map<String, String> _friendNameById = <String, String>{};
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
   bool _started = false;
@@ -499,7 +495,7 @@ class DiscoveryController extends ChangeNotifier {
   String get localDeviceMac => _localDeviceMac;
   String get localPeerId => _localPeerId;
   bool get isFriendMutationInProgress => _isFriendMutationInProgress;
-  List<FriendPeer> get friends => List<FriendPeer>.unmodifiable(_friends);
+  List<FriendPeer> get friends => _internetPeerEndpointStore.peers;
   AppSettings get settings => _settingsStore.settings;
   bool get isAppInForeground => _isAppInForeground;
   Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
@@ -563,7 +559,7 @@ class DiscoveryController extends ChangeNotifier {
       }
       return _compareIp(a.ip, b.ip);
     });
-    return values;
+    return values.map(_projectDeviceFromOwners).toList(growable: false);
   }
 
   DiscoveredDevice? get selectedDevice {
@@ -571,22 +567,15 @@ class DiscoveryController extends ChangeNotifier {
     if (ip == null) {
       return null;
     }
-    return _devicesByIp[ip];
+    final device = _devicesByIp[ip];
+    if (device == null) {
+      return null;
+    }
+    return _projectDeviceFromOwners(device);
   }
 
   int get appDetectedCount =>
       _devicesByIp.values.where((d) => d.isAppDetected).length;
-
-  List<DiscoveredDevice> get friendDevices {
-    final values = _devicesByIp.values
-        .where((device) => device.isTrusted)
-        .toList();
-    values.sort(
-      (a, b) =>
-          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-    );
-    return values;
-  }
 
   bool hasPendingFriendRequestForDevice(DiscoveredDevice device) {
     _purgeExpiredPendingFriendRequests();
@@ -610,13 +599,45 @@ class DiscoveryController extends ChangeNotifier {
     await _resolveLocalAddress();
     _localPeerId = await _friendRepository.loadOrCreateLocalPeerId();
     _resolveLocalDeviceMac();
-    await _loadAliases();
-    await _loadTrustedDevices();
-    await _loadSettings();
+    try {
+      await _deviceRegistry.load();
+    } catch (error) {
+      _log('Failed to load aliases from registry: $error');
+    }
+    try {
+      await _trustedLanPeerStore.load();
+      _log(
+        'Loaded trusted devices from store. '
+        'count=${_trustedLanPeerStore.trustedMacs.length}',
+      );
+    } catch (error) {
+      _log('Failed to load trusted devices from store: $error');
+    }
+    try {
+      await _settingsStore.load();
+      final settings = _currentSettings;
+      _log(
+        'Loaded settings. background=${settings.backgroundScanInterval.label}, '
+        'notifyDownloadAttempts=${settings.downloadAttemptNotificationsEnabled}, '
+        'trayOnClose=${settings.minimizeToTrayOnClose}, '
+        'previewMaxSizeGb=${settings.previewCacheMaxSizeGb}, '
+        'previewMaxAgeDays=${settings.previewCacheMaxAgeDays}, '
+        'clipboardMaxEntries=${settings.clipboardHistoryMaxEntries}, '
+        'recacheWorkers=${settings.recacheParallelWorkers}',
+      );
+      unawaited(_cleanupPreviewCacheBySettings());
+      unawaited(_trimClipboardHistoryToSettingsLimit());
+    } catch (error) {
+      _log('Failed to load app settings: $error');
+    }
     await _loadClipboardHistory();
     await _loadOwnerCaches();
     await _loadDownloadHistory();
-    await _loadFriends();
+    try {
+      await _internetPeerEndpointStore.load();
+    } catch (error) {
+      _log('Failed to load friends: $error');
+    }
 
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
@@ -729,7 +750,6 @@ class DiscoveryController extends ChangeNotifier {
         endpointPort: parsedEndpoint.$2,
         isEnabled: isEnabled,
       );
-      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       _infoMessage = 'Friend saved: $normalizedId';
@@ -747,7 +767,6 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
     try {
       await _internetPeerEndpointStore.removeEndpoint(friendId);
-      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       _infoMessage = 'Friend removed: ${friendId.trim()}';
@@ -769,7 +788,6 @@ class DiscoveryController extends ChangeNotifier {
         friendId: friendId,
         isEnabled: enabled,
       );
-      _syncLegacyInternetPeerProjection();
       _syncInternetPeers();
       _errorMessage = null;
       notifyListeners();
@@ -786,7 +804,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.backgroundScanInterval == interval) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(backgroundScanInterval: interval),
     );
   }
@@ -795,7 +813,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.downloadAttemptNotificationsEnabled == enabled) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(downloadAttemptNotificationsEnabled: enabled),
     );
   }
@@ -804,7 +822,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.minimizeToTrayOnClose == enabled) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(minimizeToTrayOnClose: enabled),
     );
   }
@@ -813,7 +831,9 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.isLeftHandedMode == enabled) {
       return;
     }
-    await _saveSettings(_currentSettings.copyWith(isLeftHandedMode: enabled));
+    await _persistSettingsViaStore(
+      _currentSettings.copyWith(isLeftHandedMode: enabled),
+    );
   }
 
   Future<void> setVideoLinkPassword(String value) async {
@@ -821,7 +841,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.videoLinkPassword == normalized) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(videoLinkPassword: normalized),
     );
   }
@@ -831,7 +851,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.previewCacheMaxSizeGb == normalized) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(previewCacheMaxSizeGb: normalized),
     );
   }
@@ -841,7 +861,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.previewCacheMaxAgeDays == normalized) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(previewCacheMaxAgeDays: normalized),
     );
   }
@@ -851,7 +871,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.clipboardHistoryMaxEntries == normalized) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(clipboardHistoryMaxEntries: normalized),
     );
     await _trimClipboardHistoryToSettingsLimit();
@@ -862,7 +882,7 @@ class DiscoveryController extends ChangeNotifier {
     if (_currentSettings.recacheParallelWorkers == normalized) {
       return;
     }
-    await _saveSettings(
+    await _persistSettingsViaStore(
       _currentSettings.copyWith(recacheParallelWorkers: normalized),
     );
   }
@@ -1309,15 +1329,6 @@ class DiscoveryController extends ChangeNotifier {
     final normalizedAlias = alias.trim();
     try {
       await _deviceRegistry.setAlias(macAddress: mac, alias: normalizedAlias);
-      _syncLegacyAliasProjection();
-      final aliasOrNull = normalizedAlias.isEmpty ? null : normalizedAlias;
-
-      _devicesByIp.updateAll((_, value) {
-        if (DeviceAliasRepository.normalizeMac(value.macAddress) != mac) {
-          return value;
-        }
-        return value.copyWith(aliasName: aliasOrNull);
-      });
       _errorMessage = null;
       notifyListeners();
     } catch (error) {
@@ -2656,14 +2667,8 @@ class DiscoveryController extends ChangeNotifier {
           observedMac: host.value,
           existingMac: existing.macAddress,
         );
-        final aliasName =
-            _deviceRegistry.aliasForMac(normalizedMac) ?? existing.aliasName;
-        final isTrusted = _trustedLanPeerStore.isTrustedMac(normalizedMac);
-
         _devicesByIp[ip] = existing.copyWith(
           macAddress: normalizedMac ?? existing.macAddress,
-          aliasName: aliasName ?? existing.aliasName,
-          isTrusted: isTrusted,
           isReachable: true,
           lastSeen: now,
         );
@@ -2716,12 +2721,10 @@ class DiscoveryController extends ChangeNotifier {
       observedMac: null,
       existingMac: existing?.macAddress,
     );
-    final aliasName = _deviceRegistry.aliasForMac(normalizedMac);
-    final isTrusted = _trustedLanPeerStore.isTrustedMac(normalizedMac);
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
     final friendName = event.peerId == null
         ? null
-        : _friendNameById[event.peerId!];
+        : _displayNameForPeerId(event.peerId!);
     final detectedCategory = _resolveDeviceCategory(
       deviceType: event.deviceType,
       operatingSystem: detectedOs,
@@ -2729,11 +2732,10 @@ class DiscoveryController extends ChangeNotifier {
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
-              aliasName: aliasName ?? existing?.aliasName,
               deviceName: friendName ?? event.deviceName,
               operatingSystem: detectedOs ?? existing?.operatingSystem,
               deviceCategory: detectedCategory,
-              isTrusted: isTrusted,
+              macAddress: normalizedMac ?? existing?.macAddress,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
@@ -3336,17 +3338,14 @@ class DiscoveryController extends ChangeNotifier {
       existingMac: existing?.macAddress,
     );
     final aliasName = _deviceRegistry.aliasForMac(ownerMac);
-    final trusted = _trustedLanPeerStore.isTrustedMac(ownerMac);
     _devicesByIp[event.ownerIp] =
         (existing ??
                 DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
             .copyWith(
               deviceName: event.ownerName,
-              aliasName: aliasName,
               isReachable: true,
               isAppDetected: true,
               macAddress: ownerMac ?? existing?.macAddress,
-              isTrusted: trusted,
               lastSeen: event.observedAt,
             );
 
@@ -3595,7 +3594,6 @@ class DiscoveryController extends ChangeNotifier {
         existingMac: existing?.macAddress,
       );
       final aliasName = _deviceRegistry.aliasForMac(ownerMac);
-      final trusted = _trustedLanPeerStore.isTrustedMac(ownerMac);
       _devicesByIp[event.ownerIp] =
           (existing ??
                   DiscoveredDevice(
@@ -3604,9 +3602,7 @@ class DiscoveryController extends ChangeNotifier {
                   ))
               .copyWith(
                 macAddress: ownerMac ?? existing?.macAddress,
-                aliasName: aliasName ?? existing?.aliasName,
                 deviceName: event.ownerName,
-                isTrusted: trusted,
                 isAppDetected: true,
                 isReachable: true,
                 lastSeen: event.observedAt,
@@ -4079,18 +4075,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<void> _loadTrustedDevices() async {
-    try {
-      await _trustedLanPeerStore.load();
-      _syncLegacyTrustedProjection();
-      _log(
-        'Loaded trusted devices from store. count=${_trustedDeviceMacs.length}',
-      );
-    } catch (error) {
-      _log('Failed to load trusted devices from store: $error');
-    }
-  }
-
   Future<void> _setFriendStatus({
     required String macAddress,
     required bool isFriend,
@@ -4105,30 +4089,9 @@ class DiscoveryController extends ChangeNotifier {
     } else {
       await _trustedLanPeerStore.revokeTrust(macAddress: normalizedMac);
     }
-    _syncLegacyTrustedProjection();
   }
 
-  Future<void> _loadSettings() async {
-    try {
-      await _settingsStore.load();
-      final settings = _currentSettings;
-      _log(
-        'Loaded settings. background=${settings.backgroundScanInterval.label}, '
-        'notifyDownloadAttempts=${settings.downloadAttemptNotificationsEnabled}, '
-        'trayOnClose=${settings.minimizeToTrayOnClose}, '
-        'previewMaxSizeGb=${settings.previewCacheMaxSizeGb}, '
-        'previewMaxAgeDays=${settings.previewCacheMaxAgeDays}, '
-        'clipboardMaxEntries=${settings.clipboardHistoryMaxEntries}, '
-        'recacheWorkers=${settings.recacheParallelWorkers}',
-      );
-      unawaited(_cleanupPreviewCacheBySettings());
-      unawaited(_trimClipboardHistoryToSettingsLimit());
-    } catch (error) {
-      _log('Failed to load app settings: $error');
-    }
-  }
-
-  Future<void> _saveSettings(AppSettings settings) async {
+  Future<void> _persistSettingsViaStore(AppSettings settings) async {
     try {
       await _settingsStore.save(settings);
       _errorMessage = null;
@@ -4757,15 +4720,6 @@ class DiscoveryController extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> _loadFriends() async {
-    try {
-      await _internetPeerEndpointStore.load();
-      _syncLegacyInternetPeerProjection();
-    } catch (error) {
-      _log('Failed to load friends: $error');
-    }
-  }
-
   void _syncInternetPeers() {
     final peers = _internetPeerEndpointStore.peers
         .where((friend) => friend.isEnabled)
@@ -4778,18 +4732,6 @@ class DiscoveryController extends ChangeNotifier {
         )
         .toList(growable: false);
     _lanDiscoveryService.updateInternetPeers(peers);
-  }
-
-  void _syncLegacyInternetPeerProjection() {
-    final peers = _internetPeerEndpointStore.peers;
-    _friends
-      ..clear()
-      ..addAll(peers);
-    _friendNameById
-      ..clear()
-      ..addEntries(
-        peers.map((friend) => MapEntry(friend.friendId, friend.displayName)),
-      );
   }
 
   (String, int)? _parseEndpoint(String endpoint) {
@@ -4844,36 +4786,6 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     return DeviceAliasRepository.normalizeMac(existingMac);
-  }
-
-  void _syncLegacyAliasProjection() {
-    _aliasByMac
-      ..clear()
-      ..addAll(_deviceRegistry.aliases);
-  }
-
-  void _syncLegacyTrustedProjection() {
-    _trustedDeviceMacs
-      ..clear()
-      ..addAll(_trustedLanPeerStore.trustedMacs);
-    _devicesByIp.updateAll((_, device) {
-      final candidateMac = DeviceAliasRepository.normalizeMac(
-        device.macAddress,
-      );
-      return device.copyWith(
-        isTrusted: _trustedLanPeerStore.isTrustedMac(candidateMac),
-      );
-    });
-  }
-
-  Future<void> _loadAliases() async {
-    try {
-      await _deviceRegistry.load();
-      _syncLegacyAliasProjection();
-      _log('Loaded aliases from registry. count=${_aliasByMac.length}');
-    } catch (error) {
-      _log('Failed to load aliases from registry: $error');
-    }
   }
 
   Future<void> _loadDownloadHistory() async {
@@ -5100,5 +5012,23 @@ class DiscoveryController extends ChangeNotifier {
       return false;
     }
     return first == 172 && second >= 16 && second <= 31;
+  }
+
+  DiscoveredDevice _projectDeviceFromOwners(DiscoveredDevice device) {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(device.macAddress);
+    return device.copyWith(
+      macAddress: normalizedMac ?? device.macAddress,
+      aliasName: _deviceRegistry.aliasForMac(normalizedMac) ?? device.aliasName,
+      isTrusted: _trustedLanPeerStore.isTrustedMac(normalizedMac),
+    );
+  }
+
+  String? _displayNameForPeerId(String peerId) {
+    for (final peer in _internetPeerEndpointStore.peers) {
+      if (peer.friendId == peerId) {
+        return peer.displayName;
+      }
+    }
+    return null;
   }
 }

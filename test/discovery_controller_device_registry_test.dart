@@ -70,7 +70,7 @@ void main() {
   );
 
   test(
-    'refresh records seen devices through DeviceRegistry and projects aliases without direct repository identity writes',
+    'refresh records seen devices through DeviceRegistry and compatibility reads stay registry-backed',
     () async {
       const mac = 'AA-BB-CC-DD-EE-FF';
       const ip = '192.168.1.77';
@@ -87,6 +87,9 @@ void main() {
       );
 
       await controller!.refresh();
+      controller!.selectDeviceByIp(ip);
+
+      await registry!.setAlias(macAddress: mac, alias: 'Renamed laptop');
 
       final device = controller!.devices.single;
       final lastKnownIpMap = await registryRepository.loadLastKnownIpMap();
@@ -94,7 +97,8 @@ void main() {
       expect(registry!.recordSeenDevicesCalls, 1);
       expect(device.ip, ip);
       expect(device.macAddress, 'aa:bb:cc:dd:ee:ff');
-      expect(device.aliasName, 'Office laptop');
+      expect(device.aliasName, 'Renamed laptop');
+      expect(controller!.selectedDevice?.displayName, 'Renamed laptop');
       expect(lastKnownIpMap['aa:bb:cc:dd:ee:ff'], ip);
       expect(controller!.errorMessage, isNull);
     },

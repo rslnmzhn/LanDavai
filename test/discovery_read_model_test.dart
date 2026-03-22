@@ -80,7 +80,7 @@ void main() {
   });
 
   test(
-    'uses owner boundaries as canonical truth when legacy controller projections become stale',
+    'keeps controller compatibility projections owner-backed while read model remains canonical',
     () async {
       const mac = 'AA-BB-CC-DD-EE-FF';
       const ip = '192.168.1.77';
@@ -91,7 +91,6 @@ void main() {
       expect(controller.devices, hasLength(1));
       expect(controller.devices.single.aliasName, isNull);
       expect(controller.devices.single.isTrusted, isFalse);
-      expect(controller.friendDevices, isEmpty);
       expect(controller.friends, isEmpty);
       expect(
         controller.settings.backgroundScanInterval,
@@ -127,14 +126,15 @@ void main() {
       );
       expect(readModel.settings.isLeftHandedMode, isTrue);
 
-      expect(controller.devices.single.aliasName, isNull);
-      expect(controller.devices.single.isTrusted, isFalse);
-      expect(controller.friendDevices, isEmpty);
-      expect(controller.friends, isEmpty);
+      expect(controller.devices.single.aliasName, 'Office laptop');
+      expect(controller.devices.single.isTrusted, isTrue);
+      expect(controller.selectedDevice?.displayName, 'Office laptop');
+      expect(controller.friends, hasLength(1));
       expect(
         controller.settings.backgroundScanInterval,
         BackgroundScanIntervalOption.fifteenMinutes,
       );
+      expect(controller.settings.isLeftHandedMode, isTrue);
     },
   );
 }
