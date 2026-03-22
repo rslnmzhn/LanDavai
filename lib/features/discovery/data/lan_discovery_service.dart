@@ -5,7 +5,8 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
+
+import 'discovery_transport_adapter.dart';
 
 class AppPresenceEvent {
   AppPresenceEvent({
@@ -467,13 +468,12 @@ class LanDiscoveryService {
   static const String _thumbnailPacketPrefix = 'LANDA_THUMBNAIL_PACKET_V1';
   static const String _clipboardQueryPrefix = 'LANDA_CLIPBOARD_QUERY_V1';
   static const String _clipboardCatalogPrefix = 'LANDA_CLIPBOARD_CATALOG_V1';
-  static const MethodChannel _androidNetworkChannel = MethodChannel(
-    'landa/network',
-  );
 
-  RawDatagramSocket? _socket;
+  LanDiscoveryService({DiscoveryTransportAdapter? transportAdapter})
+    : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter();
+
+  final DiscoveryTransportAdapter _transportAdapter;
   Timer? _beaconTimer;
-  Set<String> _localIps = <String>{};
   bool _started = false;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
@@ -482,22 +482,6 @@ class LanDiscoveryService {
   String _localPeerId = '';
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
-  static const List<String> _virtualInterfaceHints = <String>[
-    'loopback',
-    'docker',
-    'vmware',
-    'virtual',
-    'vethernet',
-    'hyper-v',
-    'vbox',
-    'wsl',
-    'tailscale',
-    'zerotier',
-    'hamachi',
-    'tun',
-    'tap',
-    'bridge',
-  ];
 
   @visibleForTesting
   static const Map<String, String> protocolPrefixesForTest = <String, String>{
@@ -595,330 +579,31 @@ class LanDiscoveryService {
     _started = true;
     _localPeerId = localPeerId.trim();
 
-    _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
-    _log('Starting UDP discovery on $discoveryPort. localIps=$_localIps');
-    await _acquireAndroidMulticastLock();
-
-    // anyIPv4 is more reliable for receiving broadcast discovery packets
-    // on Android devices; subnet filtering is applied in code.
-    _socket = await RawDatagramSocket.bind(
-      InternetAddress.anyIPv4,
-      discoveryPort,
-      reuseAddress: true,
-      reusePort: false,
-    );
-    _socket?.broadcastEnabled = true;
-
-    _socket?.listen((event) {
-      if (event != RawSocketEvent.read) {
-        return;
-      }
-
-      Datagram? datagram = _socket?.receive();
-      while (datagram != null) {
-        final senderIp = datagram.address.address;
-        if (!_isUsablePacketSenderIp(senderIp)) {
-          _log('Ignoring packet from invalid sender IP: $senderIp');
-          datagram = _socket?.receive();
-          continue;
-        }
-        if (_localIps.contains(senderIp)) {
-          datagram = _socket?.receive();
-          continue;
-        }
-        final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
-        final isSenderInLocalSubnet = _localIps.any(
-          (localIp) => _isSame24Subnet(senderIp, localIp),
-        );
-        if (_localIps.isNotEmpty &&
-            !isSenderInLocalSubnet &&
-            !isAllowedInternetSender) {
-          _log('Ignoring packet from foreign subnet: $senderIp');
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final message = utf8.decode(datagram.data, allowMalformed: true);
-        final discoveryPacket = _parseDiscoveryPacket(message);
-        if (discoveryPacket != null) {
-          if (discoveryPacket.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-
-          if (discoveryPacket.prefix == _discoverPrefix) {
-            _log('Discover request from $senderIp');
-            final responsePayload = _encodeDiscoveryPayload(deviceName);
-            final response = '$_responsePrefix|$_instanceId|$responsePayload';
-            _safeSocketSend(
-              bytes: utf8.encode(response),
-              address: datagram.address,
-              port: datagram.port,
-              context: 'discover-response',
-            );
-            _log('Discover response sent to $senderIp');
-          } else if (discoveryPacket.prefix == _responsePrefix) {
-            _log(
-              'Discover response received from '
-              '$senderIp (${discoveryPacket.deviceName})',
-            );
-            onAppDetected(
-              AppPresenceEvent(
-                ip: senderIp,
-                deviceName: discoveryPacket.deviceName,
-                operatingSystem: discoveryPacket.operatingSystem,
-                deviceType: discoveryPacket.deviceType,
-                peerId: discoveryPacket.peerId,
-                observedAt: DateTime.now(),
-              ),
-            );
-          }
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final transferRequest = _parseTransferRequestPacket(message);
-        if (transferRequest != null) {
-          if (transferRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Transfer request received from $senderIp '
-            '(requestId=${transferRequest.requestId})',
-          );
-          onTransferRequest?.call(
-            TransferRequestEvent(
-              requestId: transferRequest.requestId,
-              senderIp: senderIp,
-              senderName: transferRequest.senderName,
-              senderMacAddress: transferRequest.senderMacAddress,
-              sharedCacheId: transferRequest.sharedCacheId,
-              sharedLabel: transferRequest.sharedLabel,
-              items: transferRequest.items,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final transferDecision = _parseTransferDecisionPacket(message);
-        if (transferDecision != null) {
-          if (transferDecision.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Transfer decision received from $senderIp '
-            '(requestId=${transferDecision.requestId}, approved=${transferDecision.approved})',
-          );
-          onTransferDecision?.call(
-            TransferDecisionEvent(
-              requestId: transferDecision.requestId,
-              approved: transferDecision.approved,
-              receiverName: transferDecision.receiverName,
-              receiverIp: senderIp,
-              transferPort: transferDecision.transferPort,
-              observedAt: DateTime.now(),
-              acceptedFileNames: transferDecision.acceptedFileNames,
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final friendRequest = _parseFriendRequestPacket(message);
-        if (friendRequest != null) {
-          if (friendRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Friend request received from $senderIp '
-            '(requestId=${friendRequest.requestId})',
-          );
-          onFriendRequest?.call(
-            FriendRequestEvent(
-              requestId: friendRequest.requestId,
-              requesterIp: senderIp,
-              requesterName: friendRequest.requesterName,
-              requesterMacAddress: friendRequest.requesterMacAddress,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final friendResponse = _parseFriendResponsePacket(message);
-        if (friendResponse != null) {
-          if (friendResponse.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Friend response received from $senderIp '
-            '(requestId=${friendResponse.requestId}, accepted=${friendResponse.accepted})',
-          );
-          onFriendResponse?.call(
-            FriendResponseEvent(
-              requestId: friendResponse.requestId,
-              responderIp: senderIp,
-              responderName: friendResponse.responderName,
-              responderMacAddress: friendResponse.responderMacAddress,
-              accepted: friendResponse.accepted,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final shareQuery = _parseShareQueryPacket(message);
-        if (shareQuery != null) {
-          if (shareQuery.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onShareQuery?.call(
-            ShareQueryEvent(
-              requestId: shareQuery.requestId,
-              requesterIp: senderIp,
-              requesterName: shareQuery.requesterName,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final shareCatalog = _parseShareCatalogPacket(message);
-        if (shareCatalog != null) {
-          if (shareCatalog.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onShareCatalog?.call(
-            ShareCatalogEvent(
-              requestId: shareCatalog.requestId,
-              ownerIp: senderIp,
-              ownerName: shareCatalog.ownerName,
-              ownerMacAddress: shareCatalog.ownerMacAddress,
-              entries: shareCatalog.entries,
-              removedCacheIds: shareCatalog.removedCacheIds,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final downloadRequest = _parseDownloadRequestPacket(message);
-        if (downloadRequest != null) {
-          if (downloadRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onDownloadRequest?.call(
-            DownloadRequestEvent(
-              requestId: downloadRequest.requestId,
-              requesterIp: senderIp,
-              requesterName: downloadRequest.requesterName,
-              requesterMacAddress: downloadRequest.requesterMacAddress,
-              cacheId: downloadRequest.cacheId,
-              selectedRelativePaths: downloadRequest.selectedRelativePaths,
-              previewMode: downloadRequest.previewMode,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final thumbnailSync = _parseThumbnailSyncRequestPacket(message);
-        if (thumbnailSync != null) {
-          if (thumbnailSync.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onThumbnailSyncRequest?.call(
-            ThumbnailSyncRequestEvent(
-              requestId: thumbnailSync.requestId,
-              requesterIp: senderIp,
-              requesterName: thumbnailSync.requesterName,
-              items: thumbnailSync.items,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final thumbnailPacket = _parseThumbnailPacket(message);
-        if (thumbnailPacket != null) {
-          if (thumbnailPacket.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onThumbnailPacket?.call(
-            ThumbnailPacketEvent(
-              requestId: thumbnailPacket.requestId,
-              ownerIp: senderIp,
-              ownerMacAddress: thumbnailPacket.ownerMacAddress,
-              cacheId: thumbnailPacket.cacheId,
-              relativePath: thumbnailPacket.relativePath,
-              thumbnailId: thumbnailPacket.thumbnailId,
-              bytes: thumbnailPacket.bytes,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final clipboardQuery = _parseClipboardQueryPacket(message);
-        if (clipboardQuery != null) {
-          if (clipboardQuery.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onClipboardQuery?.call(
-            ClipboardQueryEvent(
-              requestId: clipboardQuery.requestId,
-              requesterIp: senderIp,
-              requesterName: clipboardQuery.requesterName,
-              requesterMacAddress: clipboardQuery.requesterMacAddress,
-              maxEntries: clipboardQuery.maxEntries,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final clipboardCatalog = _parseClipboardCatalogPacket(message);
-        if (clipboardCatalog != null) {
-          if (clipboardCatalog.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onClipboardCatalog?.call(
-            ClipboardCatalogEvent(
-              requestId: clipboardCatalog.requestId,
-              ownerIp: senderIp,
-              ownerName: clipboardCatalog.ownerName,
-              ownerMacAddress: clipboardCatalog.ownerMacAddress,
-              entries: clipboardCatalog.entries,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-        datagram = _socket?.receive();
-      }
-    });
+    try {
+      await _transportAdapter.start(
+        port: discoveryPort,
+        preferredSourceIp: preferredSourceIp,
+        onDatagram: (datagram) => _handleIncomingDatagram(
+          datagram: datagram,
+          deviceName: deviceName,
+          onAppDetected: onAppDetected,
+          onTransferRequest: onTransferRequest,
+          onTransferDecision: onTransferDecision,
+          onFriendRequest: onFriendRequest,
+          onFriendResponse: onFriendResponse,
+          onShareQuery: onShareQuery,
+          onShareCatalog: onShareCatalog,
+          onDownloadRequest: onDownloadRequest,
+          onThumbnailSyncRequest: onThumbnailSyncRequest,
+          onThumbnailPacket: onThumbnailPacket,
+          onClipboardQuery: onClipboardQuery,
+          onClipboardCatalog: onClipboardCatalog,
+        ),
+      );
+    } catch (_) {
+      _started = false;
+      rethrow;
+    }
 
     await _sendDiscoveryPing(deviceName);
     _beaconTimer = Timer.periodic(
@@ -957,10 +642,8 @@ class LanDiscoveryService {
     _log('Stopping UDP discovery');
     _beaconTimer?.cancel();
     _beaconTimer = null;
-    _socket?.close();
-    _socket = null;
+    await _transportAdapter.stop();
     _started = false;
-    await _releaseAndroidMulticastLock();
   }
 
   Future<void> sendTransferRequest({
@@ -1299,7 +982,7 @@ class LanDiscoveryService {
       );
       return;
     }
-    _safeSocketSend(
+    _transportAdapter.send(
       bytes: messageBytes,
       address: targetAddress,
       port: discoveryPort,
@@ -1311,18 +994,19 @@ class LanDiscoveryService {
     final payload = _encodeDiscoveryPayload(deviceName);
     final request = '$_discoverPrefix|$_instanceId|$payload';
     final bytes = utf8.encode(request);
+    final localIps = _transportAdapter.localIps;
 
     _log('Broadcasting discover packet');
-    _safeSocketSend(
+    _transportAdapter.send(
       bytes: bytes,
       address: InternetAddress('255.255.255.255'),
       port: discoveryPort,
       context: 'discover-broadcast',
     );
-    for (final localIp in _localIps) {
+    for (final localIp in localIps) {
       final broadcast = _toBroadcastAddress(localIp);
       if (broadcast != null) {
-        _safeSocketSend(
+        _transportAdapter.send(
           bytes: bytes,
           address: broadcast,
           port: discoveryPort,
@@ -1337,7 +1021,7 @@ class LanDiscoveryService {
       if (address == null || address.type != InternetAddressType.IPv4) {
         continue;
       }
-      _safeSocketSend(
+      _transportAdapter.send(
         bytes: bytes,
         address: address,
         port: peer.port,
@@ -1370,36 +1054,6 @@ class LanDiscoveryService {
       return false;
     }
     return parsed.address != '255.255.255.255';
-  }
-
-  void _safeSocketSend({
-    required List<int> bytes,
-    required InternetAddress address,
-    required int port,
-    required String context,
-  }) {
-    final socket = _socket;
-    if (socket == null) {
-      return;
-    }
-    if (bytes.isEmpty) {
-      return;
-    }
-    if (address.type != InternetAddressType.IPv4) {
-      _log('Skipping UDP send ($context): non-IPv4 target ${address.address}.');
-      return;
-    }
-    if (address.address == '0.0.0.0') {
-      _log('Skipping UDP send ($context): invalid target 0.0.0.0.');
-      return;
-    }
-    try {
-      socket.send(bytes, address, port);
-    } on SocketException catch (error) {
-      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
-    } catch (error) {
-      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
-    }
   }
 
   _DiscoveryPacket? _parseDiscoveryPacket(String message) {
@@ -1989,40 +1643,6 @@ class LanDiscoveryService {
     return InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255');
   }
 
-  Future<Set<String>> _loadLocalIps({String? preferredSourceIp}) async {
-    final ips = <String>{};
-    final fallbackIps = <String>{};
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final interface in interfaces) {
-        final lowerName = interface.name.toLowerCase();
-        final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
-        for (final address in interface.addresses) {
-          if (isVirtual) {
-            fallbackIps.add(address.address);
-            continue;
-          }
-          ips.add(address.address);
-        }
-      }
-    } catch (error) {
-      _log('Failed to enumerate local interfaces for UDP discovery: $error');
-    }
-
-    final preferredIp = preferredSourceIp?.trim();
-    if (preferredIp != null && _isValidIpv4(preferredIp)) {
-      ips.add(preferredIp);
-      fallbackIps.add(preferredIp);
-      _log('Preferred source IP candidate for UDP discovery: $preferredIp');
-    }
-
-    return ips.isNotEmpty ? ips : fallbackIps;
-  }
-
   bool _isValidIpv4(String ip) {
     final parts = ip.split('.');
     if (parts.length != 4) {
@@ -2057,27 +1677,296 @@ class LanDiscoveryService {
     developer.log(message, name: 'LanDiscoveryService');
   }
 
-  Future<void> _acquireAndroidMulticastLock() async {
-    if (!Platform.isAndroid) {
+  void _handleIncomingDatagram({
+    required Datagram datagram,
+    required String deviceName,
+    required void Function(AppPresenceEvent event) onAppDetected,
+    void Function(TransferRequestEvent event)? onTransferRequest,
+    void Function(TransferDecisionEvent event)? onTransferDecision,
+    void Function(FriendRequestEvent event)? onFriendRequest,
+    void Function(FriendResponseEvent event)? onFriendResponse,
+    void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareCatalogEvent event)? onShareCatalog,
+    void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
+    void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
+    void Function(ClipboardQueryEvent event)? onClipboardQuery,
+    void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
+  }) {
+    final senderIp = datagram.address.address;
+    if (!_isUsablePacketSenderIp(senderIp)) {
+      _log('Ignoring packet from invalid sender IP: $senderIp');
       return;
     }
-    try {
-      await _androidNetworkChannel.invokeMethod<void>('acquireMulticastLock');
-      _log('Android multicast lock acquired');
-    } catch (error) {
-      _log('Failed to acquire Android multicast lock: $error');
-    }
-  }
 
-  Future<void> _releaseAndroidMulticastLock() async {
-    if (!Platform.isAndroid) {
+    final localIps = _transportAdapter.localIps;
+    if (localIps.contains(senderIp)) {
       return;
     }
-    try {
-      await _androidNetworkChannel.invokeMethod<void>('releaseMulticastLock');
-      _log('Android multicast lock released');
-    } catch (error) {
-      _log('Failed to release Android multicast lock: $error');
+
+    final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
+    final isSenderInLocalSubnet = localIps.any(
+      (localIp) => _isSame24Subnet(senderIp, localIp),
+    );
+    if (localIps.isNotEmpty &&
+        !isSenderInLocalSubnet &&
+        !isAllowedInternetSender) {
+      _log('Ignoring packet from foreign subnet: $senderIp');
+      return;
+    }
+
+    final message = utf8.decode(datagram.data, allowMalformed: true);
+    final discoveryPacket = _parseDiscoveryPacket(message);
+    if (discoveryPacket != null) {
+      if (discoveryPacket.instanceId == _instanceId) {
+        return;
+      }
+
+      if (discoveryPacket.prefix == _discoverPrefix) {
+        _log('Discover request from $senderIp');
+        final responsePayload = _encodeDiscoveryPayload(deviceName);
+        final response = '$_responsePrefix|$_instanceId|$responsePayload';
+        _transportAdapter.send(
+          bytes: utf8.encode(response),
+          address: datagram.address,
+          port: datagram.port,
+          context: 'discover-response',
+        );
+        _log('Discover response sent to $senderIp');
+      } else if (discoveryPacket.prefix == _responsePrefix) {
+        _log(
+          'Discover response received from '
+          '$senderIp (${discoveryPacket.deviceName})',
+        );
+        onAppDetected(
+          AppPresenceEvent(
+            ip: senderIp,
+            deviceName: discoveryPacket.deviceName,
+            operatingSystem: discoveryPacket.operatingSystem,
+            deviceType: discoveryPacket.deviceType,
+            peerId: discoveryPacket.peerId,
+            observedAt: DateTime.now(),
+          ),
+        );
+      }
+      return;
+    }
+
+    final transferRequest = _parseTransferRequestPacket(message);
+    if (transferRequest != null) {
+      if (transferRequest.instanceId == _instanceId) {
+        return;
+      }
+      _log(
+        'Transfer request received from $senderIp '
+        '(requestId=${transferRequest.requestId})',
+      );
+      onTransferRequest?.call(
+        TransferRequestEvent(
+          requestId: transferRequest.requestId,
+          senderIp: senderIp,
+          senderName: transferRequest.senderName,
+          senderMacAddress: transferRequest.senderMacAddress,
+          sharedCacheId: transferRequest.sharedCacheId,
+          sharedLabel: transferRequest.sharedLabel,
+          items: transferRequest.items,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final transferDecision = _parseTransferDecisionPacket(message);
+    if (transferDecision != null) {
+      if (transferDecision.instanceId == _instanceId) {
+        return;
+      }
+      _log(
+        'Transfer decision received from $senderIp '
+        '(requestId=${transferDecision.requestId}, approved=${transferDecision.approved})',
+      );
+      onTransferDecision?.call(
+        TransferDecisionEvent(
+          requestId: transferDecision.requestId,
+          approved: transferDecision.approved,
+          receiverName: transferDecision.receiverName,
+          receiverIp: senderIp,
+          transferPort: transferDecision.transferPort,
+          observedAt: DateTime.now(),
+          acceptedFileNames: transferDecision.acceptedFileNames,
+        ),
+      );
+      return;
+    }
+
+    final friendRequest = _parseFriendRequestPacket(message);
+    if (friendRequest != null) {
+      if (friendRequest.instanceId == _instanceId) {
+        return;
+      }
+      _log(
+        'Friend request received from $senderIp '
+        '(requestId=${friendRequest.requestId})',
+      );
+      onFriendRequest?.call(
+        FriendRequestEvent(
+          requestId: friendRequest.requestId,
+          requesterIp: senderIp,
+          requesterName: friendRequest.requesterName,
+          requesterMacAddress: friendRequest.requesterMacAddress,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final friendResponse = _parseFriendResponsePacket(message);
+    if (friendResponse != null) {
+      if (friendResponse.instanceId == _instanceId) {
+        return;
+      }
+      _log(
+        'Friend response received from $senderIp '
+        '(requestId=${friendResponse.requestId}, accepted=${friendResponse.accepted})',
+      );
+      onFriendResponse?.call(
+        FriendResponseEvent(
+          requestId: friendResponse.requestId,
+          responderIp: senderIp,
+          responderName: friendResponse.responderName,
+          responderMacAddress: friendResponse.responderMacAddress,
+          accepted: friendResponse.accepted,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final shareQuery = _parseShareQueryPacket(message);
+    if (shareQuery != null) {
+      if (shareQuery.instanceId == _instanceId) {
+        return;
+      }
+      onShareQuery?.call(
+        ShareQueryEvent(
+          requestId: shareQuery.requestId,
+          requesterIp: senderIp,
+          requesterName: shareQuery.requesterName,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final shareCatalog = _parseShareCatalogPacket(message);
+    if (shareCatalog != null) {
+      if (shareCatalog.instanceId == _instanceId) {
+        return;
+      }
+      onShareCatalog?.call(
+        ShareCatalogEvent(
+          requestId: shareCatalog.requestId,
+          ownerIp: senderIp,
+          ownerName: shareCatalog.ownerName,
+          ownerMacAddress: shareCatalog.ownerMacAddress,
+          entries: shareCatalog.entries,
+          removedCacheIds: shareCatalog.removedCacheIds,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final downloadRequest = _parseDownloadRequestPacket(message);
+    if (downloadRequest != null) {
+      if (downloadRequest.instanceId == _instanceId) {
+        return;
+      }
+      onDownloadRequest?.call(
+        DownloadRequestEvent(
+          requestId: downloadRequest.requestId,
+          requesterIp: senderIp,
+          requesterName: downloadRequest.requesterName,
+          requesterMacAddress: downloadRequest.requesterMacAddress,
+          cacheId: downloadRequest.cacheId,
+          selectedRelativePaths: downloadRequest.selectedRelativePaths,
+          previewMode: downloadRequest.previewMode,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final thumbnailSync = _parseThumbnailSyncRequestPacket(message);
+    if (thumbnailSync != null) {
+      if (thumbnailSync.instanceId == _instanceId) {
+        return;
+      }
+      onThumbnailSyncRequest?.call(
+        ThumbnailSyncRequestEvent(
+          requestId: thumbnailSync.requestId,
+          requesterIp: senderIp,
+          requesterName: thumbnailSync.requesterName,
+          items: thumbnailSync.items,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final thumbnailPacket = _parseThumbnailPacket(message);
+    if (thumbnailPacket != null) {
+      if (thumbnailPacket.instanceId == _instanceId) {
+        return;
+      }
+      onThumbnailPacket?.call(
+        ThumbnailPacketEvent(
+          requestId: thumbnailPacket.requestId,
+          ownerIp: senderIp,
+          ownerMacAddress: thumbnailPacket.ownerMacAddress,
+          cacheId: thumbnailPacket.cacheId,
+          relativePath: thumbnailPacket.relativePath,
+          thumbnailId: thumbnailPacket.thumbnailId,
+          bytes: thumbnailPacket.bytes,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final clipboardQuery = _parseClipboardQueryPacket(message);
+    if (clipboardQuery != null) {
+      if (clipboardQuery.instanceId == _instanceId) {
+        return;
+      }
+      onClipboardQuery?.call(
+        ClipboardQueryEvent(
+          requestId: clipboardQuery.requestId,
+          requesterIp: senderIp,
+          requesterName: clipboardQuery.requesterName,
+          requesterMacAddress: clipboardQuery.requesterMacAddress,
+          maxEntries: clipboardQuery.maxEntries,
+          observedAt: DateTime.now(),
+        ),
+      );
+      return;
+    }
+
+    final clipboardCatalog = _parseClipboardCatalogPacket(message);
+    if (clipboardCatalog != null) {
+      if (clipboardCatalog.instanceId == _instanceId) {
+        return;
+      }
+      onClipboardCatalog?.call(
+        ClipboardCatalogEvent(
+          requestId: clipboardCatalog.requestId,
+          ownerIp: senderIp,
+          ownerName: clipboardCatalog.ownerName,
+          ownerMacAddress: clipboardCatalog.ownerMacAddress,
+          entries: clipboardCatalog.entries,
+          observedAt: DateTime.now(),
+        ),
+      );
     }
   }
 }
