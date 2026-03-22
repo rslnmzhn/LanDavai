@@ -358,6 +358,43 @@ class SharedFolderCacheRepository {
     return rows.map(SharedFolderCacheRecord.fromDbMap).toList(growable: false);
   }
 
+  Future<SharedFolderCacheRecord?> findCacheById(String cacheId) async {
+    final db = await _database.database;
+    final rows = await db.query(
+      AppDatabase.sharedFolderCachesTable,
+      where: 'cache_id = ?',
+      whereArgs: <Object?>[cacheId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return SharedFolderCacheRecord.fromDbMap(rows.first);
+  }
+
+  Future<SharedFolderCacheRecord?> findOwnerCacheByRootPath({
+    required String ownerMacAddress,
+    required String rootPath,
+  }) {
+    return _findOwnerCacheByRootPath(
+      ownerMacAddress: ownerMacAddress,
+      rootPath: rootPath,
+    );
+  }
+
+  Future<void> upsertCacheRecord(SharedFolderCacheRecord record) {
+    return _upsertRecord(record);
+  }
+
+  Future<void> deleteCacheRecord(String cacheId) async {
+    final db = await _database.database;
+    await db.delete(
+      AppDatabase.sharedFolderCachesTable,
+      where: 'cache_id = ?',
+      whereArgs: <Object?>[cacheId],
+    );
+  }
+
   Future<SharedFolderCacheRecord> refreshOwnerSelectionCacheEntries(
     SharedFolderCacheRecord cache, {
     OwnerCacheProgressCallback? onProgress,
@@ -606,9 +643,7 @@ class SharedFolderCacheRepository {
     return removedCacheIds;
   }
 
-  Future<int> rebindOwnerCachesToMac({
-    required String ownerMacAddress,
-  }) async {
+  Future<int> rebindOwnerCachesToMac({required String ownerMacAddress}) async {
     final ownerMac = _normalizeOrThrow(
       ownerMacAddress,
       field: 'ownerMacAddress',

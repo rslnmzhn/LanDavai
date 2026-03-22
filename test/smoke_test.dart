@@ -28,6 +28,7 @@ void main() {
           home: DiscoveryPage(
             controller: harness.controller,
             readModel: harness.readModel,
+            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
             desktopWindowService: desktopWindowService,
             transferStorageService: transferStorageService,
             isBoundaryReady: false,
@@ -56,6 +57,7 @@ void main() {
           home: DiscoveryPageEntry(
             controller: harness.controller,
             readModel: harness.readModel,
+            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
             desktopWindowService: desktopWindowService,
           ),
         ),
@@ -64,7 +66,8 @@ void main() {
 
       expect(find.text('Landa devices'), findsOneWidget);
       expect(harness.controller.startCalls, 1);
-      expect(harness.controller.shareableVideoListCalls, 1);
+      expect(harness.sharedCacheCatalogBridge.shareableVideoListCalls, 1);
+      expect(harness.controller.shareableVideoListCalls, 0);
       expect(desktopWindowService.setMinimizeCalls, 1);
 
       await tester.pumpWidget(const SizedBox.shrink());

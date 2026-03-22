@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
+import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
 import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
 import 'package:path/path.dart' as p;
@@ -11,13 +12,18 @@ import 'test_support/test_app_database.dart';
 void main() {
   late TestAppDatabaseHarness harness;
   late SharedFolderCacheRepository repository;
+  late SharedCacheIndexStore indexStore;
   late SharedCacheCatalog catalog;
   late Directory fixtureDirectory;
 
   setUp(() async {
     harness = await TestAppDatabaseHarness.create(prefix: 'landa_catalog_');
     repository = SharedFolderCacheRepository(database: harness.database);
-    catalog = SharedCacheCatalog(sharedFolderCacheRepository: repository);
+    indexStore = SharedCacheIndexStore(database: harness.database);
+    catalog = SharedCacheCatalog(
+      sharedFolderCacheRepository: repository,
+      sharedCacheIndexStore: indexStore,
+    );
     fixtureDirectory = Directory(
       p.join(harness.rootDirectory.path, 'selection_fixture'),
     );

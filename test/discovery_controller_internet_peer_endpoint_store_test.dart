@@ -17,6 +17,7 @@ import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
+import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
@@ -126,6 +127,7 @@ DiscoveryController _buildController({
   final sharedFolderCacheRepository = SharedFolderCacheRepository(
     database: database,
   );
+  final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
   return DiscoveryController(
     lanDiscoveryService: lanDiscoveryService,
     networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -143,7 +145,9 @@ DiscoveryController _buildController({
     clipboardCaptureService: ClipboardCaptureService(),
     sharedCacheCatalog: SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheIndexStore: sharedCacheIndexStore,
     ),
+    sharedCacheIndexStore: sharedCacheIndexStore,
     sharedFolderCacheRepository: sharedFolderCacheRepository,
     fileHashService: FileHashService(),
     fileTransferService: FileTransferService(),

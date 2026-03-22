@@ -16,12 +16,14 @@ import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
+import '../application/shared_cache_catalog_bridge.dart';
 import '../domain/discovered_device.dart';
 
 class DiscoveryPage extends StatefulWidget {
   const DiscoveryPage({
     required this.controller,
     required this.readModel,
+    required this.sharedCacheCatalogBridge,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -30,6 +32,7 @@ class DiscoveryPage extends StatefulWidget {
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -46,6 +49,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
 
   DiscoveryController get _controller => widget.controller;
   DiscoveryReadModel get _readModel => widget.readModel;
+  SharedCacheCatalogBridge get _sharedCacheCatalogBridge =>
+      widget.sharedCacheCatalogBridge;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -69,7 +74,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       if (widget.isBoundaryReady) {
         unawaited(_reloadShareableVideoFiles());
       }
-    } else if (!oldWidget.isBoundaryReady && widget.isBoundaryReady) {
+    } else if (oldWidget.sharedCacheCatalogBridge !=
+            widget.sharedCacheCatalogBridge ||
+        (!oldWidget.isBoundaryReady && widget.isBoundaryReady)) {
       unawaited(_reloadShareableVideoFiles());
     }
   }
@@ -588,7 +595,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       return SharedRecacheActionResult.refreshedOnly;
     }
 
-    final before = await _controller.summarizeOwnerSharedContent(
+    final before = await _sharedCacheCatalogBridge.summarizeOwnerSharedContent(
       virtualFolderPath: normalizedFolder,
     );
     if (!mounted) {
@@ -728,7 +735,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       _isLoadingShareableVideoFiles = true;
     });
     try {
-      final files = await _controller.listShareableVideoFiles();
+      final files = await _sharedCacheCatalogBridge.listShareableVideoFiles();
       if (!mounted) {
         return;
       }
@@ -948,8 +955,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         publicDownloadsDirectory = Directory(p.join(basePublic.path, 'Landa'));
       }
     }
-    await _controller.reloadOwnerSharedCaches();
-    final sharedSummary = await _controller.summarizeOwnerSharedContent();
+    final sharedSummary = await _sharedCacheCatalogBridge
+        .summarizeOwnerSharedContent();
 
     final roots = <FileExplorerRoot>[];
     final seenPaths = <String>{};
@@ -1009,9 +1016,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         path: 'virtual://my-files',
         isSharedFolder: true,
         virtualDirectoryLoader: (folderPath) async {
-          final directory = await _controller.listShareableLocalDirectory(
-            virtualFolderPath: folderPath,
-          );
+          final directory = await _sharedCacheCatalogBridge
+              .listShareableLocalDirectory(virtualFolderPath: folderPath);
           return FileExplorerVirtualDirectory(
             folders: directory.folders
                 .map(

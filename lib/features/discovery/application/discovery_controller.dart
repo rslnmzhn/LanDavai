@@ -21,6 +21,7 @@ import '../../clipboard/domain/clipboard_entry.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
+import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
@@ -302,6 +303,7 @@ class DiscoveryController extends ChangeNotifier {
     required ClipboardHistoryRepository clipboardHistoryRepository,
     required ClipboardCaptureService clipboardCaptureService,
     required SharedCacheCatalog sharedCacheCatalog,
+    required SharedCacheIndexStore sharedCacheIndexStore,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
@@ -320,6 +322,7 @@ class DiscoveryController extends ChangeNotifier {
        _clipboardHistoryRepository = clipboardHistoryRepository,
        _clipboardCaptureService = clipboardCaptureService,
        _sharedCacheCatalog = sharedCacheCatalog,
+       _sharedCacheIndexStore = sharedCacheIndexStore,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
@@ -359,6 +362,7 @@ class DiscoveryController extends ChangeNotifier {
   final ClipboardHistoryRepository _clipboardHistoryRepository;
   final ClipboardCaptureService _clipboardCaptureService;
   final SharedCacheCatalog _sharedCacheCatalog;
+  final SharedCacheIndexStore _sharedCacheIndexStore;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
@@ -1978,9 +1982,7 @@ class DiscoveryController extends ChangeNotifier {
       if (cacheId != null && cache.cacheId != cacheId) {
         continue;
       }
-      final entries = await _sharedFolderCacheRepository.readIndexEntries(
-        cache.cacheId,
-      );
+      final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
       for (final entry in entries) {
         if (!_sharedFolderCacheRepository.isVideoPath(entry.relativePath)) {
           continue;
@@ -2030,9 +2032,7 @@ class DiscoveryController extends ChangeNotifier {
     var processed = 0;
 
     for (final cache in _ownerSharedCaches) {
-      final entries = await _sharedFolderCacheRepository.readIndexEntries(
-        cache.cacheId,
-      );
+      final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
       for (final entry in entries) {
         final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
         if (absolutePath == null || absolutePath.trim().isEmpty) {
@@ -2221,9 +2221,11 @@ class DiscoveryController extends ChangeNotifier {
     if (cached != null) {
       return cached;
     }
-    final entries = await _sharedFolderCacheRepository.readIndexEntries(
-      cacheId,
-    );
+    final cache = _findOwnerCacheById(cacheId);
+    if (cache == null) {
+      return const <SharedFolderIndexEntry>[];
+    }
+    final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
     _ownerIndexEntriesByCacheId[cacheId] = entries;
     return entries;
   }
@@ -3531,9 +3533,7 @@ class DiscoveryController extends ChangeNotifier {
 
       final catalog = <SharedCatalogEntryItem>[];
       for (final cache in _ownerSharedCaches) {
-        final entries = await _sharedFolderCacheRepository.readIndexEntries(
-          cache.cacheId,
-        );
+        final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
         final files = entries
             .map(
               (entry) => SharedCatalogFileItem(
@@ -3720,9 +3720,7 @@ class DiscoveryController extends ChangeNotifier {
         () => <String, SharedFolderIndexEntry>{},
       );
       if (!byRelative.containsKey(item.relativePath)) {
-        final entries = await _sharedFolderCacheRepository.readIndexEntries(
-          item.cacheId,
-        );
+        final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
         for (final entry in entries) {
           byRelative[entry.relativePath] = entry;
         }
@@ -4187,9 +4185,7 @@ class DiscoveryController extends ChangeNotifier {
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
   }) async {
-    final entries = await _sharedFolderCacheRepository.readIndexEntries(
-      cache.cacheId,
-    );
+    final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
     final normalizedFilter = relativePathFilter
         ?.map(_normalizeTransferPathForMatch)
         .toSet();
@@ -4403,9 +4399,7 @@ class DiscoveryController extends ChangeNotifier {
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
   }) async {
-    final indexEntries = await _sharedFolderCacheRepository.readIndexEntries(
-      cache.cacheId,
-    );
+    final indexEntries = await _sharedCacheIndexStore.readIndexEntries(cache);
     final items = <_PreparedTransferFile>[];
     for (final entry in indexEntries) {
       if (relativePathFilter != null &&

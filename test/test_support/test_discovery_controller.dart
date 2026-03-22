@@ -7,6 +7,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/shared_cache_catalog_bridge.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -16,6 +17,7 @@ import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
+import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
@@ -29,11 +31,13 @@ class TestDiscoveryControllerHarness {
     required this.databaseHarness,
     required this.controller,
     required this.readModel,
+    required this.sharedCacheCatalogBridge,
   });
 
   final TestAppDatabaseHarness databaseHarness;
   final TrackingDiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
 
   static Future<TestDiscoveryControllerHarness> create() async {
     final databaseHarness = await TestAppDatabaseHarness.create(
@@ -58,8 +62,10 @@ class TestDiscoveryControllerHarness {
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: database,
     );
+    final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
     final sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheIndexStore: sharedCacheIndexStore,
     );
     final controller = TrackingDiscoveryController(
       lanDiscoveryService: LanDiscoveryService(),
@@ -76,6 +82,7 @@ class TestDiscoveryControllerHarness {
       ),
       clipboardCaptureService: ClipboardCaptureService(),
       sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: FileHashService(),
       fileTransferService: FileTransferService(),
@@ -90,11 +97,17 @@ class TestDiscoveryControllerHarness {
       trustedLanPeerStore: trustedLanPeerStore,
       settingsStore: settingsStore,
     );
+    final sharedCacheCatalogBridge = TrackingSharedCacheCatalogBridge(
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      ownerMacAddressProvider: () => controller.localDeviceMac,
+    );
 
     return TestDiscoveryControllerHarness._(
       databaseHarness: databaseHarness,
       controller: controller,
       readModel: readModel,
+      sharedCacheCatalogBridge: sharedCacheCatalogBridge,
     );
   }
 
@@ -121,6 +134,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.clipboardHistoryRepository,
     required super.clipboardCaptureService,
     required super.sharedCacheCatalog,
+    required super.sharedCacheIndexStore,
     required super.sharedFolderCacheRepository,
     required super.fileHashService,
     required super.fileTransferService,
@@ -132,6 +146,9 @@ class TrackingDiscoveryController extends DiscoveryController {
   int startCalls = 0;
   int disposeCalls = 0;
   int shareableVideoListCalls = 0;
+  int reloadOwnerSharedCachesCalls = 0;
+  int summarizeOwnerSharedContentCalls = 0;
+  int listShareableLocalDirectoryCalls = 0;
   bool wasDisposed = false;
 
   @override
@@ -149,6 +166,35 @@ class TrackingDiscoveryController extends DiscoveryController {
   }
 
   @override
+  Future<void> reloadOwnerSharedCaches() async {
+    reloadOwnerSharedCachesCalls += 1;
+  }
+
+  @override
+  Future<SharedCacheSummary> summarizeOwnerSharedContent({
+    String virtualFolderPath = '',
+  }) async {
+    summarizeOwnerSharedContentCalls += 1;
+    return const SharedCacheSummary(
+      totalCaches: 0,
+      folderCaches: 0,
+      selectionCaches: 0,
+      totalFiles: 0,
+    );
+  }
+
+  @override
+  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
+    required String virtualFolderPath,
+  }) async {
+    listShareableLocalDirectoryCalls += 1;
+    return const ShareableLocalDirectoryListing(
+      folders: <ShareableLocalFolder>[],
+      files: <ShareableLocalFile>[],
+    );
+  }
+
+  @override
   void dispose() {
     if (wasDisposed) {
       return;
@@ -156,6 +202,50 @@ class TrackingDiscoveryController extends DiscoveryController {
     disposeCalls += 1;
     wasDisposed = true;
     super.dispose();
+  }
+}
+
+class TrackingSharedCacheCatalogBridge extends SharedCacheCatalogBridge {
+  TrackingSharedCacheCatalogBridge({
+    required super.sharedCacheCatalog,
+    required super.sharedCacheIndexStore,
+    required super.ownerMacAddressProvider,
+  });
+
+  int shareableVideoListCalls = 0;
+  int summarizeOwnerSharedContentCalls = 0;
+  final List<String> listShareableLocalDirectoryFolders = <String>[];
+
+  @override
+  Future<List<ShareableVideoFile>> listShareableVideoFiles({
+    String? cacheId,
+  }) async {
+    shareableVideoListCalls += 1;
+    return const <ShareableVideoFile>[];
+  }
+
+  @override
+  Future<SharedCacheSummary> summarizeOwnerSharedContent({
+    String virtualFolderPath = '',
+  }) async {
+    summarizeOwnerSharedContentCalls += 1;
+    return const SharedCacheSummary(
+      totalCaches: 1,
+      folderCaches: 1,
+      selectionCaches: 0,
+      totalFiles: 1,
+    );
+  }
+
+  @override
+  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
+    required String virtualFolderPath,
+  }) async {
+    listShareableLocalDirectoryFolders.add(virtualFolderPath);
+    return const ShareableLocalDirectoryListing(
+      folders: <ShareableLocalFolder>[],
+      files: <ShareableLocalFile>[],
+    );
   }
 }
 

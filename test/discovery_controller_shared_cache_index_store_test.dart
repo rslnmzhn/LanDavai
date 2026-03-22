@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/core/storage/app_database.dart';
 import 'package:landa/core/utils/app_notification_service.dart';
@@ -23,29 +25,52 @@ import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/data/video_link_share_service.dart';
 import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
+import 'package:path/path.dart' as p;
 
 import 'test_support/test_app_database.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
   late RecordingSharedCacheCatalog sharedCacheCatalog;
-  late ThrowingMetadataSharedFolderCacheRepository controllerRepository;
+  late RecordingSharedCacheIndexStore sharedCacheIndexStore;
+  late ThrowingIndexSharedFolderCacheRepository controllerRepository;
+  late File indexedFile;
   DiscoveryController? controller;
 
   setUp(() async {
     harness = await TestAppDatabaseHarness.create(
-      prefix: 'landa_discovery_shared_cache_catalog_',
+      prefix: 'landa_discovery_shared_cache_index_store_',
     );
+    indexedFile = File(p.join(harness.rootDirectory.path, 'alpha.txt'));
+    await indexedFile.writeAsString('alpha', flush: true);
+
     sharedCacheCatalog = RecordingSharedCacheCatalog(
       sharedFolderCacheRepository: SharedFolderCacheRepository(
         database: harness.database,
       ),
       sharedCacheIndexStore: SharedCacheIndexStore(database: harness.database),
       ownerCaches: <SharedFolderCacheRecord>[
-        _ownerCacheRecord(cacheId: 'cache-1', displayName: 'Shared docs'),
+        _ownerSelectionCacheRecord(
+          cacheId: 'cache-1',
+          displayName: 'Selected files',
+          absolutePath: indexedFile.path,
+        ),
       ],
     );
-    controllerRepository = ThrowingMetadataSharedFolderCacheRepository(
+    sharedCacheIndexStore = RecordingSharedCacheIndexStore(
+      database: harness.database,
+      entriesByCacheId: <String, List<SharedFolderIndexEntry>>{
+        'cache-1': <SharedFolderIndexEntry>[
+          SharedFolderIndexEntry(
+            relativePath: 'alpha.txt',
+            sizeBytes: 5,
+            modifiedAtMs: 1000,
+            absolutePath: indexedFile.path,
+          ),
+        ],
+      },
+    );
+    controllerRepository = ThrowingIndexSharedFolderCacheRepository(
       database: harness.database,
     );
   });
@@ -57,49 +82,22 @@ void main() {
   });
 
   test(
-    'reloadOwnerSharedCaches routes metadata reads through SharedCacheCatalog',
+    'listShareableLocalFiles routes canonical index reads through SharedCacheIndexStore',
     () async {
       controller = _buildController(
         database: harness.database,
         sharedCacheCatalog: sharedCacheCatalog,
-        sharedCacheIndexStore: SharedCacheIndexStore(
-          database: harness.database,
-        ),
+        sharedCacheIndexStore: sharedCacheIndexStore,
         sharedFolderCacheRepository: controllerRepository,
       );
 
-      await controller!.reloadOwnerSharedCaches();
+      final files = await controller!.listShareableLocalFiles();
 
       expect(sharedCacheCatalog.loadOwnerCachesCalls, 1);
-      expect(
-        sharedCacheCatalog.lastOwnerMacAddress,
-        controller!.localDeviceMac,
-      );
-      expect(sharedCacheCatalog.lastRebindOwnerCachesToMac, isTrue);
-      expect(controller!.ownerSharedCaches, hasLength(1));
-      expect(controller!.ownerSharedCaches.single.cacheId, 'cache-1');
-      expect(controller!.errorMessage, isNull);
-    },
-  );
-
-  test(
-    'removeSharedCacheById routes metadata deletion through SharedCacheCatalog',
-    () async {
-      controller = _buildController(
-        database: harness.database,
-        sharedCacheCatalog: sharedCacheCatalog,
-        sharedCacheIndexStore: SharedCacheIndexStore(
-          database: harness.database,
-        ),
-        sharedFolderCacheRepository: controllerRepository,
-      );
-
-      final removed = await controller!.removeSharedCacheById('cache-1');
-
-      expect(removed, isTrue);
-      expect(sharedCacheCatalog.deletedCacheIds, <String>['cache-1']);
-      expect(sharedCacheCatalog.loadOwnerCachesCalls, 2);
-      expect(controller!.ownerSharedCaches, isEmpty);
+      expect(sharedCacheIndexStore.readCacheIds, <String>['cache-1']);
+      expect(files, hasLength(1));
+      expect(files.single.cacheId, 'cache-1');
+      expect(files.single.relativePath, 'alpha.txt');
       expect(controller!.errorMessage, isNull);
     },
   );
@@ -154,10 +152,7 @@ class RecordingSharedCacheCatalog extends SharedCacheCatalog {
   }) : _ownerCachesSnapshot = List<SharedFolderCacheRecord>.from(ownerCaches);
 
   int loadOwnerCachesCalls = 0;
-  String? lastOwnerMacAddress;
-  bool? lastRebindOwnerCachesToMac;
-  final List<String> deletedCacheIds = <String>[];
-  List<SharedFolderCacheRecord> _ownerCachesSnapshot;
+  final List<SharedFolderCacheRecord> _ownerCachesSnapshot;
 
   @override
   List<SharedFolderCacheRecord> get ownerCaches =>
@@ -169,128 +164,41 @@ class RecordingSharedCacheCatalog extends SharedCacheCatalog {
     bool rebindOwnerCachesToMac = false,
   }) async {
     loadOwnerCachesCalls += 1;
-    lastOwnerMacAddress = ownerMacAddress;
-    lastRebindOwnerCachesToMac = rebindOwnerCachesToMac;
     return OwnerCacheCatalogLoadResult(
       ownerCaches: ownerCaches,
       reboundCount: rebindOwnerCachesToMac ? 1 : 0,
     );
   }
+}
+
+class RecordingSharedCacheIndexStore extends SharedCacheIndexStore {
+  RecordingSharedCacheIndexStore({
+    required super.database,
+    required Map<String, List<SharedFolderIndexEntry>> entriesByCacheId,
+  }) : _entriesByCacheId = entriesByCacheId;
+
+  final Map<String, List<SharedFolderIndexEntry>> _entriesByCacheId;
+  final List<String> readCacheIds = <String>[];
 
   @override
-  Future<void> deleteCache(String cacheId) async {
-    deletedCacheIds.add(cacheId);
-    _ownerCachesSnapshot = _ownerCachesSnapshot
-        .where((cache) => cache.cacheId != cacheId)
-        .toList(growable: false);
+  Future<List<SharedFolderIndexEntry>> readIndexEntries(
+    SharedFolderCacheRecord record,
+  ) async {
+    readCacheIds.add(record.cacheId);
+    return List<SharedFolderIndexEntry>.from(
+      _entriesByCacheId[record.cacheId] ?? const <SharedFolderIndexEntry>[],
+    );
   }
 }
 
-class ThrowingMetadataSharedFolderCacheRepository
+class ThrowingIndexSharedFolderCacheRepository
     extends SharedFolderCacheRepository {
-  ThrowingMetadataSharedFolderCacheRepository({required super.database});
+  ThrowingIndexSharedFolderCacheRepository({required super.database});
 
   @override
-  Future<OwnerFolderCacheUpsertResult> upsertOwnerFolderCache({
-    required String ownerMacAddress,
-    required String folderPath,
-    String? displayName,
-    int? parallelWorkers,
-    OwnerCacheProgressCallback? onProgress,
-  }) {
+  Future<List<SharedFolderIndexEntry>> readIndexEntries(String cacheId) {
     throw StateError(
-      'DiscoveryController must not write owner cache metadata directly',
-    );
-  }
-
-  @override
-  Future<SharedFolderCacheRecord> buildOwnerSelectionCache({
-    required String ownerMacAddress,
-    required List<String> filePaths,
-    String? displayName,
-  }) {
-    throw StateError(
-      'DiscoveryController must not create cache metadata directly',
-    );
-  }
-
-  @override
-  Future<SharedFolderCacheRecord> saveReceiverCache({
-    required String ownerMacAddress,
-    required String receiverMacAddress,
-    required String remoteFolderIdentity,
-    required String remoteDisplayName,
-    required List<SharedFolderIndexEntry> entries,
-  }) {
-    throw StateError(
-      'DiscoveryController must not save receiver cache metadata directly',
-    );
-  }
-
-  @override
-  Future<List<SharedFolderCacheRecord>> listCaches({
-    SharedFolderCacheRole? role,
-    String? ownerMacAddress,
-    String? peerMacAddress,
-  }) {
-    throw StateError(
-      'DiscoveryController must not read cache metadata directly',
-    );
-  }
-
-  @override
-  Future<void> deleteCache(String cacheId) {
-    throw StateError(
-      'DiscoveryController must not delete cache metadata directly',
-    );
-  }
-
-  @override
-  Future<List<String>> pruneUnavailableOwnerCaches({
-    required String ownerMacAddress,
-  }) {
-    throw StateError(
-      'DiscoveryController must not prune owner cache metadata directly',
-    );
-  }
-
-  @override
-  Future<int> rebindOwnerCachesToMac({required String ownerMacAddress}) {
-    throw StateError(
-      'DiscoveryController must not rebind owner cache metadata directly',
-    );
-  }
-
-  @override
-  Future<SharedFolderCacheRecord> refreshOwnerSelectionCacheEntries(
-    SharedFolderCacheRecord cache, {
-    OwnerCacheProgressCallback? onProgress,
-  }) {
-    throw StateError(
-      'DiscoveryController must not refresh selection cache metadata directly',
-    );
-  }
-
-  @override
-  Future<SharedFolderCacheRecord> refreshOwnerFolderSubdirectoryEntries(
-    SharedFolderCacheRecord cache, {
-    required String relativeFolderPath,
-    int? parallelWorkers,
-    OwnerCacheProgressCallback? onProgress,
-  }) {
-    throw StateError(
-      'DiscoveryController must not refresh folder cache metadata directly',
-    );
-  }
-
-  @override
-  Future<List<String>> pruneReceiverCachesForOwner({
-    required String ownerMacAddress,
-    required String receiverMacAddress,
-    required Set<String> activeCacheIds,
-  }) {
-    throw StateError(
-      'DiscoveryController must not prune receiver cache metadata directly',
+      'DiscoveryController must not read canonical index entries directly from the repository',
     );
   }
 }
@@ -308,9 +216,10 @@ class StubNetworkHostScanner extends NetworkHostScanner {
   }
 }
 
-SharedFolderCacheRecord _ownerCacheRecord({
+SharedFolderCacheRecord _ownerSelectionCacheRecord({
   required String cacheId,
   required String displayName,
+  required String absolutePath,
 }) {
   return SharedFolderCacheRecord(
     cacheId: cacheId,
@@ -319,9 +228,9 @@ SharedFolderCacheRecord _ownerCacheRecord({
     peerMacAddress: null,
     rootPath: 'selection://$cacheId',
     displayName: displayName,
-    indexFilePath: 'C:/tmp/$cacheId.landa-cache.json',
-    itemCount: 2,
-    totalBytes: 123,
+    indexFilePath: absolutePath,
+    itemCount: 1,
+    totalBytes: 5,
     updatedAtMs: 1000,
   );
 }
