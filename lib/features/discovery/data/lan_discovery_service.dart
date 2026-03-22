@@ -7,7 +7,13 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'discovery_transport_adapter.dart';
+import 'lan_clipboard_protocol_handler.dart';
+import 'lan_friend_protocol_handler.dart';
 import 'lan_packet_codec.dart';
+import 'lan_presence_protocol_handler.dart';
+import 'lan_protocol_events.dart';
+import 'lan_share_protocol_handler.dart';
+import 'lan_transfer_protocol_handler.dart';
 
 export 'lan_packet_codec.dart'
     show
@@ -16,24 +22,7 @@ export 'lan_packet_codec.dart'
         SharedCatalogFileItem,
         ThumbnailSyncItem,
         TransferAnnouncementItem;
-
-class AppPresenceEvent {
-  AppPresenceEvent({
-    required this.ip,
-    required this.deviceName,
-    required this.observedAt,
-    this.peerId,
-    this.operatingSystem,
-    this.deviceType,
-  });
-
-  final String ip;
-  final String deviceName;
-  final DateTime observedAt;
-  final String? peerId;
-  final String? operatingSystem;
-  final String? deviceType;
-}
+export 'lan_protocol_events.dart';
 
 class InternetPeerEndpoint {
   const InternetPeerEndpoint({
@@ -47,224 +36,37 @@ class InternetPeerEndpoint {
   final int port;
 }
 
-class TransferRequestEvent {
-  TransferRequestEvent({
-    required this.requestId,
-    required this.senderIp,
-    required this.senderName,
-    required this.senderMacAddress,
-    required this.sharedCacheId,
-    required this.sharedLabel,
-    required this.items,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String senderIp;
-  final String senderName;
-  final String senderMacAddress;
-  final String sharedCacheId;
-  final String sharedLabel;
-  final List<TransferAnnouncementItem> items;
-  final DateTime observedAt;
-}
-
-class TransferDecisionEvent {
-  TransferDecisionEvent({
-    required this.requestId,
-    required this.approved,
-    required this.receiverName,
-    required this.receiverIp,
-    required this.transferPort,
-    required this.observedAt,
-    this.acceptedFileNames,
-  });
-
-  final String requestId;
-  final bool approved;
-  final String receiverName;
-  final String receiverIp;
-  final int? transferPort;
-  final DateTime observedAt;
-  final List<String>? acceptedFileNames;
-}
-
-class FriendRequestEvent {
-  const FriendRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final DateTime observedAt;
-}
-
-class FriendResponseEvent {
-  const FriendResponseEvent({
-    required this.requestId,
-    required this.responderIp,
-    required this.responderName,
-    required this.responderMacAddress,
-    required this.accepted,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String responderIp;
-  final String responderName;
-  final String responderMacAddress;
-  final bool accepted;
-  final DateTime observedAt;
-}
-
-class ShareQueryEvent {
-  ShareQueryEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final DateTime observedAt;
-}
-
-class ShareCatalogEvent {
-  ShareCatalogEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-    required this.removedCacheIds,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<SharedCatalogEntryItem> entries;
-  final List<String> removedCacheIds;
-  final DateTime observedAt;
-}
-
-class DownloadRequestEvent {
-  DownloadRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.cacheId,
-    required this.selectedRelativePaths,
-    required this.previewMode,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final String cacheId;
-  final List<String> selectedRelativePaths;
-  final bool previewMode;
-
-  final DateTime observedAt;
-}
-
-class ClipboardQueryEvent {
-  const ClipboardQueryEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.maxEntries,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final int maxEntries;
-  final DateTime observedAt;
-}
-
-class ClipboardCatalogEvent {
-  const ClipboardCatalogEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<ClipboardCatalogItem> entries;
-  final DateTime observedAt;
-}
-
-class ThumbnailSyncRequestEvent {
-  const ThumbnailSyncRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.items,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final List<ThumbnailSyncItem> items;
-  final DateTime observedAt;
-}
-
-class ThumbnailPacketEvent {
-  const ThumbnailPacketEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerMacAddress,
-    required this.cacheId,
-    required this.relativePath,
-    required this.thumbnailId,
-    required this.bytes,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerMacAddress;
-  final String cacheId;
-  final String relativePath;
-  final String thumbnailId;
-  final Uint8List bytes;
-  final DateTime observedAt;
-}
-
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
 
   LanDiscoveryService({
     DiscoveryTransportAdapter? transportAdapter,
     LanPacketCodec? packetCodec,
+    LanPresenceProtocolHandler? presenceProtocolHandler,
+    LanTransferProtocolHandler? transferProtocolHandler,
+    LanFriendProtocolHandler? friendProtocolHandler,
+    LanShareProtocolHandler? shareProtocolHandler,
+    LanClipboardProtocolHandler? clipboardProtocolHandler,
   }) : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter(),
-       _packetCodec = packetCodec ?? LanPacketCodec();
+       _packetCodec = packetCodec ?? LanPacketCodec(),
+       _presenceProtocolHandler =
+           presenceProtocolHandler ?? const LanPresenceProtocolHandler(),
+       _transferProtocolHandler =
+           transferProtocolHandler ?? const LanTransferProtocolHandler(),
+       _friendProtocolHandler =
+           friendProtocolHandler ?? const LanFriendProtocolHandler(),
+       _shareProtocolHandler =
+           shareProtocolHandler ?? const LanShareProtocolHandler(),
+       _clipboardProtocolHandler =
+           clipboardProtocolHandler ?? const LanClipboardProtocolHandler();
 
   final DiscoveryTransportAdapter _transportAdapter;
   final LanPacketCodec _packetCodec;
+  final LanPresenceProtocolHandler _presenceProtocolHandler;
+  final LanTransferProtocolHandler _transferProtocolHandler;
+  final LanFriendProtocolHandler _friendProtocolHandler;
+  final LanShareProtocolHandler _shareProtocolHandler;
+  final LanClipboardProtocolHandler _clipboardProtocolHandler;
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -864,9 +666,15 @@ class LanDiscoveryService {
     if (packet == null || packet.instanceId == _instanceId) {
       return;
     }
+    final observedAt = DateTime.now();
 
     if (packet is LanDiscoveryPresencePacket) {
-      if (packet.prefix == LanPacketCodec.discoverPrefix) {
+      final result = _presenceProtocolHandler.handlePresencePacket(
+        packet: packet,
+        senderIp: senderIp,
+        observedAt: observedAt,
+      );
+      if (result.shouldRespondToDiscover) {
         _log('Discover request from $senderIp');
         final response = _packetCodec.encodeDiscoveryResponse(
           instanceId: _instanceId,
@@ -880,21 +688,14 @@ class LanDiscoveryService {
           context: 'discover-response',
         );
         _log('Discover response sent to $senderIp');
-      } else if (packet.prefix == LanPacketCodec.responsePrefix) {
+      }
+      final detectedEvent = result.detectedEvent;
+      if (detectedEvent != null) {
         _log(
           'Discover response received from '
-          '$senderIp (${packet.deviceName})',
+          '$senderIp (${detectedEvent.deviceName})',
         );
-        onAppDetected(
-          AppPresenceEvent(
-            ip: senderIp,
-            deviceName: packet.deviceName,
-            operatingSystem: packet.operatingSystem,
-            deviceType: packet.deviceType,
-            peerId: packet.peerId,
-            observedAt: DateTime.now(),
-          ),
-        );
+        onAppDetected(detectedEvent);
       }
       return;
     }
@@ -905,15 +706,10 @@ class LanDiscoveryService {
         '(requestId=${packet.requestId})',
       );
       onTransferRequest?.call(
-        TransferRequestEvent(
-          requestId: packet.requestId,
+        _transferProtocolHandler.handleTransferRequestPacket(
+          packet: packet,
           senderIp: senderIp,
-          senderName: packet.senderName,
-          senderMacAddress: packet.senderMacAddress,
-          sharedCacheId: packet.sharedCacheId,
-          sharedLabel: packet.sharedLabel,
-          items: packet.items,
-          observedAt: DateTime.now(),
+          observedAt: observedAt,
         ),
       );
       return;
@@ -925,14 +721,10 @@ class LanDiscoveryService {
         '(requestId=${packet.requestId}, approved=${packet.approved})',
       );
       onTransferDecision?.call(
-        TransferDecisionEvent(
-          requestId: packet.requestId,
-          approved: packet.approved,
-          receiverName: packet.receiverName,
-          receiverIp: senderIp,
-          transferPort: packet.transferPort,
-          observedAt: DateTime.now(),
-          acceptedFileNames: packet.acceptedFileNames,
+        _transferProtocolHandler.handleTransferDecisionPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -944,12 +736,10 @@ class LanDiscoveryService {
         '(requestId=${packet.requestId})',
       );
       onFriendRequest?.call(
-        FriendRequestEvent(
-          requestId: packet.requestId,
-          requesterIp: senderIp,
-          requesterName: packet.requesterName,
-          requesterMacAddress: packet.requesterMacAddress,
-          observedAt: DateTime.now(),
+        _friendProtocolHandler.handleFriendRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -961,13 +751,10 @@ class LanDiscoveryService {
         '(requestId=${packet.requestId}, accepted=${packet.accepted})',
       );
       onFriendResponse?.call(
-        FriendResponseEvent(
-          requestId: packet.requestId,
-          responderIp: senderIp,
-          responderName: packet.responderName,
-          responderMacAddress: packet.responderMacAddress,
-          accepted: packet.accepted,
-          observedAt: DateTime.now(),
+        _friendProtocolHandler.handleFriendResponsePacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -975,11 +762,10 @@ class LanDiscoveryService {
 
     if (packet is LanShareQueryPacket) {
       onShareQuery?.call(
-        ShareQueryEvent(
-          requestId: packet.requestId,
-          requesterIp: senderIp,
-          requesterName: packet.requesterName,
-          observedAt: DateTime.now(),
+        _shareProtocolHandler.handleShareQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -987,14 +773,10 @@ class LanDiscoveryService {
 
     if (packet is LanShareCatalogPacket) {
       onShareCatalog?.call(
-        ShareCatalogEvent(
-          requestId: packet.requestId,
-          ownerIp: senderIp,
-          ownerName: packet.ownerName,
-          ownerMacAddress: packet.ownerMacAddress,
-          entries: packet.entries,
-          removedCacheIds: packet.removedCacheIds,
-          observedAt: DateTime.now(),
+        _shareProtocolHandler.handleShareCatalogPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -1002,15 +784,10 @@ class LanDiscoveryService {
 
     if (packet is LanDownloadRequestPacket) {
       onDownloadRequest?.call(
-        DownloadRequestEvent(
-          requestId: packet.requestId,
-          requesterIp: senderIp,
-          requesterName: packet.requesterName,
-          requesterMacAddress: packet.requesterMacAddress,
-          cacheId: packet.cacheId,
-          selectedRelativePaths: packet.selectedRelativePaths,
-          previewMode: packet.previewMode,
-          observedAt: DateTime.now(),
+        _shareProtocolHandler.handleDownloadRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -1018,12 +795,10 @@ class LanDiscoveryService {
 
     if (packet is LanThumbnailSyncRequestPacket) {
       onThumbnailSyncRequest?.call(
-        ThumbnailSyncRequestEvent(
-          requestId: packet.requestId,
-          requesterIp: senderIp,
-          requesterName: packet.requesterName,
-          items: packet.items,
-          observedAt: DateTime.now(),
+        _shareProtocolHandler.handleThumbnailSyncRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -1031,15 +806,10 @@ class LanDiscoveryService {
 
     if (packet is LanThumbnailPacket) {
       onThumbnailPacket?.call(
-        ThumbnailPacketEvent(
-          requestId: packet.requestId,
-          ownerIp: senderIp,
-          ownerMacAddress: packet.ownerMacAddress,
-          cacheId: packet.cacheId,
-          relativePath: packet.relativePath,
-          thumbnailId: packet.thumbnailId,
-          bytes: packet.bytes,
-          observedAt: DateTime.now(),
+        _shareProtocolHandler.handleThumbnailPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -1047,13 +817,10 @@ class LanDiscoveryService {
 
     if (packet is LanClipboardQueryPacket) {
       onClipboardQuery?.call(
-        ClipboardQueryEvent(
-          requestId: packet.requestId,
-          requesterIp: senderIp,
-          requesterName: packet.requesterName,
-          requesterMacAddress: packet.requesterMacAddress,
-          maxEntries: packet.maxEntries,
-          observedAt: DateTime.now(),
+        _clipboardProtocolHandler.handleClipboardQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
       return;
@@ -1061,13 +828,10 @@ class LanDiscoveryService {
 
     if (packet is LanClipboardCatalogPacket) {
       onClipboardCatalog?.call(
-        ClipboardCatalogEvent(
-          requestId: packet.requestId,
-          ownerIp: senderIp,
-          ownerName: packet.ownerName,
-          ownerMacAddress: packet.ownerMacAddress,
-          entries: packet.entries,
-          observedAt: DateTime.now(),
+        _clipboardProtocolHandler.handleClipboardCatalogPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
         ),
       );
     }
