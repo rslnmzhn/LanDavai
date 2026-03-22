@@ -57,7 +57,7 @@ void main() {
   });
 
   test(
-    'reloadOwnerSharedCaches routes metadata reads through SharedCacheCatalog',
+    'removeSharedCacheById resolves owner cache lookup through SharedCacheCatalog',
     () async {
       controller = _buildController(
         database: harness.database,
@@ -68,16 +68,15 @@ void main() {
         sharedFolderCacheRepository: controllerRepository,
       );
 
-      await controller!.reloadOwnerSharedCaches();
+      final removed = await controller!.removeSharedCacheById('cache-1');
 
-      expect(sharedCacheCatalog.loadOwnerCachesCalls, 1);
+      expect(removed, isTrue);
+      expect(sharedCacheCatalog.loadOwnerCachesCalls, 2);
       expect(
         sharedCacheCatalog.lastOwnerMacAddress,
         controller!.localDeviceMac,
       );
-      expect(sharedCacheCatalog.lastRebindOwnerCachesToMac, isTrue);
-      expect(controller!.ownerSharedCaches, hasLength(1));
-      expect(controller!.ownerSharedCaches.single.cacheId, 'cache-1');
+      expect(sharedCacheCatalog.deletedCacheIds, <String>['cache-1']);
       expect(controller!.errorMessage, isNull);
     },
   );
@@ -99,8 +98,28 @@ void main() {
       expect(removed, isTrue);
       expect(sharedCacheCatalog.deletedCacheIds, <String>['cache-1']);
       expect(sharedCacheCatalog.loadOwnerCachesCalls, 2);
-      expect(controller!.ownerSharedCaches, isEmpty);
       expect(controller!.errorMessage, isNull);
+    },
+  );
+
+  test(
+    'removeSharedCacheById reports unavailable cache when catalog has no match',
+    () async {
+      controller = _buildController(
+        database: harness.database,
+        sharedCacheCatalog: sharedCacheCatalog,
+        sharedCacheIndexStore: SharedCacheIndexStore(
+          database: harness.database,
+        ),
+        sharedFolderCacheRepository: controllerRepository,
+      );
+
+      final removed = await controller!.removeSharedCacheById('missing-cache');
+
+      expect(removed, isFalse);
+      expect(sharedCacheCatalog.loadOwnerCachesCalls, 1);
+      expect(sharedCacheCatalog.deletedCacheIds, isEmpty);
+      expect(controller!.errorMessage, 'Shared folder is no longer available.');
     },
   );
 }

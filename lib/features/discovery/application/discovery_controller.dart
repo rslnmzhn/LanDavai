@@ -376,8 +376,6 @@ class DiscoveryController extends ChangeNotifier {
       <IncomingTransferRequest>[];
   final List<IncomingFriendRequest> _incomingFriendRequests =
       <IncomingFriendRequest>[];
-  final List<SharedFolderCacheRecord> _ownerSharedCaches =
-      <SharedFolderCacheRecord>[];
   final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
   final Map<String, String> _remoteThumbnailPathsByFileKey = <String, String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
@@ -397,8 +395,6 @@ class DiscoveryController extends ChangeNotifier {
       <TransferHistoryRecord>[];
   final List<ClipboardHistoryEntry> _clipboardHistory =
       <ClipboardHistoryEntry>[];
-  final Map<String, List<SharedFolderIndexEntry>> _ownerIndexEntriesByCacheId =
-      <String, List<SharedFolderIndexEntry>>{};
   final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
       <String, List<RemoteClipboardEntry>>{};
   Timer? _scanTimer;
@@ -515,8 +511,6 @@ class DiscoveryController extends ChangeNotifier {
       List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
   List<IncomingFriendRequest> get incomingFriendRequests =>
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
-  List<SharedFolderCacheRecord> get ownerSharedCaches =>
-      List<SharedFolderCacheRecord>.unmodifiable(_ownerSharedCaches);
   List<RemoteShareOption> get remoteShareOptions =>
       List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
   List<TransferHistoryRecord> get downloadHistory =>
@@ -560,6 +554,9 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   AppSettings get _currentSettings => _settingsStore.settings;
+
+  List<SharedFolderCacheRecord> get _ownerCachesSnapshot =>
+      _sharedCacheCatalog.ownerCaches;
 
   List<DiscoveredDevice> get devices {
     final values = _devicesByIp.values.toList(growable: false);
@@ -683,11 +680,6 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> refresh() => _refresh(isManual: true);
 
-  Future<void> reloadOwnerSharedCaches() async {
-    await _loadOwnerCaches();
-    notifyListeners();
-  }
-
   Future<void> removeSharedCache(SharedFolderCacheRecord cache) async {
     _isAddingShare = true;
     notifyListeners();
@@ -708,7 +700,7 @@ class DiscoveryController extends ChangeNotifier {
   Future<bool> removeSharedCacheById(String cacheId) async {
     await _loadOwnerCaches();
     SharedFolderCacheRecord? target;
-    for (final cache in _ownerSharedCaches) {
+    for (final cache in _ownerCachesSnapshot) {
       if (cache.cacheId == cacheId) {
         target = cache;
         break;
@@ -1471,20 +1463,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<SharedCacheSummary> summarizeOwnerSharedContent({
-    String virtualFolderPath = '',
-  }) async {
-    await _loadOwnerCaches();
-    final normalizedFolder = _normalizeVirtualFolderPath(virtualFolderPath);
-    if (normalizedFolder.isEmpty) {
-      return _buildSharedCacheSummary(_ownerSharedCaches);
-    }
-    final targets = await _resolveScopedOwnerRecacheTargets(
-      virtualFolderPath: normalizedFolder,
-    );
-    return _buildScopedSharedCacheSummary(targets);
-  }
-
   Future<SharedRecacheReport?> recacheSharedContent({
     void Function(SharedRecacheProgress progress)? onProgress,
     String virtualFolderPath = '',
@@ -1728,28 +1706,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  SharedCacheSummary _buildSharedCacheSummary(
-    List<SharedFolderCacheRecord> caches,
-  ) {
-    var folderCaches = 0;
-    var selectionCaches = 0;
-    var totalFiles = 0;
-    for (final cache in caches) {
-      totalFiles += cache.itemCount;
-      if (cache.rootPath.startsWith('selection://')) {
-        selectionCaches += 1;
-      } else {
-        folderCaches += 1;
-      }
-    }
-    return SharedCacheSummary(
-      totalCaches: caches.length,
-      folderCaches: folderCaches,
-      selectionCaches: selectionCaches,
-      totalFiles: totalFiles,
-    );
-  }
-
   SharedCacheSummary _buildScopedSharedCacheSummary(
     List<_ScopedOwnerRecacheTarget> targets,
   ) {
@@ -1777,7 +1733,7 @@ class DiscoveryController extends ChangeNotifier {
   }) async {
     final normalizedFolder = _normalizeVirtualFolderPath(virtualFolderPath);
     final targets = <_ScopedOwnerRecacheTarget>[];
-    for (final cache in _ownerSharedCaches) {
+    for (final cache in _ownerCachesSnapshot) {
       final isSelection = cache.rootPath.startsWith('selection://');
       if (isSelection) {
         if (normalizedFolder.isNotEmpty) {
@@ -1808,7 +1764,7 @@ class DiscoveryController extends ChangeNotifier {
       var estimatedFiles = math.max(cache.itemCount, 0);
       if (relativeFolderPath.isNotEmpty) {
         estimatedFiles = await _countFilesInCacheFolder(
-          cacheId: cache.cacheId,
+          cache: cache,
           relativeFolderPath: relativeFolderPath,
         );
       }
@@ -1825,11 +1781,11 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<int> _countFilesInCacheFolder({
-    required String cacheId,
+    required SharedFolderCacheRecord cache,
     required String relativeFolderPath,
   }) async {
     final normalizedFolder = _normalizeVirtualFolderPath(relativeFolderPath);
-    final entries = await _readOwnerIndexEntriesCached(cacheId);
+    final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
     if (normalizedFolder.isEmpty) {
       return entries.length;
     }
@@ -1973,65 +1929,13 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<List<ShareableVideoFile>> listShareableVideoFiles({
-    String? cacheId,
-  }) async {
-    await _loadOwnerCaches();
-    final files = <ShareableVideoFile>[];
-    for (final cache in _ownerSharedCaches) {
-      if (cacheId != null && cache.cacheId != cacheId) {
-        continue;
-      }
-      final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-      for (final entry in entries) {
-        if (!_sharedFolderCacheRepository.isVideoPath(entry.relativePath)) {
-          continue;
-        }
-        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
-        if (absolutePath == null || absolutePath.trim().isEmpty) {
-          continue;
-        }
-        final file = File(absolutePath);
-        if (!await file.exists()) {
-          continue;
-        }
-        final stat = await file.stat();
-        if (stat.type != FileSystemEntityType.file) {
-          continue;
-        }
-        files.add(
-          ShareableVideoFile(
-            id: '${cache.cacheId}|${entry.relativePath}',
-            cacheId: cache.cacheId,
-            cacheDisplayName: cache.displayName,
-            relativePath: entry.relativePath,
-            absolutePath: absolutePath,
-            sizeBytes: stat.size,
-          ),
-        );
-      }
-    }
-    files.sort((a, b) {
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      return a.relativePath.toLowerCase().compareTo(
-        b.relativePath.toLowerCase(),
-      );
-    });
-    return files;
-  }
-
   Future<List<ShareableLocalFile>> listShareableLocalFiles() async {
     await _loadOwnerCaches();
     final files = <ShareableLocalFile>[];
     final seenPaths = <String>{};
     var processed = 0;
 
-    for (final cache in _ownerSharedCaches) {
+    for (final cache in _ownerCachesSnapshot) {
       final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
       for (final entry in entries) {
         final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
@@ -2086,150 +1990,6 @@ class DiscoveryController extends ChangeNotifier {
     return files;
   }
 
-  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
-    required String virtualFolderPath,
-  }) async {
-    if (_ownerSharedCaches.isEmpty) {
-      await _loadOwnerCaches();
-    }
-
-    final folder = _normalizeVirtualFolderPath(virtualFolderPath);
-    final foldersByPath = <String, ShareableLocalFolder>{};
-    final files = <ShareableLocalFile>[];
-    final seenFilePaths = <String>{};
-    var processed = 0;
-
-    for (final cache in _ownerSharedCaches) {
-      final isSelection = cache.rootPath.startsWith('selection://');
-      final cacheVirtualRoot = _normalizeVirtualFolderPath(cache.displayName);
-
-      if (folder.isEmpty && !isSelection) {
-        if (cacheVirtualRoot.isNotEmpty) {
-          final key = Platform.isWindows
-              ? cacheVirtualRoot.toLowerCase()
-              : cacheVirtualRoot;
-          foldersByPath.putIfAbsent(
-            key,
-            () => ShareableLocalFolder(
-              name: cache.displayName,
-              virtualPath: cacheVirtualRoot,
-              removableSharedCacheId: cache.cacheId,
-            ),
-          );
-        }
-        continue;
-      }
-
-      if (!isSelection &&
-          folder != cacheVirtualRoot &&
-          !folder.startsWith('$cacheVirtualRoot/')) {
-        continue;
-      }
-      if (isSelection && folder.isNotEmpty) {
-        continue;
-      }
-
-      final subFolder = !isSelection && folder != cacheVirtualRoot
-          ? folder.substring(cacheVirtualRoot.length + 1)
-          : '';
-      final entries = await _readOwnerIndexEntriesCached(cache.cacheId);
-      for (final entry in entries) {
-        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
-        if (absolutePath == null || absolutePath.trim().isEmpty) {
-          continue;
-        }
-
-        final virtualPath = _buildShareVirtualPath(cache: cache, entry: entry);
-        final relativeInsideCache = isSelection
-            ? _normalizeVirtualFolderPath(virtualPath)
-            : _normalizeVirtualFolderPath(entry.relativePath);
-        final rest = _relativeRestForFolder(
-          folder: subFolder,
-          targetPath: relativeInsideCache,
-        );
-        if (rest == null || rest.isEmpty) {
-          continue;
-        }
-
-        final slashIndex = rest.indexOf('/');
-        if (!isSelection && slashIndex != -1) {
-          final folderName = rest.substring(0, slashIndex);
-          final folderPath = folder.isEmpty
-              ? folderName
-              : '$folder/$folderName';
-          final normalizedFolderPath = _normalizeVirtualFolderPath(folderPath);
-          final dedupeKey = Platform.isWindows
-              ? normalizedFolderPath.toLowerCase()
-              : normalizedFolderPath;
-          foldersByPath.putIfAbsent(
-            dedupeKey,
-            () => ShareableLocalFolder(
-              name: folderName,
-              virtualPath: normalizedFolderPath,
-            ),
-          );
-          continue;
-        }
-
-        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
-        final fileKey = Platform.isWindows
-            ? normalizedPath.toLowerCase()
-            : normalizedPath;
-        if (!seenFilePaths.add(fileKey)) {
-          continue;
-        }
-
-        files.add(
-          ShareableLocalFile(
-            cacheId: cache.cacheId,
-            cacheDisplayName: cache.displayName,
-            relativePath: entry.relativePath,
-            virtualPath: virtualPath,
-            absolutePath: absolutePath,
-            sizeBytes: entry.sizeBytes,
-            modifiedAtMs: entry.modifiedAtMs,
-            isSelectionCache: isSelection,
-          ),
-        );
-        processed += 1;
-        if (processed % 500 == 0) {
-          await Future<void>.delayed(Duration.zero);
-        }
-      }
-    }
-
-    final folders = foldersByPath.values.toList(growable: false)
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    files.sort((a, b) {
-      final nameCmp = p
-          .basename(a.virtualPath)
-          .toLowerCase()
-          .compareTo(p.basename(b.virtualPath).toLowerCase());
-      if (nameCmp != 0) {
-        return nameCmp;
-      }
-      return a.virtualPath.toLowerCase().compareTo(b.virtualPath.toLowerCase());
-    });
-
-    return ShareableLocalDirectoryListing(folders: folders, files: files);
-  }
-
-  Future<List<SharedFolderIndexEntry>> _readOwnerIndexEntriesCached(
-    String cacheId,
-  ) async {
-    final cached = _ownerIndexEntriesByCacheId[cacheId];
-    if (cached != null) {
-      return cached;
-    }
-    final cache = _findOwnerCacheById(cacheId);
-    if (cache == null) {
-      return const <SharedFolderIndexEntry>[];
-    }
-    final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-    _ownerIndexEntriesByCacheId[cacheId] = entries;
-    return entries;
-  }
-
   String _buildShareVirtualPath({
     required SharedFolderCacheRecord cache,
     required SharedFolderIndexEntry entry,
@@ -2254,22 +2014,6 @@ class DiscoveryController extends ChangeNotifier {
         .split('/')
         .where((part) => part.isNotEmpty && part != '.')
         .join('/');
-  }
-
-  String? _relativeRestForFolder({
-    required String folder,
-    required String targetPath,
-  }) {
-    if (folder.isEmpty) {
-      return targetPath;
-    }
-    if (targetPath == folder) {
-      return '';
-    }
-    if (!targetPath.startsWith('$folder/')) {
-      return null;
-    }
-    return targetPath.substring(folder.length + 1);
   }
 
   Future<void> publishVideoLinkShare({
@@ -3532,7 +3276,7 @@ class DiscoveryController extends ChangeNotifier {
       await _loadOwnerCaches();
 
       final catalog = <SharedCatalogEntryItem>[];
-      for (final cache in _ownerSharedCaches) {
+      for (final cache in _ownerCachesSnapshot) {
         final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
         final files = entries
             .map(
@@ -4071,10 +3815,6 @@ class DiscoveryController extends ChangeNotifier {
           ownerMacAddress: _localDeviceMac,
         );
       }
-      _ownerIndexEntriesByCacheId.clear();
-      _ownerSharedCaches
-        ..clear()
-        ..addAll(_sharedCacheCatalog.ownerCaches);
     } catch (error) {
       _log('Failed to load owner cache list: $error');
     }
@@ -4435,7 +4175,7 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {
-    for (final cache in _ownerSharedCaches) {
+    for (final cache in _ownerCachesSnapshot) {
       if (cache.cacheId == cacheId) {
         return cache;
       }

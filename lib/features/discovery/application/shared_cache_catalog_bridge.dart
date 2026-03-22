@@ -15,8 +15,9 @@ import 'discovery_controller.dart'
         ShareableVideoFile,
         SharedCacheSummary;
 
-/// Temporary Phase 5 bridge that serves owner-backed shared-cache reads while
-/// controller mirrors remain in place for compatibility until workpack 12.
+/// Temporary Phase 5 bridge that serves owner-backed shared-cache reads for
+/// covered discovery/files consumers while downstream feature seams are still
+/// pending.
 class SharedCacheCatalogBridge {
   SharedCacheCatalogBridge({
     required SharedCacheCatalog sharedCacheCatalog,

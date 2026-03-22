@@ -82,7 +82,7 @@ void main() {
   });
 
   test(
-    'listShareableLocalFiles routes canonical index reads through SharedCacheIndexStore',
+    'listShareableLocalFiles compatibility surface reads index entries through SharedCacheIndexStore',
     () async {
       controller = _buildController(
         database: harness.database,

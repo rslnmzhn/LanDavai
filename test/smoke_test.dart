@@ -67,7 +67,6 @@ void main() {
       expect(find.text('Landa devices'), findsOneWidget);
       expect(harness.controller.startCalls, 1);
       expect(harness.sharedCacheCatalogBridge.shareableVideoListCalls, 1);
-      expect(harness.controller.shareableVideoListCalls, 0);
       expect(desktopWindowService.setMinimizeCalls, 1);
 
       await tester.pumpWidget(const SizedBox.shrink());

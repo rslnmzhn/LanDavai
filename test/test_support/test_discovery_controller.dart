@@ -145,53 +145,12 @@ class TrackingDiscoveryController extends DiscoveryController {
 
   int startCalls = 0;
   int disposeCalls = 0;
-  int shareableVideoListCalls = 0;
-  int reloadOwnerSharedCachesCalls = 0;
-  int summarizeOwnerSharedContentCalls = 0;
-  int listShareableLocalDirectoryCalls = 0;
   bool wasDisposed = false;
 
   @override
   Future<void> start() async {
     startCalls += 1;
     notifyListeners();
-  }
-
-  @override
-  Future<List<ShareableVideoFile>> listShareableVideoFiles({
-    String? cacheId,
-  }) async {
-    shareableVideoListCalls += 1;
-    return const <ShareableVideoFile>[];
-  }
-
-  @override
-  Future<void> reloadOwnerSharedCaches() async {
-    reloadOwnerSharedCachesCalls += 1;
-  }
-
-  @override
-  Future<SharedCacheSummary> summarizeOwnerSharedContent({
-    String virtualFolderPath = '',
-  }) async {
-    summarizeOwnerSharedContentCalls += 1;
-    return const SharedCacheSummary(
-      totalCaches: 0,
-      folderCaches: 0,
-      selectionCaches: 0,
-      totalFiles: 0,
-    );
-  }
-
-  @override
-  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
-    required String virtualFolderPath,
-  }) async {
-    listShareableLocalDirectoryCalls += 1;
-    return const ShareableLocalDirectoryListing(
-      folders: <ShareableLocalFolder>[],
-      files: <ShareableLocalFile>[],
-    );
   }
 
   @override
