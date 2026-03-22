@@ -15,6 +15,7 @@ import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
+import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
@@ -54,6 +55,12 @@ class TestDiscoveryControllerHarness {
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     );
+    final sharedFolderCacheRepository = SharedFolderCacheRepository(
+      database: database,
+    );
+    final sharedCacheCatalog = SharedCacheCatalog(
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
+    );
     final controller = TrackingDiscoveryController(
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
@@ -68,9 +75,8 @@ class TestDiscoveryControllerHarness {
         database: database,
       ),
       clipboardCaptureService: ClipboardCaptureService(),
-      sharedFolderCacheRepository: SharedFolderCacheRepository(
-        database: database,
-      ),
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: FileHashService(),
       fileTransferService: FileTransferService(),
       transferStorageService: TransferStorageService(),
@@ -114,6 +120,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.transferHistoryRepository,
     required super.clipboardHistoryRepository,
     required super.clipboardCaptureService,
+    required super.sharedCacheCatalog,
     required super.sharedFolderCacheRepository,
     required super.fileHashService,
     required super.fileTransferService,

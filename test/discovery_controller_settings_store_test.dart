@@ -16,6 +16,7 @@ import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
+import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
@@ -139,6 +140,9 @@ DiscoveryController _buildController({
     deviceAliasRepository: deviceAliasRepository,
   );
   final endpointRepository = FriendRepository(database: database);
+  final sharedFolderCacheRepository = SharedFolderCacheRepository(
+    database: database,
+  );
   return DiscoveryController(
     lanDiscoveryService: LanDiscoveryService(),
     networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -156,9 +160,10 @@ DiscoveryController _buildController({
     transferHistoryRepository: TransferHistoryRepository(database: database),
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
     clipboardCaptureService: ClipboardCaptureService(),
-    sharedFolderCacheRepository: SharedFolderCacheRepository(
-      database: database,
+    sharedCacheCatalog: SharedCacheCatalog(
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
     ),
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
     fileHashService: FileHashService(),
     fileTransferService: FileTransferService(),
     transferStorageService: TransferStorageService(),

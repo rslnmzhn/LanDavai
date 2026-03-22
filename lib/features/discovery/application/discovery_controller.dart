@@ -20,6 +20,7 @@ import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
+import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
@@ -300,6 +301,7 @@ class DiscoveryController extends ChangeNotifier {
     required TransferHistoryRepository transferHistoryRepository,
     required ClipboardHistoryRepository clipboardHistoryRepository,
     required ClipboardCaptureService clipboardCaptureService,
+    required SharedCacheCatalog sharedCacheCatalog,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
@@ -317,6 +319,7 @@ class DiscoveryController extends ChangeNotifier {
        _transferHistoryRepository = transferHistoryRepository,
        _clipboardHistoryRepository = clipboardHistoryRepository,
        _clipboardCaptureService = clipboardCaptureService,
+       _sharedCacheCatalog = sharedCacheCatalog,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
@@ -355,6 +358,7 @@ class DiscoveryController extends ChangeNotifier {
   final TransferHistoryRepository _transferHistoryRepository;
   final ClipboardHistoryRepository _clipboardHistoryRepository;
   final ClipboardCaptureService _clipboardCaptureService;
+  final SharedCacheCatalog _sharedCacheCatalog;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
@@ -684,7 +688,7 @@ class DiscoveryController extends ChangeNotifier {
     _isAddingShare = true;
     notifyListeners();
     try {
-      await _sharedFolderCacheRepository.deleteCache(cache.cacheId);
+      await _sharedCacheCatalog.deleteCache(cache.cacheId);
       await _loadOwnerCaches();
       _errorMessage = null;
       _infoMessage = 'Removed from sharing: ${cache.displayName}';
@@ -1367,7 +1371,7 @@ class DiscoveryController extends ChangeNotifier {
       _sharedFolderIndexingVisualProgress = 0;
       notifyListeners();
 
-      final result = await _sharedFolderCacheRepository.upsertOwnerFolderCache(
+      final result = await _sharedCacheCatalog.upsertOwnerFolderCache(
         ownerMacAddress: _localDeviceMac,
         folderPath: folderPath,
         parallelWorkers: _resolveRecacheParallelWorkersOverride(),
@@ -1628,13 +1632,12 @@ class DiscoveryController extends ChangeNotifier {
 
         try {
           if (cache.rootPath.startsWith('selection://')) {
-            await _sharedFolderCacheRepository
-                .refreshOwnerSelectionCacheEntries(
-                  cache,
-                  onProgress: handleCacheFileProgress,
-                );
+            await _sharedCacheCatalog.refreshOwnerSelectionCacheEntries(
+              cache,
+              onProgress: handleCacheFileProgress,
+            );
           } else if (target.relativeFolderPath.isEmpty) {
-            await _sharedFolderCacheRepository.upsertOwnerFolderCache(
+            await _sharedCacheCatalog.upsertOwnerFolderCache(
               ownerMacAddress: _localDeviceMac,
               folderPath: cache.rootPath,
               displayName: cache.displayName,
@@ -1642,13 +1645,12 @@ class DiscoveryController extends ChangeNotifier {
               onProgress: handleCacheFileProgress,
             );
           } else {
-            await _sharedFolderCacheRepository
-                .refreshOwnerFolderSubdirectoryEntries(
-                  cache,
-                  relativeFolderPath: target.relativeFolderPath,
-                  parallelWorkers: _resolveRecacheParallelWorkersOverride(),
-                  onProgress: handleCacheFileProgress,
-                );
+            await _sharedCacheCatalog.refreshOwnerFolderSubdirectoryEntries(
+              cache,
+              relativeFolderPath: target.relativeFolderPath,
+              parallelWorkers: _resolveRecacheParallelWorkersOverride(),
+              onProgress: handleCacheFileProgress,
+            );
           }
           updatedCount += 1;
         } catch (error) {
@@ -1950,7 +1952,7 @@ class DiscoveryController extends ChangeNotifier {
         return;
       }
 
-      await _sharedFolderCacheRepository.buildOwnerSelectionCache(
+      await _sharedCacheCatalog.buildOwnerSelectionCache(
         ownerMacAddress: _localDeviceMac,
         filePaths: paths,
         displayName: 'Selected files',
@@ -2334,7 +2336,7 @@ class DiscoveryController extends ChangeNotifier {
         return;
       }
 
-      final cache = await _sharedFolderCacheRepository.buildOwnerSelectionCache(
+      final cache = await _sharedCacheCatalog.buildOwnerSelectionCache(
         ownerMacAddress: _localDeviceMac,
         filePaths: selectedPaths,
         displayName: 'Transfer to ${target.displayName}',
@@ -2583,7 +2585,7 @@ class DiscoveryController extends ChangeNotifier {
             )
             .toList(growable: false);
 
-        await _sharedFolderCacheRepository.saveReceiverCache(
+        await _sharedCacheCatalog.saveReceiverCache(
           ownerMacAddress: request.senderMacAddress,
           receiverMacAddress: _localDeviceMac,
           remoteFolderIdentity: request.sharedCacheId,
@@ -3516,7 +3518,7 @@ class DiscoveryController extends ChangeNotifier {
           !Platform.isAndroid || await _hasAndroidSharedStorageAccess();
       if (canPruneUnavailableCaches) {
         removedCacheIds.addAll(
-          await _sharedFolderCacheRepository.pruneUnavailableOwnerCaches(
+          await _sharedCacheCatalog.pruneUnavailableOwnerCaches(
             ownerMacAddress: _localDeviceMac,
           ),
         );
@@ -3615,7 +3617,7 @@ class DiscoveryController extends ChangeNotifier {
             .map((entry) => entry.cacheId)
             .where((id) => id.trim().isNotEmpty)
             .toSet();
-        final removedLocal = await _sharedFolderCacheRepository
+        final removedLocal = await _sharedCacheCatalog
             .pruneReceiverCachesForOwner(
               ownerMacAddress: ownerMac,
               receiverMacAddress: _localDeviceMac,
@@ -4056,22 +4058,25 @@ class DiscoveryController extends ChangeNotifier {
     try {
       if (!_ownerCacheMacRebindChecked) {
         _ownerCacheMacRebindChecked = true;
-        final reboundCount = await _sharedFolderCacheRepository
-            .rebindOwnerCachesToMac(ownerMacAddress: _localDeviceMac);
+        final result = await _sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: _localDeviceMac,
+          rebindOwnerCachesToMac: true,
+        );
+        final reboundCount = result.reboundCount;
         if (reboundCount > 0) {
           _log(
             'Rebound $reboundCount owner shared cache(s) to local MAC $_localDeviceMac',
           );
         }
+      } else {
+        await _sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: _localDeviceMac,
+        );
       }
-      final caches = await _sharedFolderCacheRepository.listCaches(
-        role: SharedFolderCacheRole.owner,
-        ownerMacAddress: _localDeviceMac,
-      );
       _ownerIndexEntriesByCacheId.clear();
       _ownerSharedCaches
         ..clear()
-        ..addAll(caches);
+        ..addAll(_sharedCacheCatalog.ownerCaches);
     } catch (error) {
       _log('Failed to load owner cache list: $error');
     }

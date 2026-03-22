@@ -20,6 +20,7 @@ import '../features/discovery/presentation/discovery_page.dart';
 import '../features/history/data/transfer_history_repository.dart';
 import '../features/settings/application/settings_store.dart';
 import '../features/settings/data/app_settings_repository.dart';
+import '../features/transfer/application/shared_cache_catalog.dart';
 import '../features/transfer/data/file_hash_service.dart';
 import '../features/transfer/data/file_transfer_service.dart';
 import '../features/transfer/data/shared_folder_cache_repository.dart';
@@ -137,6 +138,12 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     );
+    final sharedFolderCacheRepository = SharedFolderCacheRepository(
+      database: database,
+    );
+    final sharedCacheCatalog = SharedCacheCatalog(
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
+    );
     final controller = DiscoveryController(
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
@@ -149,9 +156,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
         database: database,
       ),
       clipboardCaptureService: ClipboardCaptureService(),
-      sharedFolderCacheRepository: SharedFolderCacheRepository(
-        database: database,
-      ),
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: FileHashService(),
       fileTransferService: FileTransferService(),
       transferStorageService: _transferStorageService,
