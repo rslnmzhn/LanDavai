@@ -7,8 +7,15 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 
 import 'discovery_transport_adapter.dart';
+import 'lan_packet_codec.dart';
 
-part 'lan_packet_codec.dart';
+export 'lan_packet_codec.dart'
+    show
+        ClipboardCatalogItem,
+        SharedCatalogEntryItem,
+        SharedCatalogFileItem,
+        ThumbnailSyncItem,
+        TransferAnnouncementItem;
 
 class AppPresenceEvent {
   AppPresenceEvent({
@@ -38,41 +45,6 @@ class InternetPeerEndpoint {
   final String friendId;
   final String host;
   final int port;
-}
-
-class TransferAnnouncementItem {
-  TransferAnnouncementItem({
-    required this.fileName,
-    required this.sizeBytes,
-    required this.sha256,
-  });
-
-  final String fileName;
-  final int sizeBytes;
-  final String sha256;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'fileName': fileName,
-      'sizeBytes': sizeBytes,
-      'sha256': sha256,
-    };
-  }
-
-  static TransferAnnouncementItem? fromJson(Map<String, dynamic> json) {
-    final fileName = json['fileName'] as String?;
-    final sizeRaw = json['sizeBytes'];
-    final sha256 = json['sha256'] as String?;
-    if (fileName == null || sizeRaw is! num || sha256 == null) {
-      return null;
-    }
-
-    return TransferAnnouncementItem(
-      fileName: fileName,
-      sizeBytes: sizeRaw.toInt(),
-      sha256: sha256,
-    );
-  }
 }
 
 class TransferRequestEvent {
@@ -165,98 +137,6 @@ class ShareQueryEvent {
   final DateTime observedAt;
 }
 
-class SharedCatalogFileItem {
-  SharedCatalogFileItem({
-    required this.relativePath,
-    required this.sizeBytes,
-    this.thumbnailId,
-  });
-
-  final String relativePath;
-  final int sizeBytes;
-  final String? thumbnailId;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'relativePath': relativePath,
-      'sizeBytes': sizeBytes,
-      'thumbnailId': thumbnailId,
-    };
-  }
-
-  static SharedCatalogFileItem? fromJson(Map<String, dynamic> json) {
-    final relativePath = json['relativePath'] as String?;
-    final sizeRaw = json['sizeBytes'];
-    if (relativePath == null || sizeRaw is! num) {
-      return null;
-    }
-    return SharedCatalogFileItem(
-      relativePath: relativePath,
-      sizeBytes: sizeRaw.toInt(),
-      thumbnailId: json['thumbnailId'] as String?,
-    );
-  }
-}
-
-class SharedCatalogEntryItem {
-  SharedCatalogEntryItem({
-    required this.cacheId,
-    required this.displayName,
-    required this.itemCount,
-    required this.totalBytes,
-    required this.files,
-  });
-
-  final String cacheId;
-  final String displayName;
-  final int itemCount;
-  final int totalBytes;
-  final List<SharedCatalogFileItem> files;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'cacheId': cacheId,
-      'displayName': displayName,
-      'itemCount': itemCount,
-      'totalBytes': totalBytes,
-      'files': files.map((file) => file.toJson()).toList(growable: false),
-    };
-  }
-
-  static SharedCatalogEntryItem? fromJson(Map<String, dynamic> json) {
-    final cacheId = json['cacheId'] as String?;
-    final displayName = json['displayName'] as String?;
-    final itemCountRaw = json['itemCount'];
-    final totalBytesRaw = json['totalBytes'];
-    final filesRaw = json['files'];
-    if (cacheId == null ||
-        displayName == null ||
-        itemCountRaw is! num ||
-        totalBytesRaw is! num ||
-        filesRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final files = <SharedCatalogFileItem>[];
-    for (final file in filesRaw) {
-      if (file is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = SharedCatalogFileItem.fromJson(file);
-      if (parsed != null) {
-        files.add(parsed);
-      }
-    }
-    return SharedCatalogEntryItem(
-      cacheId: cacheId,
-      displayName: displayName,
-      itemCount: itemCountRaw.toInt(),
-      totalBytes: totalBytesRaw.toInt(),
-      files: files,
-    );
-  }
-}
-
 class ShareCatalogEvent {
   ShareCatalogEvent({
     required this.requestId,
@@ -300,48 +180,6 @@ class DownloadRequestEvent {
   final DateTime observedAt;
 }
 
-class ClipboardCatalogItem {
-  const ClipboardCatalogItem({
-    required this.id,
-    required this.entryType,
-    required this.createdAtMs,
-    this.textValue,
-    this.imagePreviewBase64,
-  });
-
-  final String id;
-  final String entryType;
-  final int createdAtMs;
-  final String? textValue;
-  final String? imagePreviewBase64;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'id': id,
-      'entryType': entryType,
-      'createdAtMs': createdAtMs,
-      'textValue': textValue,
-      'imagePreviewBase64': imagePreviewBase64,
-    };
-  }
-
-  static ClipboardCatalogItem? fromJson(Map<String, dynamic> json) {
-    final id = json['id'] as String?;
-    final entryType = json['entryType'] as String?;
-    final createdAtRaw = json['createdAtMs'];
-    if (id == null || entryType == null || createdAtRaw is! num) {
-      return null;
-    }
-    return ClipboardCatalogItem(
-      id: id,
-      entryType: entryType,
-      createdAtMs: createdAtRaw.toInt(),
-      textValue: json['textValue'] as String?,
-      imagePreviewBase64: json['imagePreviewBase64'] as String?,
-    );
-  }
-}
-
 class ClipboardQueryEvent {
   const ClipboardQueryEvent({
     required this.requestId,
@@ -376,40 +214,6 @@ class ClipboardCatalogEvent {
   final String ownerMacAddress;
   final List<ClipboardCatalogItem> entries;
   final DateTime observedAt;
-}
-
-class ThumbnailSyncItem {
-  const ThumbnailSyncItem({
-    required this.cacheId,
-    required this.relativePath,
-    required this.thumbnailId,
-  });
-
-  final String cacheId;
-  final String relativePath;
-  final String thumbnailId;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'cacheId': cacheId,
-      'relativePath': relativePath,
-      'thumbnailId': thumbnailId,
-    };
-  }
-
-  static ThumbnailSyncItem? fromJson(Map<String, dynamic> json) {
-    final cacheId = json['cacheId'] as String?;
-    final relativePath = json['relativePath'] as String?;
-    final thumbnailId = json['thumbnailId'] as String?;
-    if (cacheId == null || relativePath == null || thumbnailId == null) {
-      return null;
-    }
-    return ThumbnailSyncItem(
-      cacheId: cacheId,
-      relativePath: relativePath,
-      thumbnailId: thumbnailId,
-    );
-  }
 }
 
 class ThumbnailSyncRequestEvent {
