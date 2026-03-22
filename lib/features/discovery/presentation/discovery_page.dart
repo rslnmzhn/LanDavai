@@ -16,6 +16,7 @@ import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
+import '../application/remote_share_browser.dart';
 import '../application/shared_cache_catalog_bridge.dart';
 import '../domain/discovered_device.dart';
 
@@ -23,6 +24,7 @@ class DiscoveryPage extends StatefulWidget {
   const DiscoveryPage({
     required this.controller,
     required this.readModel,
+    required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
     required this.desktopWindowService,
     required this.transferStorageService,
@@ -32,6 +34,7 @@ class DiscoveryPage extends StatefulWidget {
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
@@ -49,6 +52,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
 
   DiscoveryController get _controller => widget.controller;
   DiscoveryReadModel get _readModel => widget.readModel;
+  RemoteShareBrowser get _remoteShareBrowser => widget.remoteShareBrowser;
   SharedCacheCatalogBridge get _sharedCacheCatalogBridge =>
       widget.sharedCacheCatalogBridge;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
@@ -1232,7 +1236,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       builder: (context) {
         return FractionallySizedBox(
           heightFactor: 0.88,
-          child: _ReceivePanelSheet(controller: _controller),
+          child: _ReceivePanelSheet(
+            controller: _controller,
+            remoteShareBrowser: _remoteShareBrowser,
+          ),
         );
       },
     );
@@ -1943,69 +1950,37 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ReceivePanelSheet extends StatefulWidget {
-  const _ReceivePanelSheet({required this.controller});
+  const _ReceivePanelSheet({
+    required this.controller,
+    required this.remoteShareBrowser,
+  });
 
   final DiscoveryController controller;
+  final RemoteShareBrowser remoteShareBrowser;
 
   @override
   State<_ReceivePanelSheet> createState() => _ReceivePanelSheetState();
 }
 
 class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
-  static const int _maxVisibleRemoteFiles = 2500;
-  String? _selectedOwnerIp;
-  final Set<String> _selectedFileIds = <String>{};
-  final Set<String> _selectedFolderIds = <String>{};
   String? _previewingFileId;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: widget.controller,
+      animation: Listenable.merge(<Listenable>[
+        widget.controller,
+        widget.remoteShareBrowser,
+      ]),
       builder: (context, _) {
-        final remoteOptions = widget.controller.remoteShareOptions;
-        final owners = _buildOwnerChoices(remoteOptions);
-        final selectedOwner = _selectedOwnerIp == null
-            ? null
-            : _findOwnerByIp(owners, _selectedOwnerIp!);
-        if (selectedOwner == null && _selectedOwnerIp != null) {
-          _selectedOwnerIp = null;
-          _selectedFileIds.clear();
-          _selectedFolderIds.clear();
-        }
-
-        final fileChoices = _selectedOwnerIp == null
-            ? const <_RemoteFileChoice>[]
-            : _buildFileChoices(
-                remoteOptions: remoteOptions,
-                ownerIp: _selectedOwnerIp!,
-                maxItems: _maxVisibleRemoteFiles,
-              );
-        final isFileListCapped =
-            selectedOwner != null &&
-            fileChoices.length < selectedOwner.fileCount;
-        final hiddenFilesCount = isFileListCapped
-            ? selectedOwner.fileCount - fileChoices.length
-            : 0;
-        final folderChoices = _selectedOwnerIp == null
-            ? const <_RemoteFolderChoice>[]
-            : _buildFolderChoices(fileChoices);
-
-        final validFileIds = fileChoices.map((file) => file.id).toSet();
-        _selectedFileIds.removeWhere((id) => !validFileIds.contains(id));
-
-        final validFolderIds = folderChoices.map((folder) => folder.id).toSet();
-        _selectedFolderIds.removeWhere((id) => !validFolderIds.contains(id));
-
-        final selectedFolderPathsByCache = _buildSelectedFolderPathsByCache(
-          folderChoices,
-        );
-        final effectiveSelectedFileIds = _resolveEffectiveSelectedFileIds(
-          files: fileChoices,
-          selectedFolderPathsByCache: selectedFolderPathsByCache,
-        );
-
-        final selectedCount = effectiveSelectedFileIds.length;
+        final browse = widget.remoteShareBrowser.currentBrowseProjection;
+        final owners = browse.owners;
+        final selectedOwner = browse.selectedOwner;
+        final fileChoices = browse.files;
+        final folderChoices = browse.folders;
+        final selectedCount = browse.selectedCount;
+        final isFileListCapped = browse.isFileListCapped;
+        final hiddenFilesCount = browse.hiddenFilesCount;
         final requests = widget.controller.incomingRequests;
 
         return SafeArea(
@@ -2024,7 +1999,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                     ),
                     IconButton(
                       tooltip: 'Обновить список',
-                      onPressed: widget.controller.isLoadingRemoteShares
+                      onPressed: widget.remoteShareBrowser.isLoading
                           ? null
                           : widget.controller.loadRemoteShareOptions,
                       icon: const Icon(Icons.refresh),
@@ -2032,7 +2007,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                if (widget.controller.isLoadingRemoteShares) ...[
+                if (widget.remoteShareBrowser.isLoading) ...[
                   const LinearProgressIndicator(
                     minHeight: 3,
                     color: AppColors.brandPrimary,
@@ -2093,17 +2068,13 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                               children: [
                                 TextButton(
                                   onPressed: () {
-                                    setState(() {
-                                      _selectedFolderIds.clear();
-                                      _selectedFileIds
-                                        ..clear()
-                                        ..addAll(
+                                    widget.remoteShareBrowser
+                                        .selectVisibleFiles(
                                           fileChoices.map((file) => file.id),
                                         );
-                                    });
                                   },
                                   child: Text(
-                                    isFileListCapped
+                                    browse.isFileListCapped
                                         ? 'Выбрать все видимые'
                                         : 'Выбрать все файлы',
                                   ),
@@ -2111,28 +2082,24 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                 FilledButton.tonalIcon(
                                   onPressed: () => _requestAllSharesFromOwner(
                                     owner: selectedOwner,
-                                    remoteOptions: remoteOptions,
                                   ),
                                   icon: const Icon(Icons.download_for_offline),
                                   label: const Text('Скачать всё с устройства'),
                                 ),
                                 TextButton(
-                                  onPressed: () {
-                                    setState(() {
-                                      _selectedFileIds.clear();
-                                      _selectedFolderIds.clear();
-                                    });
-                                  },
+                                  onPressed:
+                                      widget.remoteShareBrowser.clearSelections,
                                   child: const Text('Очистить'),
                                 ),
                                 OutlinedButton.icon(
                                   onPressed:
-                                      folderChoices.isEmpty || isFileListCapped
+                                      folderChoices.isEmpty ||
+                                          browse.isFileListCapped
                                       ? null
                                       : () => _pickFolders(folderChoices),
                                   icon: const Icon(Icons.folder_copy_outlined),
                                   label: Text(
-                                    'Папки целиком (${_selectedFolderIds.length})',
+                                    'Папки целиком (${browse.selectedFolderIds.length})',
                                   ),
                                 ),
                               ],
@@ -2150,13 +2117,11 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     const SizedBox(height: AppSpacing.xs),
                                 itemBuilder: (_, index) {
                                   final file = fileChoices[index];
-                                  final coveredByFolder =
-                                      _isFileCoveredByFolderSelection(
-                                        file: file,
-                                        selectedFolderPathsByCache:
-                                            selectedFolderPathsByCache,
-                                      );
-                                  final checked = effectiveSelectedFileIds
+                                  final coveredByFolder = browse
+                                      .folderCoveredFileIds
+                                      .contains(file.id);
+                                  final checked = browse
+                                      .effectiveSelectedFileIds
                                       .contains(file.id);
                                   final subtitle =
                                       '${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}'
@@ -2166,15 +2131,11 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     onChanged: coveredByFolder
                                         ? null
                                         : (value) {
-                                            setState(() {
-                                              if (value == true) {
-                                                _selectedFileIds.add(file.id);
-                                              } else {
-                                                _selectedFileIds.remove(
-                                                  file.id,
+                                            widget.remoteShareBrowser
+                                                .setFileSelected(
+                                                  fileId: file.id,
+                                                  isSelected: value == true,
                                                 );
-                                              }
-                                            });
                                           },
                                     contentPadding: const EdgeInsets.symmetric(
                                       horizontal: AppSpacing.sm,
@@ -2227,9 +2188,6 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                                     ? null
                                     : () => _requestSelectedFiles(
                                         owner: selectedOwner,
-                                        files: fileChoices,
-                                        selectedFolderPathsByCache:
-                                            selectedFolderPathsByCache,
                                       ),
                                 icon: const Icon(Icons.download_rounded),
                                 label: Text(
@@ -2302,7 +2260,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     );
   }
 
-  Future<void> _pickOwner(List<_RemoteOwnerChoice> owners) async {
+  Future<void> _pickOwner(List<RemoteBrowseOwnerChoice> owners) async {
     final selectedIp = await showModalBottomSheet<String>(
       context: context,
       builder: (context) {
@@ -2329,16 +2287,15 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     if (selectedIp == null || !mounted) {
       return;
     }
-    setState(() {
-      _selectedOwnerIp = selectedIp;
-      _selectedFileIds.clear();
-      _selectedFolderIds.clear();
-    });
+    widget.remoteShareBrowser.selectOwner(selectedIp);
   }
 
-  Future<void> _pickFolders(List<_RemoteFolderChoice> folders) async {
+  Future<void> _pickFolders(List<RemoteBrowseFolderChoice> folders) async {
     final validIds = folders.map((folder) => folder.id).toSet();
-    final initialSelection = _selectedFolderIds
+    final initialSelection = widget
+        .remoteShareBrowser
+        .currentBrowseProjection
+        .selectedFolderIds
         .where(validIds.contains)
         .toSet();
 
@@ -2427,14 +2384,10 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
       return;
     }
 
-    setState(() {
-      _selectedFolderIds
-        ..clear()
-        ..addAll(selectedIds);
-    });
+    widget.remoteShareBrowser.setSelectedFolderIds(selectedIds);
   }
 
-  Future<void> _previewRemoteFile(_RemoteFileChoice file) async {
+  Future<void> _previewRemoteFile(RemoteBrowseFileChoice file) async {
     setState(() {
       _previewingFileId = file.id;
     });
@@ -2442,7 +2395,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     try {
       final previewPath = await widget.controller.requestRemoteFilePreview(
         ownerIp: file.ownerIp,
-        ownerName: _selectedOwnerIp ?? file.ownerIp,
+        ownerName: file.ownerName,
         cacheId: file.cacheId,
         relativePath: file.relativePath,
       );
@@ -2465,28 +2418,10 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   }
 
   Future<void> _requestSelectedFiles({
-    required _RemoteOwnerChoice owner,
-    required List<_RemoteFileChoice> files,
-    required Map<String, Set<String>> selectedFolderPathsByCache,
+    required RemoteBrowseOwnerChoice owner,
   }) async {
-    final selectedByCache = <String, Set<String>>{};
-    for (final file in files) {
-      final cacheKey = _cacheSelectionKey(
-        ownerIp: file.ownerIp,
-        cacheId: file.cacheId,
-      );
-      final pickedByFolder = _matchesFolderSelection(
-        relativePath: file.relativePath,
-        selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
-      );
-      if (!_selectedFileIds.contains(file.id) && !pickedByFolder) {
-        continue;
-      }
-      selectedByCache
-          .putIfAbsent(file.cacheId, () => <String>{})
-          .add(file.relativePath);
-    }
-
+    final selectedByCache = widget.remoteShareBrowser
+        .buildSelectedRelativePathsByCache();
     await widget.controller.requestDownloadFromRemoteFiles(
       ownerIp: owner.ip,
       ownerName: owner.name,
@@ -2496,23 +2431,14 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     if (!mounted) {
       return;
     }
-    setState(() {
-      _selectedFileIds.clear();
-      _selectedFolderIds.clear();
-    });
+    widget.remoteShareBrowser.clearSelections();
   }
 
   Future<void> _requestAllSharesFromOwner({
-    required _RemoteOwnerChoice owner,
-    required List<RemoteShareOption> remoteOptions,
+    required RemoteBrowseOwnerChoice owner,
   }) async {
-    final selectedByCache = <String, Set<String>>{};
-    for (final option in remoteOptions) {
-      if (option.ownerIp != owner.ip) {
-        continue;
-      }
-      selectedByCache[option.entry.cacheId] = <String>{};
-    }
+    final selectedByCache = widget.remoteShareBrowser
+        .buildDownloadAllRequestForOwner(owner.ip);
     if (selectedByCache.isEmpty) {
       return;
     }
@@ -2522,265 +2448,6 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
       ownerName: owner.name,
       selectedRelativePathsByCache: selectedByCache,
     );
-  }
-
-  _RemoteOwnerChoice? _findOwnerByIp(
-    List<_RemoteOwnerChoice> owners,
-    String ip,
-  ) {
-    for (final owner in owners) {
-      if (owner.ip == ip) {
-        return owner;
-      }
-    }
-    return null;
-  }
-
-  List<_RemoteOwnerChoice> _buildOwnerChoices(List<RemoteShareOption> options) {
-    final ownersByIp = <String, _RemoteOwnerDraft>{};
-    for (final option in options) {
-      final draft = ownersByIp.putIfAbsent(
-        option.ownerIp,
-        () => _RemoteOwnerDraft(
-          ip: option.ownerIp,
-          name: option.ownerName,
-          macAddress: option.ownerMacAddress,
-        ),
-      );
-      draft.shareCount += 1;
-      draft.fileCount += option.entry.itemCount;
-    }
-
-    final list = ownersByIp.values
-        .map(
-          (draft) => _RemoteOwnerChoice(
-            ip: draft.ip,
-            name: draft.name,
-            macAddress: draft.macAddress,
-            shareCount: draft.shareCount,
-            fileCount: draft.fileCount,
-          ),
-        )
-        .toList(growable: false);
-    list.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    return list;
-  }
-
-  List<_RemoteFileChoice> _buildFileChoices({
-    required List<RemoteShareOption> remoteOptions,
-    required String ownerIp,
-    required int maxItems,
-  }) {
-    final files = <_RemoteFileChoice>[];
-    for (final option in remoteOptions) {
-      if (option.ownerIp != ownerIp) {
-        continue;
-      }
-      for (final file in option.entry.files) {
-        if (files.length >= maxItems) {
-          break;
-        }
-        files.add(
-          _RemoteFileChoice(
-            ownerIp: option.ownerIp,
-            cacheId: option.entry.cacheId,
-            cacheDisplayName: option.entry.displayName,
-            relativePath: file.relativePath,
-            sizeBytes: file.sizeBytes,
-            thumbnailId: file.thumbnailId,
-            previewPath: widget.controller.remoteThumbnailPath(
-              ownerIp: option.ownerIp,
-              cacheId: option.entry.cacheId,
-              relativePath: file.relativePath,
-            ),
-          ),
-        );
-      }
-      if (files.length >= maxItems) {
-        break;
-      }
-    }
-    files.sort((a, b) {
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      return a.relativePath.toLowerCase().compareTo(
-        b.relativePath.toLowerCase(),
-      );
-    });
-    return files;
-  }
-
-  List<_RemoteFolderChoice> _buildFolderChoices(List<_RemoteFileChoice> files) {
-    final byId = <String, _RemoteFolderDraft>{};
-    for (final file in files) {
-      final folderPaths = <String>[
-        '',
-        ..._extractFolderPaths(file.relativePath),
-      ];
-      for (final folderPath in folderPaths) {
-        final id = _folderId(
-          ownerIp: file.ownerIp,
-          cacheId: file.cacheId,
-          folderPath: folderPath,
-        );
-        final draft = byId.putIfAbsent(
-          id,
-          () => _RemoteFolderDraft(
-            ownerIp: file.ownerIp,
-            cacheId: file.cacheId,
-            cacheDisplayName: file.cacheDisplayName,
-            folderPath: folderPath,
-          ),
-        );
-        if (draft.fileIds.add(file.id)) {
-          draft.fileCount += 1;
-          draft.totalBytes += file.sizeBytes;
-        }
-      }
-    }
-
-    final folders = byId.values
-        .map(
-          (draft) => _RemoteFolderChoice(
-            ownerIp: draft.ownerIp,
-            cacheId: draft.cacheId,
-            cacheDisplayName: draft.cacheDisplayName,
-            folderPath: draft.folderPath,
-            fileCount: draft.fileCount,
-            totalBytes: draft.totalBytes,
-          ),
-        )
-        .toList(growable: false);
-    folders.sort((a, b) {
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      final depthCmp = a.depth.compareTo(b.depth);
-      if (depthCmp != 0) {
-        return depthCmp;
-      }
-      return a.folderPath.toLowerCase().compareTo(b.folderPath.toLowerCase());
-    });
-    return folders;
-  }
-
-  Map<String, Set<String>> _buildSelectedFolderPathsByCache(
-    List<_RemoteFolderChoice> folders,
-  ) {
-    final byCache = <String, Set<String>>{};
-    for (final folder in folders) {
-      if (!_selectedFolderIds.contains(folder.id)) {
-        continue;
-      }
-      final cacheKey = _cacheSelectionKey(
-        ownerIp: folder.ownerIp,
-        cacheId: folder.cacheId,
-      );
-      byCache.putIfAbsent(cacheKey, () => <String>{}).add(folder.folderPath);
-    }
-    return byCache;
-  }
-
-  Set<String> _resolveEffectiveSelectedFileIds({
-    required List<_RemoteFileChoice> files,
-    required Map<String, Set<String>> selectedFolderPathsByCache,
-  }) {
-    final selected = <String>{};
-    for (final file in files) {
-      if (_selectedFileIds.contains(file.id)) {
-        selected.add(file.id);
-        continue;
-      }
-      final cacheKey = _cacheSelectionKey(
-        ownerIp: file.ownerIp,
-        cacheId: file.cacheId,
-      );
-      if (_matchesFolderSelection(
-        relativePath: file.relativePath,
-        selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
-      )) {
-        selected.add(file.id);
-      }
-    }
-    return selected;
-  }
-
-  bool _isFileCoveredByFolderSelection({
-    required _RemoteFileChoice file,
-    required Map<String, Set<String>> selectedFolderPathsByCache,
-  }) {
-    final cacheKey = _cacheSelectionKey(
-      ownerIp: file.ownerIp,
-      cacheId: file.cacheId,
-    );
-    return _matchesFolderSelection(
-      relativePath: file.relativePath,
-      selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
-    );
-  }
-
-  bool _matchesFolderSelection({
-    required String relativePath,
-    required Set<String>? selectedFolderPaths,
-  }) {
-    if (selectedFolderPaths == null || selectedFolderPaths.isEmpty) {
-      return false;
-    }
-    final normalizedPath = _normalizeRelativePath(relativePath);
-    for (final folderPath in selectedFolderPaths) {
-      final normalizedFolder = _normalizeRelativePath(folderPath);
-      if (normalizedFolder.isEmpty) {
-        return true;
-      }
-      if (normalizedPath == normalizedFolder ||
-          normalizedPath.startsWith('$normalizedFolder/')) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  String _cacheSelectionKey({
-    required String ownerIp,
-    required String cacheId,
-  }) {
-    return '$ownerIp|$cacheId';
-  }
-
-  String _folderId({
-    required String ownerIp,
-    required String cacheId,
-    required String folderPath,
-  }) {
-    return '$ownerIp|$cacheId|$folderPath';
-  }
-
-  List<String> _extractFolderPaths(String relativePath) {
-    final normalized = _normalizeRelativePath(relativePath);
-    final parts = normalized
-        .split('/')
-        .where((part) => part.isNotEmpty)
-        .toList(growable: false);
-    if (parts.length < 2) {
-      return const <String>[];
-    }
-
-    final folders = <String>[];
-    for (var i = 1; i < parts.length; i++) {
-      folders.add(parts.take(i).join('/'));
-    }
-    return folders;
-  }
-
-  String _normalizeRelativePath(String value) {
-    return value.replaceAll('\\', '/').trim();
   }
 
   String _formatBytes(int bytes) {
@@ -2800,12 +2467,10 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   }
 }
 
-enum _RemoteMediaKind { image, video, other }
-
 class _RemoteFilePreview extends StatelessWidget {
   const _RemoteFilePreview({required this.file});
 
-  final _RemoteFileChoice file;
+  final RemoteBrowseFileChoice file;
 
   @override
   Widget build(BuildContext context) {
@@ -2837,7 +2502,7 @@ class _RemoteFilePreview extends StatelessWidget {
             )
           else
             Center(child: Icon(scheme.icon, color: scheme.iconColor, size: 26)),
-          if (file.mediaKind == _RemoteMediaKind.video)
+          if (file.mediaKind == RemoteBrowseMediaKind.video)
             const Center(
               child: Icon(
                 Icons.play_circle_fill_rounded,
@@ -2874,23 +2539,23 @@ class _RemoteFilePreview extends StatelessWidget {
     );
   }
 
-  _PreviewScheme _resolveScheme(_RemoteMediaKind kind) {
+  _PreviewScheme _resolveScheme(RemoteBrowseMediaKind kind) {
     switch (kind) {
-      case _RemoteMediaKind.image:
+      case RemoteBrowseMediaKind.image:
         return const _PreviewScheme(
           background: AppColors.surfaceSoft,
           border: AppColors.brandAccent,
           iconColor: AppColors.brandPrimaryDark,
           icon: Icons.image_rounded,
         );
-      case _RemoteMediaKind.video:
+      case RemoteBrowseMediaKind.video:
         return const _PreviewScheme(
           background: AppColors.surfaceSoft,
           border: AppColors.warning,
           iconColor: AppColors.warning,
           icon: Icons.play_circle_fill_rounded,
         );
-      case _RemoteMediaKind.other:
+      case RemoteBrowseMediaKind.other:
         return const _PreviewScheme(
           background: AppColors.surfaceSoft,
           border: AppColors.mutedBorder,
@@ -2913,154 +2578,6 @@ class _PreviewScheme {
   final Color border;
   final Color iconColor;
   final IconData icon;
-}
-
-class _RemoteOwnerChoice {
-  const _RemoteOwnerChoice({
-    required this.ip,
-    required this.name,
-    required this.macAddress,
-    required this.shareCount,
-    required this.fileCount,
-  });
-
-  final String ip;
-  final String name;
-  final String macAddress;
-  final int shareCount;
-  final int fileCount;
-}
-
-class _RemoteOwnerDraft {
-  _RemoteOwnerDraft({
-    required this.ip,
-    required this.name,
-    required this.macAddress,
-  });
-
-  final String ip;
-  final String name;
-  final String macAddress;
-  int shareCount = 0;
-  int fileCount = 0;
-}
-
-class _RemoteFolderChoice {
-  const _RemoteFolderChoice({
-    required this.ownerIp,
-    required this.cacheId,
-    required this.cacheDisplayName,
-    required this.folderPath,
-    required this.fileCount,
-    required this.totalBytes,
-  });
-
-  final String ownerIp;
-  final String cacheId;
-  final String cacheDisplayName;
-  final String folderPath;
-  final int fileCount;
-  final int totalBytes;
-
-  String get id => '$ownerIp|$cacheId|$folderPath';
-
-  int get depth =>
-      folderPath.isEmpty ? 0 : '/'.allMatches(folderPath).length + 1;
-
-  String get displayLabel => folderPath.isEmpty
-      ? '$cacheDisplayName (вся расшаренная папка)'
-      : '$cacheDisplayName / $folderPath';
-}
-
-class _RemoteFolderDraft {
-  _RemoteFolderDraft({
-    required this.ownerIp,
-    required this.cacheId,
-    required this.cacheDisplayName,
-    required this.folderPath,
-  });
-
-  final String ownerIp;
-  final String cacheId;
-  final String cacheDisplayName;
-  final String folderPath;
-  int fileCount = 0;
-  int totalBytes = 0;
-  final Set<String> fileIds = <String>{};
-}
-
-class _RemoteFileChoice {
-  const _RemoteFileChoice({
-    required this.ownerIp,
-    required this.cacheId,
-    required this.cacheDisplayName,
-    required this.relativePath,
-    required this.sizeBytes,
-    this.thumbnailId,
-    this.previewPath,
-  });
-
-  static const Set<String> _imageExtensions = <String>{
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-    '.gif',
-    '.bmp',
-    '.heic',
-    '.heif',
-    '.tif',
-    '.tiff',
-  };
-
-  static const Set<String> _videoExtensions = <String>{
-    '.mp4',
-    '.mov',
-    '.mkv',
-    '.avi',
-    '.webm',
-    '.m4v',
-    '.3gp',
-    '.mpeg',
-    '.mpg',
-  };
-
-  final String ownerIp;
-  final String cacheId;
-  final String cacheDisplayName;
-  final String relativePath;
-  final int sizeBytes;
-  final String? thumbnailId;
-  final String? previewPath;
-
-  String get id => '$ownerIp|$cacheId|$relativePath';
-
-  _RemoteMediaKind get mediaKind {
-    if (_imageExtensions.contains(extension)) {
-      return _RemoteMediaKind.image;
-    }
-    if (_videoExtensions.contains(extension)) {
-      return _RemoteMediaKind.video;
-    }
-    return _RemoteMediaKind.other;
-  }
-
-  String get extension => p.extension(relativePath).toLowerCase();
-
-  String get previewLabel {
-    final ext = extension;
-    if (ext.isNotEmpty) {
-      return ext.substring(1).toUpperCase();
-    }
-    switch (mediaKind) {
-      case _RemoteMediaKind.image:
-        return 'IMG';
-      case _RemoteMediaKind.video:
-        return 'VID';
-      case _RemoteMediaKind.other:
-        return 'FILE';
-    }
-  }
 }
 
 class _ActionBar extends StatelessWidget {

@@ -7,12 +7,15 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/shared_cache_catalog_bridge.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
+import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
+import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
@@ -31,12 +34,14 @@ class TestDiscoveryControllerHarness {
     required this.databaseHarness,
     required this.controller,
     required this.readModel,
+    required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
   });
 
   final TestAppDatabaseHarness databaseHarness;
   final TrackingDiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final TrackingRemoteShareBrowser remoteShareBrowser;
   final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
 
   static Future<TestDiscoveryControllerHarness> create() async {
@@ -67,6 +72,9 @@ class TestDiscoveryControllerHarness {
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
+    final remoteShareBrowser = TrackingRemoteShareBrowser(
+      sharedCacheCatalog: sharedCacheCatalog,
+    );
     final controller = TrackingDiscoveryController(
       lanDiscoveryService: LanDiscoveryService(),
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
@@ -81,6 +89,7 @@ class TestDiscoveryControllerHarness {
         database: database,
       ),
       clipboardCaptureService: ClipboardCaptureService(),
+      remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
@@ -107,6 +116,7 @@ class TestDiscoveryControllerHarness {
       databaseHarness: databaseHarness,
       controller: controller,
       readModel: readModel,
+      remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
     );
   }
@@ -116,6 +126,7 @@ class TestDiscoveryControllerHarness {
     if (!controller.wasDisposed) {
       controller.dispose();
     }
+    remoteShareBrowser.dispose();
     await databaseHarness.dispose();
   }
 }
@@ -133,6 +144,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.transferHistoryRepository,
     required super.clipboardHistoryRepository,
     required super.clipboardCaptureService,
+    required super.remoteShareBrowser,
     required super.sharedCacheCatalog,
     required super.sharedCacheIndexStore,
     required super.sharedFolderCacheRepository,
@@ -146,11 +158,19 @@ class TrackingDiscoveryController extends DiscoveryController {
   int startCalls = 0;
   int disposeCalls = 0;
   bool wasDisposed = false;
+  Future<void>? lastLoadRemoteShareOptionsFuture;
 
   @override
   Future<void> start() async {
     startCalls += 1;
     notifyListeners();
+  }
+
+  @override
+  Future<void> loadRemoteShareOptions() {
+    final future = super.loadRemoteShareOptions();
+    lastLoadRemoteShareOptionsFuture = future;
+    return future;
   }
 
   @override
@@ -161,6 +181,57 @@ class TrackingDiscoveryController extends DiscoveryController {
     disposeCalls += 1;
     wasDisposed = true;
     super.dispose();
+  }
+}
+
+class TrackingRemoteShareBrowser extends RemoteShareBrowser {
+  TrackingRemoteShareBrowser({required super.sharedCacheCatalog});
+
+  int startBrowseCalls = 0;
+  int applyRemoteCatalogCalls = 0;
+  int selectOwnerCalls = 0;
+  String? lastSelectedOwnerIp;
+
+  @override
+  Future<RemoteBrowseStartResult> startBrowse({
+    required List<DiscoveredDevice> targets,
+    required String receiverMacAddress,
+    required String requesterName,
+    required String requestId,
+    required Future<void> Function({
+      required String targetIp,
+      required String requestId,
+      required String requesterName,
+    })
+    sendShareQuery,
+    Duration responseWindow = const Duration(milliseconds: 900),
+  }) async {
+    startBrowseCalls += 1;
+    return RemoteBrowseStartResult(
+      hadTargets: targets.isNotEmpty,
+      optionCount: currentBrowseProjection.options.length,
+    );
+  }
+
+  @override
+  Future<void> applyRemoteCatalog({
+    required ShareCatalogEvent event,
+    required String ownerDisplayName,
+    required String ownerMacAddress,
+  }) async {
+    applyRemoteCatalogCalls += 1;
+    await super.applyRemoteCatalog(
+      event: event,
+      ownerDisplayName: ownerDisplayName,
+      ownerMacAddress: ownerMacAddress,
+    );
+  }
+
+  @override
+  void selectOwner(String? ownerIp) {
+    selectOwnerCalls += 1;
+    lastSelectedOwnerIp = ownerIp;
+    super.selectOwner(ownerIp);
   }
 }
 

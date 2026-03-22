@@ -7,6 +7,7 @@ import 'package:landa/features/clipboard/data/clipboard_history_repository.dart'
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -145,6 +146,10 @@ DiscoveryController _buildController({
     database: database,
   );
   final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
+  final sharedCacheCatalog = SharedCacheCatalog(
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    sharedCacheIndexStore: sharedCacheIndexStore,
+  );
   return DiscoveryController(
     lanDiscoveryService: LanDiscoveryService(),
     networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -162,10 +167,10 @@ DiscoveryController _buildController({
     transferHistoryRepository: TransferHistoryRepository(database: database),
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
     clipboardCaptureService: ClipboardCaptureService(),
-    sharedCacheCatalog: SharedCacheCatalog(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
-      sharedCacheIndexStore: sharedCacheIndexStore,
+    remoteShareBrowser: RemoteShareBrowser(
+      sharedCacheCatalog: sharedCacheCatalog,
     ),
+    sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
     sharedFolderCacheRepository: sharedFolderCacheRepository,
     fileHashService: FileHashService(),

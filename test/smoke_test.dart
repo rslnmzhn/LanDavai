@@ -28,6 +28,7 @@ void main() {
           home: DiscoveryPage(
             controller: harness.controller,
             readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
             sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
             desktopWindowService: desktopWindowService,
             transferStorageService: transferStorageService,
@@ -57,6 +58,7 @@ void main() {
           home: DiscoveryPageEntry(
             controller: harness.controller,
             readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
             sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
             desktopWindowService: desktopWindowService,
           ),
@@ -73,6 +75,42 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(harness.controller.disposeCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'DiscoveryPage receive flow starts remote browse through RemoteShareBrowser',
+    (tester) async {
+      final desktopWindowService = TrackingDesktopWindowService();
+      final transferStorageService = TransferStorageService();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DiscoveryPage(
+            controller: harness.controller,
+            readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
+            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
+            desktopWindowService: desktopWindowService,
+            transferStorageService: transferStorageService,
+            isBoundaryReady: false,
+          ),
+        ),
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Принять'));
+      await tester.pump();
+      await tester.pumpAndSettle();
+
+      expect(harness.remoteShareBrowser.startBrowseCalls, 1);
+      expect(find.text('Выбор файлов из LAN'), findsOneWidget);
+
+      final sheetContext = tester.element(find.text('Выбор файлов из LAN'));
+      Navigator.of(sheetContext).pop();
+      await tester.pumpAndSettle();
+      await (harness.controller.lastLoadRemoteShareOptionsFuture ??
+          Future<void>.value());
+      await tester.pump();
     },
   );
 }

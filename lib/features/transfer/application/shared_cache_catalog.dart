@@ -359,6 +359,24 @@ class SharedCacheCatalog extends ChangeNotifier {
     return record;
   }
 
+  Future<List<SharedFolderCacheRecord>> listReceiverCaches({
+    required String receiverMacAddress,
+    String? ownerMacAddress,
+  }) async {
+    final receiverMac = _normalizeOrThrow(
+      receiverMacAddress,
+      field: 'receiverMacAddress',
+    );
+    final normalizedOwnerMac = ownerMacAddress == null
+        ? null
+        : _normalizeOrThrow(ownerMacAddress, field: 'ownerMacAddress');
+    return _sharedFolderCacheRepository.listCaches(
+      role: SharedFolderCacheRole.receiver,
+      ownerMacAddress: normalizedOwnerMac,
+      peerMacAddress: receiverMac,
+    );
+  }
+
   Future<void> deleteCache(String cacheId) async {
     final record = await _sharedFolderCacheRepository.findCacheById(cacheId);
     if (record != null) {

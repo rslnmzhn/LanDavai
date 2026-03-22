@@ -11,6 +11,7 @@ import '../features/discovery/application/discovery_controller.dart';
 import '../features/discovery/application/discovery_read_model.dart';
 import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/application/internet_peer_endpoint_store.dart';
+import '../features/discovery/application/remote_share_browser.dart';
 import '../features/discovery/application/shared_cache_catalog_bridge.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
 import '../features/discovery/data/device_alias_repository.dart';
@@ -35,19 +36,23 @@ class DiscoveryPageEntry extends StatefulWidget {
     super.key,
     this.controller,
     this.readModel,
+    this.remoteShareBrowser,
     this.sharedCacheCatalogBridge,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
   }) : assert(
          controller == null ||
-             (readModel != null && sharedCacheCatalogBridge != null),
-         'DiscoveryPageEntry requires readModel and sharedCacheCatalogBridge '
-         'when controller is injected.',
+             (readModel != null &&
+                 remoteShareBrowser != null &&
+                 sharedCacheCatalogBridge != null),
+         'DiscoveryPageEntry requires readModel, remoteShareBrowser, and '
+         'sharedCacheCatalogBridge when controller is injected.',
        );
 
   final DiscoveryController? controller;
   final DiscoveryReadModel? readModel;
+  final RemoteShareBrowser? remoteShareBrowser;
   final SharedCacheCatalogBridge? sharedCacheCatalogBridge;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
@@ -60,11 +65,13 @@ class DiscoveryPageEntry extends StatefulWidget {
 class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryController _controller;
   late final DiscoveryReadModel _readModel;
+  late final RemoteShareBrowser _remoteShareBrowser;
   late final SharedCacheCatalogBridge _sharedCacheCatalogBridge;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
   late final bool _ownsReadModel;
+  late final bool _ownsRemoteShareBrowser;
   bool _isBoundaryReady = false;
 
   @override
@@ -75,16 +82,20 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     if (widget.controller != null) {
       _controller = widget.controller!;
       _readModel = widget.readModel!;
+      _remoteShareBrowser = widget.remoteShareBrowser!;
       _sharedCacheCatalogBridge = widget.sharedCacheCatalogBridge!;
       _ownsController = false;
       _ownsReadModel = false;
+      _ownsRemoteShareBrowser = false;
     } else {
       final boundary = _buildDiscoveryBoundary();
       _controller = boundary.controller;
       _readModel = boundary.readModel;
+      _remoteShareBrowser = boundary.remoteShareBrowser;
       _sharedCacheCatalogBridge = boundary.sharedCacheCatalogBridge;
       _ownsController = true;
       _ownsReadModel = true;
+      _ownsRemoteShareBrowser = true;
     }
     _desktopWindowService =
         widget.desktopWindowService ?? DesktopWindowService();
@@ -99,6 +110,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     if (_ownsReadModel) {
       _readModel.dispose();
     }
+    if (_ownsRemoteShareBrowser) {
+      _remoteShareBrowser.dispose();
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -110,6 +124,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     return DiscoveryPage(
       controller: _controller,
       readModel: _readModel,
+      remoteShareBrowser: _remoteShareBrowser,
       sharedCacheCatalogBridge: _sharedCacheCatalogBridge,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
@@ -156,6 +171,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
+    final remoteShareBrowser = RemoteShareBrowser(
+      sharedCacheCatalog: sharedCacheCatalog,
+    );
     final controller = DiscoveryController(
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
@@ -168,6 +186,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
         database: database,
       ),
       clipboardCaptureService: ClipboardCaptureService(),
+      remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
@@ -196,6 +215,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     return _DiscoveryBoundary(
       controller: controller,
       readModel: readModel,
+      remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
     );
   }
@@ -205,10 +225,12 @@ class _DiscoveryBoundary {
   const _DiscoveryBoundary({
     required this.controller,
     required this.readModel,
+    required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
   });
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
 }

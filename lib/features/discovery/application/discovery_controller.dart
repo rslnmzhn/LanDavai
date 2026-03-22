@@ -18,6 +18,7 @@ import '../../history/domain/transfer_history_record.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
+import 'remote_share_browser.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
@@ -40,22 +41,6 @@ import '../data/lan_protocol_events.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';
-
-class RemoteShareOption {
-  RemoteShareOption({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entry,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerName;
-  final String ownerMacAddress;
-  final SharedCatalogEntryItem entry;
-}
 
 enum DiscoveryFlowState { idle, discovering }
 
@@ -302,6 +287,7 @@ class DiscoveryController extends ChangeNotifier {
     required TransferHistoryRepository transferHistoryRepository,
     required ClipboardHistoryRepository clipboardHistoryRepository,
     required ClipboardCaptureService clipboardCaptureService,
+    required RemoteShareBrowser remoteShareBrowser,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
     required SharedFolderCacheRepository sharedFolderCacheRepository,
@@ -321,6 +307,7 @@ class DiscoveryController extends ChangeNotifier {
        _transferHistoryRepository = transferHistoryRepository,
        _clipboardHistoryRepository = clipboardHistoryRepository,
        _clipboardCaptureService = clipboardCaptureService,
+       _remoteShareBrowser = remoteShareBrowser,
        _sharedCacheCatalog = sharedCacheCatalog,
        _sharedCacheIndexStore = sharedCacheIndexStore,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
@@ -344,7 +331,6 @@ class DiscoveryController extends ChangeNotifier {
     milliseconds: 900,
   );
   static const double _sharedFolderScanProgressWeight = 0.35;
-  static const int _maxRemoteFilesPerCacheForUi = 4000;
   static const int _maxThumbnailSyncItemsPerCatalog = 240;
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
@@ -361,6 +347,7 @@ class DiscoveryController extends ChangeNotifier {
   final TransferHistoryRepository _transferHistoryRepository;
   final ClipboardHistoryRepository _clipboardHistoryRepository;
   final ClipboardCaptureService _clipboardCaptureService;
+  final RemoteShareBrowser _remoteShareBrowser;
   final SharedCacheCatalog _sharedCacheCatalog;
   final SharedCacheIndexStore _sharedCacheIndexStore;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
@@ -376,8 +363,6 @@ class DiscoveryController extends ChangeNotifier {
       <IncomingTransferRequest>[];
   final List<IncomingFriendRequest> _incomingFriendRequests =
       <IncomingFriendRequest>[];
-  final List<RemoteShareOption> _remoteShareOptions = <RemoteShareOption>[];
-  final Map<String, String> _remoteThumbnailPathsByFileKey = <String, String>{};
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
   final Map<String, _PendingOutgoingFriendRequest>
@@ -411,9 +396,7 @@ class DiscoveryController extends ChangeNotifier {
   double? _sharedFolderIndexingVisualProgress;
   DateTime? _sharedRecacheCooldownUntil;
   bool _isSendingTransfer = false;
-  bool _isLoadingRemoteShares = false;
   bool _isLoadingRemoteClipboard = false;
-  String? _activeShareQueryRequestId;
   String? _activeClipboardQueryRequestId;
   int _uploadSentBytes = 0;
   int _uploadTotalBytes = 0;
@@ -468,7 +451,7 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   bool get isSendingTransfer => _isSendingTransfer;
-  bool get isLoadingRemoteShares => _isLoadingRemoteShares;
+  bool get isLoadingRemoteShares => _remoteShareBrowser.isLoading;
   bool get isUploading =>
       _uploadTotalBytes > 0 && _uploadSentBytes < _uploadTotalBytes;
   bool get isDownloading =>
@@ -512,7 +495,7 @@ class DiscoveryController extends ChangeNotifier {
   List<IncomingFriendRequest> get incomingFriendRequests =>
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
   List<RemoteShareOption> get remoteShareOptions =>
-      List<RemoteShareOption>.unmodifiable(_remoteShareOptions);
+      _remoteShareBrowser.currentBrowseProjection.options;
   List<TransferHistoryRecord> get downloadHistory =>
       List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
   VideoLinkShareSession? get videoLinkShareSession => _videoLinkShareSession;
@@ -545,12 +528,11 @@ class DiscoveryController extends ChangeNotifier {
     required String cacheId,
     required String relativePath,
   }) {
-    final key = _remoteThumbnailKey(
+    return _remoteShareBrowser.previewPathFor(
       ownerIp: ownerIp,
       cacheId: cacheId,
       relativePath: relativePath,
     );
-    return _remoteThumbnailPathsByFileKey[key];
   }
 
   AppSettings get _currentSettings => _settingsStore.settings;
@@ -1108,43 +1090,38 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> loadRemoteShareOptions() async {
     final targets = devices.where((device) => device.isAppDetected).toList();
-    if (targets.isEmpty) {
-      _remoteShareOptions.clear();
-      _remoteThumbnailPathsByFileKey.clear();
-      _infoMessage = 'No Landa devices available for shared content.';
-      notifyListeners();
-      return;
-    }
-
-    _isLoadingRemoteShares = true;
-    _remoteShareOptions.clear();
-    _remoteThumbnailPathsByFileKey.clear();
-    notifyListeners();
-
-    final requestId = _fileHashService.buildStableId(
-      'share-query|${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
-    );
-    _activeShareQueryRequestId = requestId;
     try {
-      for (final target in targets) {
-        await _lanDiscoveryService.sendShareQuery(
-          targetIp: target.ip,
-          requestId: requestId,
-          requesterName: _localName,
-        );
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-      if (_remoteShareOptions.isEmpty) {
+      final result = await _remoteShareBrowser.startBrowse(
+        targets: targets,
+        receiverMacAddress: _localDeviceMac,
+        requesterName: _localName,
+        requestId: _fileHashService.buildStableId(
+          'share-query|${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
+        ),
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) {
+              return _lanDiscoveryService.sendShareQuery(
+                targetIp: targetIp,
+                requestId: requestId,
+                requesterName: requesterName,
+              );
+            },
+      );
+      if (!result.hadTargets) {
+        _infoMessage = 'No Landa devices available for shared content.';
+      } else if (result.optionCount == 0) {
         _infoMessage = 'No shared folders/files found on LAN devices.';
       }
       _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Failed to request remote shares: $error';
       _log(_errorMessage!);
-    } finally {
-      _isLoadingRemoteShares = false;
-      notifyListeners();
     }
+    notifyListeners();
   }
 
   Future<void> requestDownloadFromRemoteShare(RemoteShareOption option) async {
@@ -3320,11 +3297,6 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onShareCatalog(ShareCatalogEvent event) {
-    if (_activeShareQueryRequestId != null &&
-        event.requestId != _activeShareQueryRequestId) {
-      return;
-    }
-
     unawaited(
       _handleShareCatalog(event).catchError((Object error, StackTrace stack) {
         _log('Unhandled share catalog error from ${event.ownerIp}: $error');
@@ -3382,49 +3354,11 @@ class DiscoveryController extends ChangeNotifier {
         }
       }
 
-      _remoteShareOptions.removeWhere(
-        (option) => option.ownerIp == event.ownerIp,
+      await _remoteShareBrowser.applyRemoteCatalog(
+        event: event,
+        ownerDisplayName: aliasName ?? event.ownerName,
+        ownerMacAddress: ownerMac ?? event.ownerMacAddress,
       );
-      _remoteThumbnailPathsByFileKey.removeWhere(
-        (key, _) => key.startsWith('${event.ownerIp}|'),
-      );
-
-      var trimmedEntries = 0;
-      var trimmedFilesTotal = 0;
-      for (final entry in event.entries) {
-        final uiEntry = _trimRemoteShareEntryForUi(entry);
-        if (!identical(uiEntry, entry)) {
-          trimmedEntries += 1;
-          trimmedFilesTotal += entry.files.length - uiEntry.files.length;
-        }
-        _remoteShareOptions.add(
-          RemoteShareOption(
-            requestId: event.requestId,
-            ownerIp: event.ownerIp,
-            ownerName: aliasName ?? event.ownerName,
-            ownerMacAddress: ownerMac ?? event.ownerMacAddress,
-            entry: uiEntry,
-          ),
-        );
-      }
-      if (trimmedEntries > 0) {
-        _log(
-          'Remote catalog trimmed for UI: owner=${event.ownerIp}, '
-          'entries=$trimmedEntries filesHidden=$trimmedFilesTotal',
-        );
-      }
-
-      _remoteShareOptions.sort((a, b) {
-        final ownerCmp = a.ownerName.toLowerCase().compareTo(
-          b.ownerName.toLowerCase(),
-        );
-        if (ownerCmp != 0) {
-          return ownerCmp;
-        }
-        return a.entry.displayName.toLowerCase().compareTo(
-          b.entry.displayName.toLowerCase(),
-        );
-      });
       unawaited(_syncRemoteThumbnails(event));
       notifyListeners();
     } catch (error, stackTrace) {
@@ -3524,13 +3458,12 @@ class DiscoveryController extends ChangeNotifier {
           thumbnailId: event.thumbnailId,
           bytes: event.bytes,
         );
-    final key = _remoteThumbnailKey(
+    _remoteShareBrowser.recordPreviewPath(
       ownerIp: event.ownerIp,
       cacheId: event.cacheId,
       relativePath: event.relativePath,
+      previewPath: savedPath,
     );
-    _remoteThumbnailPathsByFileKey[key] = savedPath;
-    notifyListeners();
   }
 
   Future<void> _syncRemoteThumbnails(ShareCatalogEvent event) async {
@@ -3541,6 +3474,7 @@ class DiscoveryController extends ChangeNotifier {
 
     final requested = <ThumbnailSyncItem>[];
     var syncLimitReached = false;
+    var resolvedLocalPreview = false;
     for (final entry in event.entries) {
       for (final file in entry.files) {
         final thumbId = file.thumbnailId;
@@ -3548,12 +3482,11 @@ class DiscoveryController extends ChangeNotifier {
           continue;
         }
 
-        final key = _remoteThumbnailKey(
+        final existing = _remoteShareBrowser.previewPathFor(
           ownerIp: event.ownerIp,
           cacheId: entry.cacheId,
           relativePath: file.relativePath,
         );
-        final existing = _remoteThumbnailPathsByFileKey[key];
         if (existing != null && await File(existing).exists()) {
           continue;
         }
@@ -3565,7 +3498,14 @@ class DiscoveryController extends ChangeNotifier {
               thumbnailId: thumbId,
             );
         if (localPath != null) {
-          _remoteThumbnailPathsByFileKey[key] = localPath;
+          _remoteShareBrowser.recordPreviewPath(
+            ownerIp: event.ownerIp,
+            cacheId: entry.cacheId,
+            relativePath: file.relativePath,
+            previewPath: localPath,
+            notify: false,
+          );
+          resolvedLocalPreview = true;
           continue;
         }
 
@@ -3587,6 +3527,9 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     if (requested.isEmpty) {
+      if (resolvedLocalPreview) {
+        _remoteShareBrowser.notifyListeners();
+      }
       return;
     }
 
@@ -3608,33 +3551,11 @@ class DiscoveryController extends ChangeNotifier {
       }
     } catch (error) {
       _log('Failed to request remote thumbnails: $error');
+    } finally {
+      if (resolvedLocalPreview) {
+        _remoteShareBrowser.notifyListeners();
+      }
     }
-  }
-
-  SharedCatalogEntryItem _trimRemoteShareEntryForUi(
-    SharedCatalogEntryItem entry,
-  ) {
-    if (entry.files.length <= _maxRemoteFilesPerCacheForUi) {
-      return entry;
-    }
-    final cappedFiles = entry.files
-        .take(_maxRemoteFilesPerCacheForUi)
-        .toList(growable: false);
-    return SharedCatalogEntryItem(
-      cacheId: entry.cacheId,
-      displayName: entry.displayName,
-      itemCount: entry.itemCount,
-      totalBytes: entry.totalBytes,
-      files: cappedFiles,
-    );
-  }
-
-  String _remoteThumbnailKey({
-    required String ownerIp,
-    required String cacheId,
-    required String relativePath,
-  }) {
-    return '$ownerIp|$cacheId|${relativePath.replaceAll('\\', '/').toLowerCase()}';
   }
 
   void _onDownloadRequest(DownloadRequestEvent event) {
@@ -4566,13 +4487,10 @@ class DiscoveryController extends ChangeNotifier {
     required String ownerIp,
     required String cacheId,
   }) {
-    for (final option in _remoteShareOptions) {
-      if (option.ownerIp != ownerIp || option.entry.cacheId != cacheId) {
-        continue;
-      }
-      return DeviceAliasRepository.normalizeMac(option.ownerMacAddress);
-    }
-    return null;
+    return _remoteShareBrowser.ownerMacForCache(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+    );
   }
 
   bool _consumePendingRemoteDownload(TransferRequestEvent event) {
