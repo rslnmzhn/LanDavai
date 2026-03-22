@@ -10,9 +10,13 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
+import '../../files/application/file_explorer_contract.dart';
 import '../../files/presentation/file_explorer_page.dart';
+import '../../files/presentation/file_explorer_facade.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
+import '../../transfer/application/shared_cache_catalog.dart';
+import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
@@ -26,6 +30,8 @@ class DiscoveryPage extends StatefulWidget {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
+    required this.sharedCacheCatalog,
+    required this.sharedCacheIndexStore,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -36,6 +42,8 @@ class DiscoveryPage extends StatefulWidget {
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheCatalog sharedCacheCatalog;
+  final SharedCacheIndexStore sharedCacheIndexStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -55,6 +63,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   RemoteShareBrowser get _remoteShareBrowser => widget.remoteShareBrowser;
   SharedCacheCatalogBridge get _sharedCacheCatalogBridge =>
       widget.sharedCacheCatalogBridge;
+  SharedCacheCatalog get _sharedCacheCatalog => widget.sharedCacheCatalog;
+  SharedCacheIndexStore get _sharedCacheIndexStore =>
+      widget.sharedCacheIndexStore;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -959,114 +970,18 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         publicDownloadsDirectory = Directory(p.join(basePublic.path, 'Landa'));
       }
     }
-    final sharedSummary = await _sharedCacheCatalogBridge
-        .summarizeOwnerSharedContent();
-
-    final roots = <FileExplorerRoot>[];
-    final seenPaths = <String>{};
-
-    void addRoot({
-      required String label,
-      required String path,
-      bool isSharedFolder = false,
-      List<FileExplorerVirtualFile> virtualFiles =
-          const <FileExplorerVirtualFile>[],
-      Future<List<FileExplorerVirtualFile>> Function()? virtualFilesLoader,
-      Future<FileExplorerVirtualDirectory> Function(String folderPath)?
-      virtualDirectoryLoader,
-    }) {
-      if (virtualFiles.isNotEmpty ||
-          virtualFilesLoader != null ||
-          virtualDirectoryLoader != null) {
-        roots.add(
-          FileExplorerRoot(
-            label: label,
-            path: path,
-            isSharedFolder: isSharedFolder,
-            virtualFiles: virtualFiles,
-            virtualFilesLoader: virtualFilesLoader,
-            virtualDirectoryLoader: virtualDirectoryLoader,
-          ),
-        );
-        return;
-      }
-      final normalized = _normalizePathKey(path);
-      if (normalized.isEmpty || seenPaths.contains(normalized)) {
-        return;
-      }
-      if (!Directory(path).existsSync()) {
-        return;
-      }
-      seenPaths.add(normalized);
-      roots.add(
-        FileExplorerRoot(
-          label: label,
-          path: path,
-          isSharedFolder: isSharedFolder,
-          virtualFiles: virtualFiles,
-          virtualFilesLoader: virtualFilesLoader,
-          virtualDirectoryLoader: virtualDirectoryLoader,
-        ),
-      );
-    }
-
-    if (publicDownloadsDirectory != null) {
-      addRoot(label: 'Landa Downloads', path: publicDownloadsDirectory.path);
-    }
-    addRoot(label: 'Incoming', path: receiveDirectory.path);
-    if (sharedSummary.totalFiles > 0) {
-      addRoot(
-        label: 'My files',
-        path: 'virtual://my-files',
-        isSharedFolder: true,
-        virtualDirectoryLoader: (folderPath) async {
-          final directory = await _sharedCacheCatalogBridge
-              .listShareableLocalDirectory(virtualFolderPath: folderPath);
-          return FileExplorerVirtualDirectory(
-            folders: directory.folders
-                .map(
-                  (folder) => FileExplorerVirtualFolder(
-                    name: folder.name,
-                    folderPath: folder.virtualPath,
-                    removableSharedCacheId: folder.removableSharedCacheId,
-                  ),
-                )
-                .toList(growable: false),
-            files: directory.files
-                .map(
-                  (file) => FileExplorerVirtualFile(
-                    path: file.absolutePath,
-                    subtitle: '${file.cacheDisplayName} / ${file.relativePath}',
-                    virtualPath: file.virtualPath,
-                    sizeBytes: file.sizeBytes,
-                    modifiedAt: DateTime.fromMillisecondsSinceEpoch(
-                      file.modifiedAtMs,
-                    ),
-                    changedAt: DateTime.fromMillisecondsSinceEpoch(
-                      file.modifiedAtMs,
-                    ),
-                  ),
-                )
-                .toList(growable: false),
-          );
-        },
-      );
-    }
-
     if (!mounted) {
-      return;
-    }
-    if (roots.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No local folders available for viewer.')),
-      );
       return;
     }
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => FileExplorerPage(
-          roots: roots,
+        builder: (_) => FileExplorerFacade(
+          sharedCacheCatalog: _sharedCacheCatalog,
+          sharedCacheIndexStore: _sharedCacheIndexStore,
+          ownerMacAddressProvider: () => _controller.localDeviceMac,
+          receiveDirectoryPath: receiveDirectory.path,
+          publicDownloadsDirectoryPath: publicDownloadsDirectory?.path,
           onRecacheSharedFolders: _handleSharedRecacheFromFiles,
           onRemoveSharedCache: _handleRemoveSharedCacheFromFiles,
           recacheStateListenable: _controller,
@@ -1089,14 +1004,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         ),
       ),
     );
-  }
-
-  String _normalizePathKey(String value) {
-    var normalized = p.normalize(value).replaceAll('\\\\', '/').trim();
-    if (Platform.isWindows) {
-      normalized = normalized.toLowerCase();
-    }
-    return normalized;
   }
 
   Future<void> _openHistorySheet() async {

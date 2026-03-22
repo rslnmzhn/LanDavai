@@ -55,7 +55,7 @@ class _ExplorerEntityTile extends StatelessWidget {
     this.onDelete,
   });
 
-  final _ExplorerEntityRecord entry;
+  final FilesFeatureEntry entry;
   final VoidCallback onTap;
   final Future<void> Function()? onDelete;
 

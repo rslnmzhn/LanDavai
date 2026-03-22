@@ -8,7 +8,7 @@ class _ExplorerEntityGridTile extends StatelessWidget {
     this.onDelete,
   });
 
-  final _ExplorerEntityRecord entry;
+  final FilesFeatureEntry entry;
   final double tileExtent;
   final VoidCallback onTap;
   final Future<void> Function()? onDelete;

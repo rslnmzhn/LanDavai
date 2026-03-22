@@ -38,6 +38,8 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.readModel,
     this.remoteShareBrowser,
     this.sharedCacheCatalogBridge,
+    this.sharedCacheCatalog,
+    this.sharedCacheIndexStore,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
@@ -45,15 +47,19 @@ class DiscoveryPageEntry extends StatefulWidget {
          controller == null ||
              (readModel != null &&
                  remoteShareBrowser != null &&
-                 sharedCacheCatalogBridge != null),
+                 sharedCacheCatalogBridge != null &&
+                 sharedCacheCatalog != null &&
+                 sharedCacheIndexStore != null),
          'DiscoveryPageEntry requires readModel, remoteShareBrowser, and '
-         'sharedCacheCatalogBridge when controller is injected.',
+         'shared-cache boundaries when controller is injected.',
        );
 
   final DiscoveryController? controller;
   final DiscoveryReadModel? readModel;
   final RemoteShareBrowser? remoteShareBrowser;
   final SharedCacheCatalogBridge? sharedCacheCatalogBridge;
+  final SharedCacheCatalog? sharedCacheCatalog;
+  final SharedCacheIndexStore? sharedCacheIndexStore;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
   final bool autoStartController;
@@ -67,6 +73,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryReadModel _readModel;
   late final RemoteShareBrowser _remoteShareBrowser;
   late final SharedCacheCatalogBridge _sharedCacheCatalogBridge;
+  late final SharedCacheCatalog _sharedCacheCatalog;
+  late final SharedCacheIndexStore _sharedCacheIndexStore;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
@@ -84,6 +92,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _readModel = widget.readModel!;
       _remoteShareBrowser = widget.remoteShareBrowser!;
       _sharedCacheCatalogBridge = widget.sharedCacheCatalogBridge!;
+      _sharedCacheCatalog = widget.sharedCacheCatalog!;
+      _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
       _ownsController = false;
       _ownsReadModel = false;
       _ownsRemoteShareBrowser = false;
@@ -93,6 +103,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _readModel = boundary.readModel;
       _remoteShareBrowser = boundary.remoteShareBrowser;
       _sharedCacheCatalogBridge = boundary.sharedCacheCatalogBridge;
+      _sharedCacheCatalog = boundary.sharedCacheCatalog;
+      _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
       _ownsController = true;
       _ownsReadModel = true;
       _ownsRemoteShareBrowser = true;
@@ -126,6 +138,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       readModel: _readModel,
       remoteShareBrowser: _remoteShareBrowser,
       sharedCacheCatalogBridge: _sharedCacheCatalogBridge,
+      sharedCacheCatalog: _sharedCacheCatalog,
+      sharedCacheIndexStore: _sharedCacheIndexStore,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
       isBoundaryReady: _isBoundaryReady,
@@ -217,6 +231,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
     );
   }
 }
@@ -227,10 +243,14 @@ class _DiscoveryBoundary {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
+    required this.sharedCacheCatalog,
+    required this.sharedCacheIndexStore,
   });
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheCatalog sharedCacheCatalog;
+  final SharedCacheIndexStore sharedCacheIndexStore;
 }

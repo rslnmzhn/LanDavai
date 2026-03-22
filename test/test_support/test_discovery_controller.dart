@@ -36,6 +36,8 @@ class TestDiscoveryControllerHarness {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheCatalogBridge,
+    required this.sharedCacheCatalog,
+    required this.sharedCacheIndexStore,
   });
 
   final TestAppDatabaseHarness databaseHarness;
@@ -43,6 +45,8 @@ class TestDiscoveryControllerHarness {
   final DiscoveryReadModel readModel;
   final TrackingRemoteShareBrowser remoteShareBrowser;
   final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheCatalog sharedCacheCatalog;
+  final SharedCacheIndexStore sharedCacheIndexStore;
 
   static Future<TestDiscoveryControllerHarness> create() async {
     final databaseHarness = await TestAppDatabaseHarness.create(
@@ -118,6 +122,8 @@ class TestDiscoveryControllerHarness {
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
     );
   }
 
