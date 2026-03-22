@@ -3,8 +3,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
-
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_protocol_handler.dart';
@@ -14,15 +13,6 @@ import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
 import 'lan_share_protocol_handler.dart';
 import 'lan_transfer_protocol_handler.dart';
-
-export 'lan_packet_codec.dart'
-    show
-        ClipboardCatalogItem,
-        SharedCatalogEntryItem,
-        SharedCatalogFileItem,
-        ThumbnailSyncItem,
-        TransferAnnouncementItem;
-export 'lan_protocol_events.dart';
 
 class InternetPeerEndpoint {
   const InternetPeerEndpoint({
@@ -74,69 +64,6 @@ class LanDiscoveryService {
   String _localPeerId = '';
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
-
-  @visibleForTesting
-  static const Map<String, String> protocolPrefixesForTest =
-      LanPacketCodec.protocolPrefixes;
-
-  @visibleForTesting
-  void setLocalPeerIdForTest(String value) {
-    _localPeerId = value.trim();
-  }
-
-  @visibleForTesting
-  String buildDiscoveryMessageForTest(String deviceName) {
-    return _packetCodec.encodeDiscoveryRequest(
-      instanceId: _instanceId,
-      deviceName: deviceName,
-      localPeerId: _localPeerId,
-    );
-  }
-
-  @visibleForTesting
-  Map<String, Object?>? parseDiscoveryMessageForTest(String message) {
-    final packet = _packetCodec.decodeDiscoveryPacket(message);
-    if (packet == null) {
-      return null;
-    }
-    return <String, Object?>{
-      'prefix': packet.prefix,
-      'instanceId': packet.instanceId,
-      'deviceName': packet.deviceName,
-      'operatingSystem': packet.operatingSystem,
-      'deviceType': packet.deviceType,
-      'peerId': packet.peerId,
-    };
-  }
-
-  @visibleForTesting
-  List<SharedCatalogEntryItem> fitShareCatalogEntriesForTest(
-    List<SharedCatalogEntryItem> entries,
-  ) {
-    return _packetCodec.fitShareCatalogEntries(entries);
-  }
-
-  @visibleForTesting
-  static String encodeEnvelopeForTest({
-    required String prefix,
-    required Map<String, Object?> payload,
-  }) {
-    return LanPacketCodec.encodeEnvelopeForTest(
-      prefix: prefix,
-      payload: payload,
-    );
-  }
-
-  @visibleForTesting
-  static Map<String, dynamic>? decodeEnvelopeForTest({
-    required String message,
-    required String expectedPrefix,
-  }) {
-    return LanPacketCodec.decodeEnvelopeForTest(
-      message: message,
-      expectedPrefix: expectedPrefix,
-    );
-  }
 
   Future<void> start({
     required String deviceName,

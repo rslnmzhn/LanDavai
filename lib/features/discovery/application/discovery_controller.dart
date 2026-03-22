@@ -33,6 +33,8 @@ import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
 import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
+import '../data/lan_packet_codec.dart';
+import '../data/lan_protocol_events.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';

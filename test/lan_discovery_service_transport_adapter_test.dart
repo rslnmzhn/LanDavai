@@ -5,12 +5,16 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/data/discovery_transport_adapter.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
+import 'package:landa/features/discovery/data/lan_packet_codec.dart';
+import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 
 void main() {
+  late LanPacketCodec codec;
   late FakeDiscoveryTransportAdapter transportAdapter;
   late LanDiscoveryService service;
 
   setUp(() {
+    codec = LanPacketCodec();
     transportAdapter = FakeDiscoveryTransportAdapter(
       localIps: <String>{'192.168.1.10'},
     );
@@ -56,15 +60,14 @@ void main() {
         },
       );
 
-      final requestMessage = service.buildDiscoveryMessageForTest(
-        'Remote node',
+      final requestMessage = codec.encodeDiscoveryResponse(
+        instanceId: 'remote-instance',
+        deviceName: 'Remote node',
+        localPeerId: 'local-peer',
       );
-      final parts = requestMessage.split('|');
-      final responseMessage =
-          '${LanDiscoveryService.protocolPrefixesForTest['response']}|remote-instance|${parts.sublist(2).join('|')}';
 
       transportAdapter.emitDatagram(
-        bytes: utf8.encode(responseMessage),
+        bytes: utf8.encode(requestMessage),
         senderIp: '192.168.1.24',
         senderPort: LanDiscoveryService.discoveryPort,
       );
@@ -104,10 +107,9 @@ void main() {
 
       expect(transportAdapter.sentPackets, hasLength(1));
       final packet = transportAdapter.sentPackets.single;
-      final decoded = LanDiscoveryService.decodeEnvelopeForTest(
+      final decoded = LanPacketCodec.decodeEnvelopeForTest(
         message: utf8.decode(packet.bytes),
-        expectedPrefix:
-            LanDiscoveryService.protocolPrefixesForTest['transferRequest']!,
+        expectedPrefix: LanPacketCodec.transferRequestPrefix,
       );
 
       expect(packet.context, 'LANDA_TRANSFER_REQUEST_V1');

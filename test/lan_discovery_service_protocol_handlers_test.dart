@@ -9,6 +9,7 @@ import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/lan_friend_protocol_handler.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_presence_protocol_handler.dart';
+import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/lan_share_protocol_handler.dart';
 import 'package:landa/features/discovery/data/lan_transfer_protocol_handler.dart';
 

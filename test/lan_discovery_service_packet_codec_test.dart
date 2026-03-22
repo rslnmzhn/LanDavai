@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/data/discovery_transport_adapter.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
+import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 
 void main() {
   late FakePacketCodec codec;

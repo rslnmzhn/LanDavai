@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
-import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 
 void main() {
   late LanPacketCodec codec;
@@ -13,10 +12,21 @@ void main() {
   });
 
   test('keeps current packet identifier family stable in codec boundary', () {
-    expect(
-      LanPacketCodec.protocolPrefixes,
-      LanDiscoveryService.protocolPrefixesForTest,
-    );
+    expect(LanPacketCodec.protocolPrefixes, const <String, String>{
+      'discover': 'LANDA_DISCOVER_V1',
+      'response': 'LANDA_HERE_V1',
+      'transferRequest': 'LANDA_TRANSFER_REQUEST_V1',
+      'transferDecision': 'LANDA_TRANSFER_DECISION_V1',
+      'friendRequest': 'LANDA_FRIEND_REQUEST_V1',
+      'friendResponse': 'LANDA_FRIEND_RESPONSE_V1',
+      'shareQuery': 'LANDA_SHARE_QUERY_V1',
+      'shareCatalog': 'LANDA_SHARE_CATALOG_V1',
+      'downloadRequest': 'LANDA_DOWNLOAD_REQUEST_V1',
+      'thumbnailSyncRequest': 'LANDA_THUMBNAIL_SYNC_REQUEST_V1',
+      'thumbnailPacket': 'LANDA_THUMBNAIL_PACKET_V1',
+      'clipboardQuery': 'LANDA_CLIPBOARD_QUERY_V1',
+      'clipboardCatalog': 'LANDA_CLIPBOARD_CATALOG_V1',
+    });
   });
 
   test(

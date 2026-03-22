@@ -1,17 +1,17 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:landa/features/discovery/data/lan_discovery_service.dart';
+import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 
 void main() {
-  late LanDiscoveryService service;
+  late LanPacketCodec codec;
 
   setUp(() {
-    service = LanDiscoveryService();
+    codec = LanPacketCodec();
   });
 
   test('keeps current packet identifier family stable', () {
-    expect(LanDiscoveryService.protocolPrefixesForTest, const <String, String>{
+    expect(LanPacketCodec.protocolPrefixes, const <String, String>{
       'discover': 'LANDA_DISCOVER_V1',
       'response': 'LANDA_HERE_V1',
       'transferRequest': 'LANDA_TRANSFER_REQUEST_V1',
@@ -31,39 +31,41 @@ void main() {
   test(
     'builds and parses current discovery handshake payload with instance id and peer id',
     () {
-      service.setLocalPeerIdForTest('  local-peer-1  ');
-
-      final message = service.buildDiscoveryMessageForTest('Workstation');
-      final parsed = service.parseDiscoveryMessageForTest(message);
+      final message = codec.encodeDiscoveryRequest(
+        instanceId: 'instance-1',
+        deviceName: 'Workstation',
+        localPeerId: 'local-peer-1',
+      );
+      final parsed = codec.decodeDiscoveryPacket(message);
 
       expect(parsed, isNotNull);
-      expect(parsed!['prefix'], 'LANDA_DISCOVER_V1');
-      expect(parsed['instanceId'], isNotEmpty);
-      expect(parsed['instanceId'], isNot('legacy'));
-      expect(parsed['deviceName'], 'Workstation');
-      expect(parsed['peerId'], 'local-peer-1');
-      expect(parsed['operatingSystem'], Platform.operatingSystem);
-      expect(parsed['deviceType'], _expectedDeviceType());
+      expect(parsed!.prefix, LanPacketCodec.discoverPrefix);
+      expect(parsed.instanceId, 'instance-1');
+      expect(parsed.instanceId, isNot('legacy'));
+      expect(parsed.deviceName, 'Workstation');
+      expect(parsed.peerId, 'local-peer-1');
+      expect(parsed.operatingSystem, Platform.operatingSystem);
+      expect(parsed.deviceType, _expectedDeviceType());
     },
   );
 
   test('keeps backward-compatible legacy discovery packet parsing', () {
-    final parsed = service.parseDiscoveryMessageForTest(
+    final parsed = codec.decodeDiscoveryPacket(
       'LANDA_HERE_V1|Legacy workstation',
     );
 
     expect(parsed, isNotNull);
-    expect(parsed!['prefix'], 'LANDA_HERE_V1');
-    expect(parsed['instanceId'], 'legacy');
-    expect(parsed['deviceName'], 'Legacy workstation');
-    expect(parsed['peerId'], isNull);
+    expect(parsed!.prefix, 'LANDA_HERE_V1');
+    expect(parsed.instanceId, 'legacy');
+    expect(parsed.deviceName, 'Legacy workstation');
+    expect(parsed.peerId, isNull);
   });
 
   test(
     'keeps base64url json envelope semantics for transfer, share, and clipboard packets',
     () {
-      final prefixes = LanDiscoveryService.protocolPrefixesForTest;
-      final transferMessage = LanDiscoveryService.encodeEnvelopeForTest(
+      final prefixes = LanPacketCodec.protocolPrefixes;
+      final transferMessage = LanPacketCodec.encodeEnvelopeForTest(
         prefix: prefixes['transferRequest']!,
         payload: <String, Object?>{
           'instanceId': 'instance-1',
@@ -82,7 +84,7 @@ void main() {
           'createdAtMs': 1234,
         },
       );
-      final shareMessage = LanDiscoveryService.encodeEnvelopeForTest(
+      final shareMessage = LanPacketCodec.encodeEnvelopeForTest(
         prefix: prefixes['shareCatalog']!,
         payload: <String, Object?>{
           'instanceId': 'instance-2',
@@ -108,7 +110,7 @@ void main() {
           'createdAtMs': 5678,
         },
       );
-      final clipboardMessage = LanDiscoveryService.encodeEnvelopeForTest(
+      final clipboardMessage = LanPacketCodec.encodeEnvelopeForTest(
         prefix: prefixes['clipboardCatalog']!,
         payload: <String, Object?>{
           'instanceId': 'instance-3',
@@ -127,15 +129,15 @@ void main() {
         },
       );
 
-      final decodedTransfer = LanDiscoveryService.decodeEnvelopeForTest(
+      final decodedTransfer = LanPacketCodec.decodeEnvelopeForTest(
         message: transferMessage,
         expectedPrefix: prefixes['transferRequest']!,
       );
-      final decodedShare = LanDiscoveryService.decodeEnvelopeForTest(
+      final decodedShare = LanPacketCodec.decodeEnvelopeForTest(
         message: shareMessage,
         expectedPrefix: prefixes['shareCatalog']!,
       );
-      final decodedClipboard = LanDiscoveryService.decodeEnvelopeForTest(
+      final decodedClipboard = LanPacketCodec.decodeEnvelopeForTest(
         message: clipboardMessage,
         expectedPrefix: prefixes['clipboardCatalog']!,
       );
@@ -156,14 +158,14 @@ void main() {
         containsPair('textValue', 'hello'),
       );
       expect(
-        LanDiscoveryService.decodeEnvelopeForTest(
+        LanPacketCodec.decodeEnvelopeForTest(
           message: transferMessage,
           expectedPrefix: prefixes['transferDecision']!,
         ),
         isNull,
       );
       expect(
-        LanDiscoveryService.decodeEnvelopeForTest(
+        LanPacketCodec.decodeEnvelopeForTest(
           message: 'LANDA_TRANSFER_REQUEST_V1|not-base64',
           expectedPrefix: prefixes['transferRequest']!,
         ),
@@ -190,7 +192,7 @@ void main() {
       ),
     );
 
-    final fitted = service.fitShareCatalogEntriesForTest(oversizedEntries);
+    final fitted = codec.fitShareCatalogEntries(oversizedEntries);
     final totalFiles = fitted.fold<int>(
       0,
       (sum, entry) => sum + entry.files.length,
