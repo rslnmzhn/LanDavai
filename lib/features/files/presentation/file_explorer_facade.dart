@@ -10,6 +10,7 @@ import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../application/file_explorer_contract.dart';
 import '../application/files_feature_state_owner.dart';
+import '../application/preview_cache_owner.dart';
 import 'file_explorer_page.dart';
 
 /// Temporary Phase 6 bridge that keeps the file-explorer entry surface stable
@@ -18,6 +19,7 @@ class FileExplorerFacade extends StatefulWidget {
   const FileExplorerFacade({
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.previewCacheOwner,
     required this.ownerMacAddressProvider,
     required this.receiveDirectoryPath,
     this.publicDownloadsDirectoryPath,
@@ -32,6 +34,7 @@ class FileExplorerFacade extends StatefulWidget {
 
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final PreviewCacheOwner previewCacheOwner;
   final String Function() ownerMacAddressProvider;
   final String receiveDirectoryPath;
   final String? publicDownloadsDirectoryPath;
@@ -93,6 +96,7 @@ class _FileExplorerFacadeState extends State<FileExplorerFacade> {
 
     return FileExplorerPage(
       owner: owner,
+      previewCacheOwner: widget.previewCacheOwner,
       onRecacheSharedFolders: widget.onRecacheSharedFolders,
       onRemoveSharedCache: widget.onRemoveSharedCache,
       recacheStateListenable: widget.recacheStateListenable,

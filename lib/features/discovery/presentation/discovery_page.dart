@@ -11,6 +11,7 @@ import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/file_explorer_contract.dart';
+import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../files/presentation/file_explorer_facade.dart';
 import '../../settings/domain/app_settings.dart';
@@ -32,6 +33,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.previewCacheOwner,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -44,6 +46,7 @@ class DiscoveryPage extends StatefulWidget {
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final PreviewCacheOwner previewCacheOwner;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -66,6 +69,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   SharedCacheCatalog get _sharedCacheCatalog => widget.sharedCacheCatalog;
   SharedCacheIndexStore get _sharedCacheIndexStore =>
       widget.sharedCacheIndexStore;
+  PreviewCacheOwner get _previewCacheOwner => widget.previewCacheOwner;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -979,6 +983,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         builder: (_) => FileExplorerFacade(
           sharedCacheCatalog: _sharedCacheCatalog,
           sharedCacheIndexStore: _sharedCacheIndexStore,
+          previewCacheOwner: _previewCacheOwner,
           ownerMacAddressProvider: () => _controller.localDeviceMac,
           receiveDirectoryPath: receiveDirectory.path,
           publicDownloadsDirectoryPath: publicDownloadsDirectory?.path,
@@ -1146,6 +1151,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           child: _ReceivePanelSheet(
             controller: _controller,
             remoteShareBrowser: _remoteShareBrowser,
+            previewCacheOwner: _previewCacheOwner,
           ),
         );
       },
@@ -1860,10 +1866,12 @@ class _ReceivePanelSheet extends StatefulWidget {
   const _ReceivePanelSheet({
     required this.controller,
     required this.remoteShareBrowser,
+    required this.previewCacheOwner,
   });
 
   final DiscoveryController controller;
   final RemoteShareBrowser remoteShareBrowser;
+  final PreviewCacheOwner previewCacheOwner;
 
   @override
   State<_ReceivePanelSheet> createState() => _ReceivePanelSheetState();
@@ -2312,7 +2320,10 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
 
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => LocalFileViewerPage(filePath: previewPath),
+          builder: (_) => LocalFileViewerPage(
+            filePath: previewPath,
+            previewCacheOwner: widget.previewCacheOwner,
+          ),
         ),
       );
     } finally {

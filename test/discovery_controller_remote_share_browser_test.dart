@@ -16,6 +16,7 @@ import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
+import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
@@ -157,6 +158,12 @@ DiscoveryController _buildController({
   final deviceRegistry = DeviceRegistry(
     deviceAliasRepository: deviceAliasRepository,
   );
+  final fileHashService = FileHashService();
+  final previewCacheOwner = PreviewCacheOwner(
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    sharedCacheIndexStore: sharedCacheIndexStore,
+    fileHashService: fileHashService,
+  );
 
   return DiscoveryController(
     lanDiscoveryService: lanDiscoveryService,
@@ -181,9 +188,10 @@ DiscoveryController _buildController({
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
     sharedFolderCacheRepository: sharedFolderCacheRepository,
-    fileHashService: FileHashService(),
+    fileHashService: fileHashService,
     fileTransferService: FileTransferService(),
     transferStorageService: TransferStorageService(),
+    previewCacheOwner: previewCacheOwner,
     videoLinkShareService: VideoLinkShareService(),
     pathOpener: PathOpener(),
   );

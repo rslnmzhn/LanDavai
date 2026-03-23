@@ -16,6 +16,7 @@ import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
+import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
@@ -38,6 +39,7 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.previewCacheOwner,
   });
 
   final TestAppDatabaseHarness databaseHarness;
@@ -47,6 +49,7 @@ class TestDiscoveryControllerHarness {
   final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final PreviewCacheOwner previewCacheOwner;
 
   static Future<TestDiscoveryControllerHarness> create() async {
     final databaseHarness = await TestAppDatabaseHarness.create(
@@ -76,6 +79,12 @@ class TestDiscoveryControllerHarness {
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
+    final fileHashService = FileHashService();
+    final previewCacheOwner = PreviewCacheOwner(
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      fileHashService: fileHashService,
+    );
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -97,9 +106,10 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
-      fileHashService: FileHashService(),
+      fileHashService: fileHashService,
       fileTransferService: FileTransferService(),
       transferStorageService: TransferStorageService(),
+      previewCacheOwner: previewCacheOwner,
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
     );
@@ -124,6 +134,7 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      previewCacheOwner: previewCacheOwner,
     );
   }
 
@@ -133,6 +144,7 @@ class TestDiscoveryControllerHarness {
       controller.dispose();
     }
     remoteShareBrowser.dispose();
+    previewCacheOwner.dispose();
     await databaseHarness.dispose();
   }
 }
@@ -157,6 +169,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.fileHashService,
     required super.fileTransferService,
     required super.transferStorageService,
+    required super.previewCacheOwner,
     required super.videoLinkShareService,
     required super.pathOpener,
   });

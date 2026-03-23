@@ -19,6 +19,7 @@ import '../features/discovery/data/friend_repository.dart';
 import '../features/discovery/data/lan_discovery_service.dart';
 import '../features/discovery/data/network_host_scanner.dart';
 import '../features/discovery/presentation/discovery_page.dart';
+import '../features/files/application/preview_cache_owner.dart';
 import '../features/history/data/transfer_history_repository.dart';
 import '../features/settings/application/settings_store.dart';
 import '../features/settings/data/app_settings_repository.dart';
@@ -40,6 +41,7 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.sharedCacheCatalogBridge,
     this.sharedCacheCatalog,
     this.sharedCacheIndexStore,
+    this.previewCacheOwner,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
@@ -49,7 +51,8 @@ class DiscoveryPageEntry extends StatefulWidget {
                  remoteShareBrowser != null &&
                  sharedCacheCatalogBridge != null &&
                  sharedCacheCatalog != null &&
-                 sharedCacheIndexStore != null),
+                 sharedCacheIndexStore != null &&
+                 previewCacheOwner != null),
          'DiscoveryPageEntry requires readModel, remoteShareBrowser, and '
          'shared-cache boundaries when controller is injected.',
        );
@@ -60,6 +63,7 @@ class DiscoveryPageEntry extends StatefulWidget {
   final SharedCacheCatalogBridge? sharedCacheCatalogBridge;
   final SharedCacheCatalog? sharedCacheCatalog;
   final SharedCacheIndexStore? sharedCacheIndexStore;
+  final PreviewCacheOwner? previewCacheOwner;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
   final bool autoStartController;
@@ -75,11 +79,13 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final SharedCacheCatalogBridge _sharedCacheCatalogBridge;
   late final SharedCacheCatalog _sharedCacheCatalog;
   late final SharedCacheIndexStore _sharedCacheIndexStore;
+  late final PreviewCacheOwner _previewCacheOwner;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
   late final bool _ownsReadModel;
   late final bool _ownsRemoteShareBrowser;
+  late final bool _ownsPreviewCacheOwner;
   bool _isBoundaryReady = false;
 
   @override
@@ -94,9 +100,11 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalogBridge = widget.sharedCacheCatalogBridge!;
       _sharedCacheCatalog = widget.sharedCacheCatalog!;
       _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
+      _previewCacheOwner = widget.previewCacheOwner!;
       _ownsController = false;
       _ownsReadModel = false;
       _ownsRemoteShareBrowser = false;
+      _ownsPreviewCacheOwner = false;
     } else {
       final boundary = _buildDiscoveryBoundary();
       _controller = boundary.controller;
@@ -105,9 +113,11 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalogBridge = boundary.sharedCacheCatalogBridge;
       _sharedCacheCatalog = boundary.sharedCacheCatalog;
       _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
+      _previewCacheOwner = boundary.previewCacheOwner;
       _ownsController = true;
       _ownsReadModel = true;
       _ownsRemoteShareBrowser = true;
+      _ownsPreviewCacheOwner = true;
     }
     _desktopWindowService =
         widget.desktopWindowService ?? DesktopWindowService();
@@ -125,6 +135,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     if (_ownsRemoteShareBrowser) {
       _remoteShareBrowser.dispose();
     }
+    if (_ownsPreviewCacheOwner) {
+      _previewCacheOwner.dispose();
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -140,6 +153,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalogBridge: _sharedCacheCatalogBridge,
       sharedCacheCatalog: _sharedCacheCatalog,
       sharedCacheIndexStore: _sharedCacheIndexStore,
+      previewCacheOwner: _previewCacheOwner,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
       isBoundaryReady: _isBoundaryReady,
@@ -185,6 +199,12 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
+    final fileHashService = FileHashService();
+    final previewCacheOwner = PreviewCacheOwner(
+      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      fileHashService: fileHashService,
+    );
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -204,9 +224,10 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
-      fileHashService: FileHashService(),
+      fileHashService: fileHashService,
       fileTransferService: FileTransferService(),
       transferStorageService: _transferStorageService,
+      previewCacheOwner: previewCacheOwner,
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       lanDiscoveryService: LanDiscoveryService(),
@@ -233,6 +254,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      previewCacheOwner: previewCacheOwner,
     );
   }
 }
@@ -245,6 +267,7 @@ class _DiscoveryBoundary {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.previewCacheOwner,
   });
 
   final DiscoveryController controller;
@@ -253,4 +276,5 @@ class _DiscoveryBoundary {
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final PreviewCacheOwner previewCacheOwner;
 }

@@ -18,6 +18,7 @@ import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
+import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
@@ -157,6 +158,12 @@ DiscoveryController _buildController({
     sharedFolderCacheRepository: sharedFolderCacheRepository,
     sharedCacheIndexStore: sharedCacheIndexStore,
   );
+  final fileHashService = FileHashService();
+  final previewCacheOwner = PreviewCacheOwner(
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    sharedCacheIndexStore: sharedCacheIndexStore,
+    fileHashService: fileHashService,
+  );
   return DiscoveryController(
     lanDiscoveryService: LanDiscoveryService(),
     networkHostScanner: StubNetworkHostScanner(const <String, String?>{
@@ -177,9 +184,10 @@ DiscoveryController _buildController({
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
     sharedFolderCacheRepository: sharedFolderCacheRepository,
-    fileHashService: FileHashService(),
+    fileHashService: fileHashService,
     fileTransferService: FileTransferService(),
     transferStorageService: TransferStorageService(),
+    previewCacheOwner: previewCacheOwner,
     videoLinkShareService: VideoLinkShareService(),
     pathOpener: PathOpener(),
   );

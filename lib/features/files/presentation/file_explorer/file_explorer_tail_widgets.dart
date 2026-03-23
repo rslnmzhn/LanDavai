@@ -4,12 +4,14 @@ class _ExplorerEntityGridTile extends StatelessWidget {
   const _ExplorerEntityGridTile({
     required this.entry,
     required this.tileExtent,
+    required this.previewCacheOwner,
     required this.onTap,
     this.onDelete,
   });
 
   final FilesFeatureEntry entry;
   final double tileExtent;
+  final PreviewCacheOwner previewCacheOwner;
   final VoidCallback onTap;
   final Future<void> Function()? onDelete;
 
@@ -78,6 +80,7 @@ class _ExplorerEntityGridTile extends StatelessWidget {
                         child: _ExplorerEntityLeading(
                           isDirectory: entry.isDirectory,
                           filePath: entry.filePath,
+                          previewCacheOwner: previewCacheOwner,
                           size: previewSize,
                         ),
                       ),

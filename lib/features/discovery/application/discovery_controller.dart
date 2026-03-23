@@ -18,6 +18,7 @@ import '../../history/domain/transfer_history_record.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
+import '../../files/application/preview_cache_owner.dart';
 import 'remote_share_browser.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
@@ -294,6 +295,7 @@ class DiscoveryController extends ChangeNotifier {
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
+    required PreviewCacheOwner previewCacheOwner,
     required VideoLinkShareService videoLinkShareService,
     required PathOpener pathOpener,
   }) : _lanDiscoveryService = lanDiscoveryService,
@@ -314,6 +316,7 @@ class DiscoveryController extends ChangeNotifier {
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
+       _previewCacheOwner = previewCacheOwner,
        _videoLinkShareService = videoLinkShareService,
        _pathOpener = pathOpener;
 
@@ -354,6 +357,7 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
+  final PreviewCacheOwner _previewCacheOwner;
   final VideoLinkShareService _videoLinkShareService;
   final PathOpener _pathOpener;
 
@@ -2159,9 +2163,7 @@ class DiscoveryController extends ChangeNotifier {
     try {
       if (decisionApproved) {
         final destinationDirectory = isPreview
-            ? await _transferStorageService.resolvePreviewDirectory(
-                appFolderName: 'Landa',
-              )
+            ? await _previewCacheOwner.resolvePreviewArtifactDirectory()
             : await _transferStorageService.resolveReceiveDirectory(
                 appFolderName: 'Landa',
               );
@@ -3791,10 +3793,9 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _cleanupPreviewCacheBySettings() async {
     try {
-      final result = await _transferStorageService.cleanupPreviewCache(
+      final result = await _previewCacheOwner.cleanupPreviewArtifacts(
         maxSizeGb: _currentSettings.previewCacheMaxSizeGb,
         maxAgeDays: _currentSettings.previewCacheMaxAgeDays,
-        appFolderName: 'Landa',
       );
       if (result.filesDeleted > 0) {
         _log(
@@ -3808,252 +3809,28 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  static const Set<String> _previewImageExtensions = <String>{
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-    '.gif',
-    '.bmp',
-    '.heic',
-    '.heif',
-    '.tif',
-    '.tiff',
-  };
-  static const Set<String> _previewVideoExtensions = <String>{
-    '.mp4',
-    '.mov',
-    '.mkv',
-    '.avi',
-    '.webm',
-    '.m4v',
-    '.3gp',
-    '.mpeg',
-    '.mpg',
-  };
-  static const Set<String> _previewTextExtensions = <String>{
-    '.txt',
-    '.md',
-    '.log',
-    '.json',
-    '.yaml',
-    '.yml',
-    '.csv',
-    '.xml',
-  };
-
   Future<List<_PreparedTransferFile>> _buildCompressedPreviewFilesForCache(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
   }) async {
-    final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-    final normalizedFilter = relativePathFilter
-        ?.map(_normalizeTransferPathForMatch)
-        .toSet();
-
-    final result = <_PreparedTransferFile>[];
-    for (final entry in entries) {
-      if (normalizedFilter != null &&
-          !normalizedFilter.contains(
-            _normalizeTransferPathForMatch(entry.relativePath),
-          )) {
-        continue;
-      }
-      final sourcePath = _resolveCacheFilePath(cache: cache, entry: entry);
-      if (sourcePath == null) {
-        continue;
-      }
-      final preview = await _buildCompressedPreviewForEntry(
-        cache: cache,
-        entry: entry,
-        sourcePath: sourcePath,
-      );
-      if (preview != null) {
-        result.add(preview);
-      }
-    }
-    return result;
-  }
-
-  Future<_PreparedTransferFile?> _buildCompressedPreviewForEntry({
-    required SharedFolderCacheRecord cache,
-    required SharedFolderIndexEntry entry,
-    required String sourcePath,
-  }) async {
-    final file = File(sourcePath);
-    if (!await file.exists()) {
-      return null;
-    }
-
-    final ext = p.extension(entry.relativePath).toLowerCase();
-    if (_previewImageExtensions.contains(ext)) {
-      try {
-        final bytes = await file.readAsBytes();
-        final decoded = img.decodeImage(bytes);
-        if (decoded != null) {
-          final longest = math.max(decoded.width, decoded.height);
-          final resized = longest > 960
-              ? img.copyResize(
-                  decoded,
-                  width: decoded.width >= decoded.height ? 960 : null,
-                  height: decoded.height > decoded.width ? 960 : null,
-                )
-              : decoded;
-          final compressed = Uint8List.fromList(
-            img.encodeJpg(resized, quality: 52),
-          );
-          return _writeCompressedPreviewArtifact(
-            originalRelativePath: entry.relativePath,
-            outputExtension: '.jpg',
-            contentBytes: compressed,
-          );
-        }
-      } catch (_) {}
-    }
-
-    if (_previewVideoExtensions.contains(ext)) {
-      try {
-        Uint8List? bytes;
-        final thumbnailId = entry.thumbnailId;
-        if (thumbnailId != null && thumbnailId.trim().isNotEmpty) {
-          bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
-            cacheId: cache.cacheId,
-            thumbnailId: thumbnailId,
-          );
-        }
-        if (bytes != null && bytes.isNotEmpty) {
-          final decoded = img.decodeImage(bytes);
-          final compressed = decoded == null
-              ? bytes
-              : Uint8List.fromList(img.encodeJpg(decoded, quality: 50));
-          return _writeCompressedPreviewArtifact(
-            originalRelativePath: entry.relativePath,
-            outputExtension: '.jpg',
-            contentBytes: compressed,
-            suffix: 'video-preview',
-          );
-        }
-      } catch (_) {}
-      return _writeCompressedPreviewArtifact(
-        originalRelativePath: entry.relativePath,
-        outputExtension: '.txt',
-        contentBytes: utf8.encode(
-          'Video preview is unavailable on sender side for this file.',
-        ),
-        suffix: 'video-preview',
-      );
-    }
-
-    if (_previewTextExtensions.contains(ext)) {
-      try {
-        final bytes = await file.readAsBytes();
-        final maxBytes = math.min(bytes.length, 64 * 1024);
-        final snippet = utf8.decode(
-          bytes.sublist(0, maxBytes),
-          allowMalformed: true,
+    final prepared = await _previewCacheOwner
+        .buildCompressedPreviewFilesForCache(
+          cache,
+          relativePathFilter: relativePathFilter,
         );
-        final previewText = bytes.length > maxBytes
-            ? '$snippet\n\n--- Preview truncated ---'
-            : snippet;
-        return _writeCompressedPreviewArtifact(
-          originalRelativePath: entry.relativePath,
-          outputExtension: '.txt',
-          contentBytes: utf8.encode(previewText),
-          suffix: 'text-preview',
-        );
-      } catch (_) {}
-    }
-
-    if (ext == '.pdf') {
-      final previewText =
-          'PDF preview is available after download. Compressed text preview is not generated for this file yet.';
-      return _writeCompressedPreviewArtifact(
-        originalRelativePath: entry.relativePath,
-        outputExtension: '.txt',
-        contentBytes: utf8.encode(previewText),
-        suffix: 'pdf-preview',
-      );
-    }
-
-    return _writeCompressedPreviewArtifact(
-      originalRelativePath: entry.relativePath,
-      outputExtension: '.txt',
-      contentBytes: utf8.encode(
-        'Preview is not available for this file type yet.',
-      ),
-      suffix: 'preview-note',
-    );
-  }
-
-  Future<_PreparedTransferFile?> _writeCompressedPreviewArtifact({
-    required String originalRelativePath,
-    required String outputExtension,
-    required List<int> contentBytes,
-    String suffix = 'preview',
-  }) async {
-    if (contentBytes.isEmpty) {
-      return null;
-    }
-
-    final directory = await _transferStorageService.resolvePreviewDirectory(
-      appFolderName: 'Landa',
-    );
-    final relativeName = _buildPreviewRelativeName(
-      originalRelativePath,
-      outputExtension: outputExtension,
-      suffix: suffix,
-    );
-    final token = _fileHashService.buildStableId(
-      'preview-artifact|$relativeName|$suffix|${DateTime.now().microsecondsSinceEpoch}',
-    );
-    final outputPath = p.join(directory.path, '$token$outputExtension');
-    final outputFile = File(outputPath);
-    await outputFile.create(recursive: true);
-    await outputFile.writeAsBytes(contentBytes, flush: true);
-
-    final stat = await outputFile.stat();
-    final sha = await _fileHashService.computeSha256ForPath(outputPath);
-    return _PreparedTransferFile(
-      sourcePath: outputPath,
-      announcement: TransferAnnouncementItem(
-        fileName: relativeName,
-        sizeBytes: stat.size,
-        sha256: sha,
-      ),
-      deleteAfterTransfer: true,
-    );
-  }
-
-  String _buildPreviewRelativeName(
-    String originalRelativePath, {
-    required String outputExtension,
-    required String suffix,
-  }) {
-    final normalized = originalRelativePath.replaceAll('\\', '/');
-    final dir = p.dirname(normalized);
-    final base = p.basenameWithoutExtension(normalized);
-    final safeBase = _safePreviewSegment(base);
-    final fileName = '$safeBase.$suffix$outputExtension';
-    if (dir == '.' || dir.isEmpty) {
-      return fileName;
-    }
-    final safeDir = dir
-        .split('/')
-        .where((segment) => segment.isNotEmpty && segment != '.')
-        .map(_safePreviewSegment)
+    return prepared
+        .map(
+          (file) => _PreparedTransferFile(
+            sourcePath: file.sourcePath,
+            announcement: TransferAnnouncementItem(
+              fileName: file.fileName,
+              sizeBytes: file.sizeBytes,
+              sha256: file.sha256,
+            ),
+            deleteAfterTransfer: file.deleteAfterTransfer,
+          ),
+        )
         .toList(growable: false);
-    if (safeDir.isEmpty) {
-      return fileName;
-    }
-    return [...safeDir, fileName].join('/');
-  }
-
-  String _safePreviewSegment(String value) {
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      return 'file';
-    }
-    return trimmed.replaceAll(RegExp(r'[^a-zA-Z0-9._-]'), '_');
   }
 
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
