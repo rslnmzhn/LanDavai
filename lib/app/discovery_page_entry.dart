@@ -25,6 +25,7 @@ import '../features/settings/application/settings_store.dart';
 import '../features/settings/data/app_settings_repository.dart';
 import '../features/transfer/application/shared_cache_catalog.dart';
 import '../features/transfer/application/shared_cache_index_store.dart';
+import '../features/transfer/application/transfer_session_coordinator.dart';
 import '../features/transfer/data/file_hash_service.dart';
 import '../features/transfer/data/file_transfer_service.dart';
 import '../features/transfer/data/shared_folder_cache_repository.dart';
@@ -205,17 +206,45 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
     );
+    final lanDiscoveryService = LanDiscoveryService();
+    final fileTransferService = FileTransferService();
+    final transferHistoryRepository = TransferHistoryRepository(
+      database: database,
+    );
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
-    final controller = DiscoveryController(
+    late final DiscoveryController controller;
+    final transferSessionCoordinator = TransferSessionCoordinator(
+      lanDiscoveryService: lanDiscoveryService,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      fileHashService: fileHashService,
+      fileTransferService: fileTransferService,
+      transferStorageService: _transferStorageService,
+      transferHistoryRepository: transferHistoryRepository,
+      previewCacheOwner: previewCacheOwner,
+      appNotificationService: AppNotificationService.instance,
+      settingsProvider: () => settingsStore.settings,
+      localNameProvider: () => controller.localName,
+      localDeviceMacProvider: () => controller.localDeviceMac,
+      isTrustedSender: (normalizedMac) =>
+          trustedLanPeerStore.isTrustedMac(normalizedMac),
+      resolveRemoteOwnerMac:
+          ({required String ownerIp, required String cacheId}) =>
+              remoteShareBrowser.ownerMacForCache(
+                ownerIp: ownerIp,
+                cacheId: cacheId,
+              ),
+    );
+    controller = DiscoveryController(
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
       friendRepository: friendRepository,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
-      transferHistoryRepository: TransferHistoryRepository(database: database),
+      transferHistoryRepository: transferHistoryRepository,
       clipboardHistoryRepository: ClipboardHistoryRepository(
         database: database,
       ),
@@ -225,15 +254,16 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: fileHashService,
-      fileTransferService: FileTransferService(),
+      fileTransferService: fileTransferService,
       transferStorageService: _transferStorageService,
       previewCacheOwner: previewCacheOwner,
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
-      lanDiscoveryService: LanDiscoveryService(),
+      lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(
         allowTcpFallback: Platform.isAndroid,
       ),
+      transferSessionCoordinator: transferSessionCoordinator,
     );
     final readModel = DiscoveryReadModel(
       legacyController: controller,

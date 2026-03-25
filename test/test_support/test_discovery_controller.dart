@@ -22,6 +22,7 @@ import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
+import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
@@ -85,11 +86,40 @@ class TestDiscoveryControllerHarness {
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
     );
+    final lanDiscoveryService = LanDiscoveryService();
+    final fileTransferService = FileTransferService();
+    final transferHistoryRepository = TransferHistoryRepository(
+      database: database,
+    );
+    final transferStorageService = TransferStorageService();
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
-    final controller = TrackingDiscoveryController(
-      lanDiscoveryService: LanDiscoveryService(),
+    late final TrackingDiscoveryController controller;
+    final transferSessionCoordinator = TransferSessionCoordinator(
+      lanDiscoveryService: lanDiscoveryService,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      fileHashService: fileHashService,
+      fileTransferService: fileTransferService,
+      transferStorageService: transferStorageService,
+      transferHistoryRepository: transferHistoryRepository,
+      previewCacheOwner: previewCacheOwner,
+      appNotificationService: AppNotificationService.instance,
+      settingsProvider: () => settingsStore.settings,
+      localNameProvider: () => controller.localName,
+      localDeviceMacProvider: () => controller.localDeviceMac,
+      isTrustedSender: (normalizedMac) =>
+          trustedLanPeerStore.isTrustedMac(normalizedMac),
+      resolveRemoteOwnerMac:
+          ({required String ownerIp, required String cacheId}) =>
+              remoteShareBrowser.ownerMacForCache(
+                ownerIp: ownerIp,
+                cacheId: cacheId,
+              ),
+    );
+    controller = TrackingDiscoveryController(
+      lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
@@ -97,7 +127,7 @@ class TestDiscoveryControllerHarness {
       friendRepository: friendRepository,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
-      transferHistoryRepository: TransferHistoryRepository(database: database),
+      transferHistoryRepository: transferHistoryRepository,
       clipboardHistoryRepository: ClipboardHistoryRepository(
         database: database,
       ),
@@ -107,11 +137,12 @@ class TestDiscoveryControllerHarness {
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: fileHashService,
-      fileTransferService: FileTransferService(),
-      transferStorageService: TransferStorageService(),
+      fileTransferService: fileTransferService,
+      transferStorageService: transferStorageService,
       previewCacheOwner: previewCacheOwner,
       videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
+      transferSessionCoordinator: transferSessionCoordinator,
     );
     final readModel = DiscoveryReadModel(
       legacyController: controller,
@@ -172,6 +203,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.previewCacheOwner,
     required super.videoLinkShareService,
     required super.pathOpener,
+    super.transferSessionCoordinator,
   });
 
   int startCalls = 0;
