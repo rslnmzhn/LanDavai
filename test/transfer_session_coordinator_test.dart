@@ -17,6 +17,7 @@ import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/files/application/preview_cache_owner.dart';
+import 'package:landa/features/history/application/download_history_boundary.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/history/domain/transfer_history_record.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
@@ -47,6 +48,7 @@ void main() {
     late FileHashService fileHashService;
     late CapturingLanDiscoveryService lanDiscoveryService;
     late TransferHistoryRepository transferHistoryRepository;
+    late DownloadHistoryBoundary downloadHistoryBoundary;
 
     setUp(() async {
       harness = await TestAppDatabaseHarness.create(
@@ -77,6 +79,9 @@ void main() {
       transferHistoryRepository = TransferHistoryRepository(
         database: harness.database,
       );
+      downloadHistoryBoundary = DownloadHistoryBoundary(
+        transferHistoryRepository: transferHistoryRepository,
+      );
     });
 
     tearDown(() async {
@@ -94,7 +99,7 @@ void main() {
           sharedCacheIndexStore: sharedCacheIndexStore,
           fileHashService: fileHashService,
           previewCacheOwner: previewCacheOwner,
-          transferHistoryRepository: transferHistoryRepository,
+          downloadHistoryBoundary: downloadHistoryBoundary,
           rootDirectory: harness.rootDirectory,
         );
         addTearDown(coordinator.dispose);
@@ -155,21 +160,10 @@ void main() {
           fileTransferService: fileTransferService,
           transferStorageService: transferStorageService,
           previewCacheOwner: previewCacheOwner,
-          transferHistoryRepository: transferHistoryRepository,
+          downloadHistoryBoundary: downloadHistoryBoundary,
           rootDirectory: harness.rootDirectory,
         );
         addTearDown(coordinator.dispose);
-        final seenNotices = <TransferSessionNotice>[];
-
-        void drainNotice() {
-          final notice = coordinator.takePendingNotice();
-          if (notice != null) {
-            seenNotices.add(notice);
-          }
-        }
-
-        coordinator.addListener(drainNotice);
-        addTearDown(() => coordinator.removeListener(drainNotice));
 
         coordinator.handleTransferRequestEvent(
           TransferRequestEvent(
@@ -201,19 +195,14 @@ void main() {
           ownerMacAddress: '11:22:33:44:55:66',
           peerMacAddress: '02:00:00:00:00:01',
         );
-        final history = await transferHistoryRepository.listRecords(
-          direction: TransferHistoryDirection.download,
-        );
+        final history = downloadHistoryBoundary.records;
 
         expect(coordinator.incomingRequests, isEmpty);
         expect(lanDiscoveryService.transferDecisions, hasLength(1));
         expect(lanDiscoveryService.transferDecisions.single.approved, isTrue);
         expect(receiverCaches, hasLength(1));
         expect(history, hasLength(1));
-        expect(
-          seenNotices.any((notice) => notice.reloadDownloadHistory),
-          isTrue,
-        );
+        expect(history.single.direction, TransferHistoryDirection.download);
         expect(fileTransferService.startReceiverCalls, 1);
       },
     );
@@ -256,6 +245,9 @@ void main() {
       final transferHistoryRepository = TransferHistoryRepository(
         database: database,
       );
+      final downloadHistoryBoundary = DownloadHistoryBoundary(
+        transferHistoryRepository: transferHistoryRepository,
+      );
       final remoteShareBrowser = RemoteShareBrowser(
         sharedCacheCatalog: sharedCacheCatalog,
       );
@@ -267,7 +259,7 @@ void main() {
         fileHashService: fileHashService,
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
-        transferHistoryRepository: transferHistoryRepository,
+        downloadHistoryBoundary: downloadHistoryBoundary,
         previewCacheOwner: previewCacheOwner,
         appNotificationService: AppNotificationService.instance,
         settingsProvider: () => settingsStore.settings,
@@ -294,6 +286,7 @@ void main() {
         settingsStore: settingsStore,
         appNotificationService: AppNotificationService.instance,
         transferHistoryRepository: transferHistoryRepository,
+        downloadHistoryBoundary: downloadHistoryBoundary,
         clipboardHistoryRepository: ClipboardHistoryRepository(
           database: database,
         ),
@@ -362,7 +355,7 @@ TransferSessionCoordinator _buildCoordinator({
   required SharedCacheIndexStore sharedCacheIndexStore,
   required FileHashService fileHashService,
   required PreviewCacheOwner previewCacheOwner,
-  required TransferHistoryRepository transferHistoryRepository,
+  required DownloadHistoryBoundary downloadHistoryBoundary,
   required Directory rootDirectory,
   FileTransferService? fileTransferService,
   TransferStorageService? transferStorageService,
@@ -376,7 +369,7 @@ TransferSessionCoordinator _buildCoordinator({
     transferStorageService:
         transferStorageService ??
         RecordingTransferStorageService(rootDirectory: rootDirectory),
-    transferHistoryRepository: transferHistoryRepository,
+    downloadHistoryBoundary: downloadHistoryBoundary,
     previewCacheOwner: previewCacheOwner,
     appNotificationService: AppNotificationService.instance,
     settingsProvider: () => AppSettings.defaults,

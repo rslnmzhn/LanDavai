@@ -9,11 +9,13 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
+import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/file_explorer_contract.dart';
 import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../files/presentation/file_explorer_facade.dart';
+import '../../history/application/download_history_boundary.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
@@ -34,6 +36,8 @@ class DiscoveryPage extends StatefulWidget {
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
+    required this.downloadHistoryBoundary,
+    required this.clipboardHistoryStore,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -47,6 +51,8 @@ class DiscoveryPage extends StatefulWidget {
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
+  final DownloadHistoryBoundary downloadHistoryBoundary;
+  final ClipboardHistoryStore clipboardHistoryStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -70,6 +76,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   SharedCacheIndexStore get _sharedCacheIndexStore =>
       widget.sharedCacheIndexStore;
   PreviewCacheOwner get _previewCacheOwner => widget.previewCacheOwner;
+  DownloadHistoryBoundary get _downloadHistoryBoundary =>
+      widget.downloadHistoryBoundary;
+  ClipboardHistoryStore get _clipboardHistoryStore =>
+      widget.clipboardHistoryStore;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -497,7 +507,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       builder: (context) {
         return FractionallySizedBox(
           heightFactor: 0.9,
-          child: ClipboardSheet(controller: _controller, readModel: _readModel),
+          child: ClipboardSheet(
+            controller: _controller,
+            readModel: _readModel,
+            clipboardHistoryStore: _clipboardHistoryStore,
+          ),
         );
       },
     );
@@ -1019,9 +1033,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         return FractionallySizedBox(
           heightFactor: 0.85,
           child: AnimatedBuilder(
-            animation: _controller,
+            animation: _downloadHistoryBoundary,
             builder: (context, _) {
-              final history = _controller.downloadHistory;
+              final history = _downloadHistoryBoundary.records;
               return SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.all(AppSpacing.md),

@@ -136,7 +136,7 @@ void main() {
           ],
         ),
       );
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await _pumpUntil(() => controller!.remoteShareOptions.isNotEmpty);
 
       expect(remoteShareBrowser.applyRemoteCatalogCalls, 1);
       expect(controller!.remoteShareOptions, hasLength(1));
@@ -144,6 +144,20 @@ void main() {
       expect(controller!.remoteShareOptions.single.ownerName, 'Remote device');
     },
   );
+}
+
+Future<void> _pumpUntil(
+  bool Function() condition, {
+  Duration timeout = const Duration(seconds: 1),
+  Duration step = const Duration(milliseconds: 10),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      break;
+    }
+    await Future<void>.delayed(step);
+  }
 }
 
 DiscoveryController _buildController({

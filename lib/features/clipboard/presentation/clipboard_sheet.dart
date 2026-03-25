@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_spacing.dart';
+import '../application/clipboard_history_store.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
 import '../../discovery/application/discovery_controller.dart';
 import '../../discovery/application/discovery_read_model.dart';
@@ -13,11 +14,13 @@ class ClipboardSheet extends StatefulWidget {
   const ClipboardSheet({
     required this.controller,
     required this.readModel,
+    required this.clipboardHistoryStore,
     super.key,
   });
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final ClipboardHistoryStore clipboardHistoryStore;
 
   @override
   State<ClipboardSheet> createState() => _ClipboardSheetState();
@@ -77,7 +80,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     if (shouldDelete != true) {
       return;
     }
-    await widget.controller.removeClipboardHistoryEntry(entry.id);
+    await widget.clipboardHistoryStore.deleteEntry(entry.id);
   }
 
   @override
@@ -85,11 +88,12 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     return SafeArea(
       child: AnimatedBuilder(
         animation: Listenable.merge(<Listenable>[
+          widget.clipboardHistoryStore,
           widget.controller,
           widget.readModel,
         ]),
         builder: (context, _) {
-          final localEntries = widget.controller.clipboardHistory;
+          final localEntries = widget.clipboardHistoryStore.entries;
           final remoteDevices = _availableRemoteDevices;
           if (_selectedRemoteIp != null &&
               remoteDevices.every((device) => device.ip != _selectedRemoteIp)) {

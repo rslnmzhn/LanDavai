@@ -5,6 +5,7 @@ import '../core/storage/app_database.dart';
 import '../core/utils/app_notification_service.dart';
 import '../core/utils/desktop_window_service.dart';
 import '../core/utils/path_opener.dart';
+import '../features/clipboard/application/clipboard_history_store.dart';
 import '../features/clipboard/data/clipboard_capture_service.dart';
 import '../features/clipboard/data/clipboard_history_repository.dart';
 import '../features/discovery/application/discovery_controller.dart';
@@ -20,6 +21,7 @@ import '../features/discovery/data/lan_discovery_service.dart';
 import '../features/discovery/data/network_host_scanner.dart';
 import '../features/discovery/presentation/discovery_page.dart';
 import '../features/files/application/preview_cache_owner.dart';
+import '../features/history/application/download_history_boundary.dart';
 import '../features/history/data/transfer_history_repository.dart';
 import '../features/settings/application/settings_store.dart';
 import '../features/settings/data/app_settings_repository.dart';
@@ -43,6 +45,8 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.sharedCacheCatalog,
     this.sharedCacheIndexStore,
     this.previewCacheOwner,
+    this.downloadHistoryBoundary,
+    this.clipboardHistoryStore,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
@@ -53,9 +57,11 @@ class DiscoveryPageEntry extends StatefulWidget {
                  sharedCacheCatalogBridge != null &&
                  sharedCacheCatalog != null &&
                  sharedCacheIndexStore != null &&
-                 previewCacheOwner != null),
-         'DiscoveryPageEntry requires readModel, remoteShareBrowser, and '
-         'shared-cache boundaries when controller is injected.',
+                 previewCacheOwner != null &&
+                 downloadHistoryBoundary != null &&
+                 clipboardHistoryStore != null),
+         'DiscoveryPageEntry requires readModel, remoteShareBrowser, '
+         'download history, clipboard history, and shared-cache boundaries when controller is injected.',
        );
 
   final DiscoveryController? controller;
@@ -65,6 +71,8 @@ class DiscoveryPageEntry extends StatefulWidget {
   final SharedCacheCatalog? sharedCacheCatalog;
   final SharedCacheIndexStore? sharedCacheIndexStore;
   final PreviewCacheOwner? previewCacheOwner;
+  final DownloadHistoryBoundary? downloadHistoryBoundary;
+  final ClipboardHistoryStore? clipboardHistoryStore;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
   final bool autoStartController;
@@ -81,6 +89,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final SharedCacheCatalog _sharedCacheCatalog;
   late final SharedCacheIndexStore _sharedCacheIndexStore;
   late final PreviewCacheOwner _previewCacheOwner;
+  late final DownloadHistoryBoundary _downloadHistoryBoundary;
+  late final ClipboardHistoryStore _clipboardHistoryStore;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
@@ -102,6 +112,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalog = widget.sharedCacheCatalog!;
       _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
       _previewCacheOwner = widget.previewCacheOwner!;
+      _downloadHistoryBoundary = widget.downloadHistoryBoundary!;
+      _clipboardHistoryStore = widget.clipboardHistoryStore!;
       _ownsController = false;
       _ownsReadModel = false;
       _ownsRemoteShareBrowser = false;
@@ -115,6 +127,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalog = boundary.sharedCacheCatalog;
       _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
       _previewCacheOwner = boundary.previewCacheOwner;
+      _downloadHistoryBoundary = boundary.downloadHistoryBoundary;
+      _clipboardHistoryStore = boundary.clipboardHistoryStore;
       _ownsController = true;
       _ownsReadModel = true;
       _ownsRemoteShareBrowser = true;
@@ -155,6 +169,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalog: _sharedCacheCatalog,
       sharedCacheIndexStore: _sharedCacheIndexStore,
       previewCacheOwner: _previewCacheOwner,
+      downloadHistoryBoundary: _downloadHistoryBoundary,
+      clipboardHistoryStore: _clipboardHistoryStore,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
       isBoundaryReady: _isBoundaryReady,
@@ -211,6 +227,18 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
     );
+    final downloadHistoryBoundary = DownloadHistoryBoundary(
+      transferHistoryRepository: transferHistoryRepository,
+    );
+    final clipboardHistoryRepository = ClipboardHistoryRepository(
+      database: database,
+    );
+    final clipboardCaptureService = ClipboardCaptureService();
+    final clipboardHistoryStore = ClipboardHistoryStore(
+      clipboardHistoryRepository: clipboardHistoryRepository,
+      clipboardCaptureService: clipboardCaptureService,
+      transferStorageService: _transferStorageService,
+    );
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -222,7 +250,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       fileHashService: fileHashService,
       fileTransferService: fileTransferService,
       transferStorageService: _transferStorageService,
-      transferHistoryRepository: transferHistoryRepository,
+      downloadHistoryBoundary: downloadHistoryBoundary,
       previewCacheOwner: previewCacheOwner,
       appNotificationService: AppNotificationService.instance,
       settingsProvider: () => settingsStore.settings,
@@ -245,10 +273,10 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
-      clipboardHistoryRepository: ClipboardHistoryRepository(
-        database: database,
-      ),
-      clipboardCaptureService: ClipboardCaptureService(),
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      clipboardHistoryRepository: clipboardHistoryRepository,
+      clipboardCaptureService: clipboardCaptureService,
+      clipboardHistoryStore: clipboardHistoryStore,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -284,6 +312,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      clipboardHistoryStore: clipboardHistoryStore,
       previewCacheOwner: previewCacheOwner,
     );
   }
@@ -297,6 +327,8 @@ class _DiscoveryBoundary {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.downloadHistoryBoundary,
+    required this.clipboardHistoryStore,
     required this.previewCacheOwner,
   });
 
@@ -306,5 +338,7 @@ class _DiscoveryBoundary {
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final DownloadHistoryBoundary downloadHistoryBoundary;
+  final ClipboardHistoryStore clipboardHistoryStore;
   final PreviewCacheOwner previewCacheOwner;
 }

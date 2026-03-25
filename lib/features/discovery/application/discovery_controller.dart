@@ -13,8 +13,10 @@ import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
+import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
 import '../../history/domain/transfer_history_record.dart';
+import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
@@ -236,8 +238,10 @@ class DiscoveryController extends ChangeNotifier {
     required SettingsStore settingsStore,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
+    DownloadHistoryBoundary? downloadHistoryBoundary,
     required ClipboardHistoryRepository clipboardHistoryRepository,
     required ClipboardCaptureService clipboardCaptureService,
+    ClipboardHistoryStore? clipboardHistoryStore,
     required RemoteShareBrowser remoteShareBrowser,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
@@ -257,18 +261,26 @@ class DiscoveryController extends ChangeNotifier {
        _friendRepository = friendRepository,
        _settingsStore = settingsStore,
        _appNotificationService = appNotificationService,
-       _transferHistoryRepository = transferHistoryRepository,
-       _clipboardHistoryRepository = clipboardHistoryRepository,
-       _clipboardCaptureService = clipboardCaptureService,
        _remoteShareBrowser = remoteShareBrowser,
        _sharedCacheCatalog = sharedCacheCatalog,
        _sharedCacheIndexStore = sharedCacheIndexStore,
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
-       _transferStorageService = transferStorageService,
        _previewCacheOwner = previewCacheOwner,
        _videoLinkShareService = videoLinkShareService,
        _pathOpener = pathOpener {
+    _downloadHistoryBoundary =
+        downloadHistoryBoundary ??
+        DownloadHistoryBoundary(
+          transferHistoryRepository: transferHistoryRepository,
+        );
+    _clipboardHistoryStore =
+        clipboardHistoryStore ??
+        ClipboardHistoryStore(
+          clipboardHistoryRepository: clipboardHistoryRepository,
+          clipboardCaptureService: clipboardCaptureService,
+          transferStorageService: transferStorageService,
+        );
     _transferSessionCoordinator =
         transferSessionCoordinator ??
         TransferSessionCoordinator(
@@ -278,7 +290,7 @@ class DiscoveryController extends ChangeNotifier {
           fileHashService: fileHashService,
           fileTransferService: fileTransferService,
           transferStorageService: transferStorageService,
-          transferHistoryRepository: transferHistoryRepository,
+          downloadHistoryBoundary: _downloadHistoryBoundary,
           previewCacheOwner: previewCacheOwner,
           appNotificationService: appNotificationService,
           settingsProvider: () => _settingsStore.settings,
@@ -293,6 +305,8 @@ class DiscoveryController extends ChangeNotifier {
     _transferSessionCoordinator.addListener(
       _handleTransferSessionCoordinatorChanged,
     );
+    _downloadHistoryBoundary.addListener(_handleDownloadHistoryBoundaryChanged);
+    _clipboardHistoryStore.addListener(_handleClipboardHistoryStoreChanged);
   }
 
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
@@ -320,18 +334,16 @@ class DiscoveryController extends ChangeNotifier {
   final FriendRepository _friendRepository;
   final SettingsStore _settingsStore;
   final AppNotificationService _appNotificationService;
-  final TransferHistoryRepository _transferHistoryRepository;
-  final ClipboardHistoryRepository _clipboardHistoryRepository;
-  final ClipboardCaptureService _clipboardCaptureService;
   final RemoteShareBrowser _remoteShareBrowser;
   final SharedCacheCatalog _sharedCacheCatalog;
   final SharedCacheIndexStore _sharedCacheIndexStore;
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
-  final TransferStorageService _transferStorageService;
   final PreviewCacheOwner _previewCacheOwner;
   final VideoLinkShareService _videoLinkShareService;
   final PathOpener _pathOpener;
+  late final DownloadHistoryBoundary _downloadHistoryBoundary;
+  late final ClipboardHistoryStore _clipboardHistoryStore;
   late final TransferSessionCoordinator _transferSessionCoordinator;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
@@ -341,10 +353,6 @@ class DiscoveryController extends ChangeNotifier {
   final Map<String, _PendingOutgoingFriendRequest>
   _pendingOutgoingFriendRequestsByRequestId =
       <String, _PendingOutgoingFriendRequest>{};
-  final List<TransferHistoryRecord> _downloadHistory =
-      <TransferHistoryRecord>[];
-  final List<ClipboardHistoryEntry> _clipboardHistory =
-      <ClipboardHistoryEntry>[];
   final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
       <String, List<RemoteClipboardEntry>>{};
   Timer? _scanTimer;
@@ -372,7 +380,6 @@ class DiscoveryController extends ChangeNotifier {
   VideoLinkShareSession? _videoLinkShareSession;
   bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
-  String? _lastCapturedClipboardHash;
   String? _errorMessage;
   String? _infoMessage;
 
@@ -439,7 +446,7 @@ class DiscoveryController extends ChangeNotifier {
   List<RemoteShareOption> get remoteShareOptions =>
       _remoteShareBrowser.currentBrowseProjection.options;
   List<TransferHistoryRecord> get downloadHistory =>
-      List<TransferHistoryRecord>.unmodifiable(_downloadHistory);
+      _downloadHistoryBoundary.records;
   VideoLinkShareSession? get videoLinkShareSession => _videoLinkShareSession;
   String? get videoLinkWatchUrl {
     final session = _videoLinkShareSession;
@@ -454,7 +461,7 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   List<ClipboardHistoryEntry> get clipboardHistory =>
-      List<ClipboardHistoryEntry>.unmodifiable(_clipboardHistory);
+      _clipboardHistoryStore.entries;
   bool get isLoadingRemoteClipboard => _isLoadingRemoteClipboard;
 
   List<RemoteClipboardEntry> remoteClipboardEntriesFor(String ownerIp) {
@@ -484,7 +491,6 @@ class DiscoveryController extends ChangeNotifier {
 
   void _handleTransferSessionCoordinatorChanged() {
     final notice = _transferSessionCoordinator.takePendingNotice();
-    var shouldReloadHistory = false;
     if (notice != null) {
       if (notice.clearInfo) {
         _infoMessage = null;
@@ -498,16 +504,15 @@ class DiscoveryController extends ChangeNotifier {
       if (notice.errorMessage != null) {
         _errorMessage = notice.errorMessage;
       }
-      shouldReloadHistory = notice.reloadDownloadHistory;
-    }
-    if (shouldReloadHistory) {
-      unawaited(_reloadDownloadHistoryProjection());
     }
     notifyListeners();
   }
 
-  Future<void> _reloadDownloadHistoryProjection() async {
-    await _loadDownloadHistory();
+  void _handleDownloadHistoryBoundaryChanged() {
+    notifyListeners();
+  }
+
+  void _handleClipboardHistoryStoreChanged() {
     notifyListeners();
   }
 
@@ -610,9 +615,9 @@ class DiscoveryController extends ChangeNotifier {
     } catch (error) {
       _log('Failed to load app settings: $error');
     }
-    await _loadClipboardHistory();
+    await _clipboardHistoryStore.load();
     await _loadOwnerCaches();
-    await _loadDownloadHistory();
+    await _downloadHistoryBoundary.load();
     try {
       await _internetPeerEndpointStore.load();
     } catch (error) {
@@ -1061,14 +1066,10 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     try {
-      final removed = await _clipboardHistoryRepository.deleteById(
-        normalizedId,
-      );
+      final removed = await _clipboardHistoryStore.deleteEntry(normalizedId);
       if (removed == null) {
         return;
       }
-      await _deleteClipboardImageFileIfExists(removed.imagePath);
-      await _loadClipboardHistory(notify: false, updateLastCapturedHash: false);
       _errorMessage = null;
       _infoMessage = 'Clipboard entry removed.';
       notifyListeners();
@@ -2262,7 +2263,7 @@ class DiscoveryController extends ChangeNotifier {
               : _currentSettings.clipboardHistoryMaxEntries)
         : event.maxEntries;
 
-    final sourceEntries = _clipboardHistory.take(safeLimit);
+    final sourceEntries = _clipboardHistoryStore.listRecent(limit: safeLimit);
     final entries = <ClipboardCatalogItem>[];
     for (final item in sourceEntries) {
       if (item.type == ClipboardEntryType.text) {
@@ -2415,91 +2416,18 @@ class DiscoveryController extends ChangeNotifier {
 
   Future<void> _captureClipboardSnapshot() async {
     try {
-      final captured = await _clipboardCaptureService.readCurrentClipboard();
-      if (captured == null) {
-        return;
-      }
-      if (_lastCapturedClipboardHash == captured.contentHash) {
-        return;
-      }
-      if (await _clipboardHistoryRepository.hasHash(captured.contentHash)) {
-        _lastCapturedClipboardHash = captured.contentHash;
-        return;
-      }
-
-      final entryId = _fileHashService.buildStableId(
-        'clipboard|${captured.contentHash}|${DateTime.now().microsecondsSinceEpoch}',
+      await _clipboardHistoryStore.captureSnapshot(
+        maxEntries: _currentSettings.clipboardHistoryMaxEntries,
       );
-      String? imagePath;
-      if (captured.type == ClipboardEntryType.image &&
-          captured.imageBytes != null &&
-          captured.imageBytes!.isNotEmpty) {
-        final directory = await _transferStorageService
-            .resolveClipboardDirectory(appFolderName: 'Landa');
-        imagePath = p.join(directory.path, '$entryId.png');
-        await File(imagePath).writeAsBytes(captured.imageBytes!, flush: true);
-      }
-
-      await _clipboardHistoryRepository.insert(
-        ClipboardHistoryEntry(
-          id: entryId,
-          type: captured.type,
-          contentHash: captured.contentHash,
-          textValue: captured.textValue,
-          imagePath: imagePath,
-          createdAt: DateTime.now(),
-        ),
-      );
-      _lastCapturedClipboardHash = captured.contentHash;
-      await _trimClipboardHistoryToSettingsLimit();
-      await _loadClipboardHistory(notify: true);
     } catch (error) {
       _log('Clipboard capture failed: $error');
     }
   }
 
   Future<void> _trimClipboardHistoryToSettingsLimit() async {
-    final removed = await _clipboardHistoryRepository.trimToMaxEntries(
+    await _clipboardHistoryStore.trimHistory(
       _currentSettings.clipboardHistoryMaxEntries,
     );
-    for (final entry in removed) {
-      await _deleteClipboardImageFileIfExists(entry.imagePath);
-    }
-  }
-
-  Future<void> _loadClipboardHistory({
-    bool notify = false,
-    bool updateLastCapturedHash = true,
-  }) async {
-    try {
-      final rows = await _clipboardHistoryRepository.listRecent(limit: 300);
-      _clipboardHistory
-        ..clear()
-        ..addAll(rows);
-      if (updateLastCapturedHash) {
-        final latest = rows.isEmpty ? null : rows.first;
-        _lastCapturedClipboardHash = latest?.contentHash;
-      }
-      if (notify) {
-        notifyListeners();
-      }
-    } catch (error) {
-      _log('Failed to load clipboard history: $error');
-    }
-  }
-
-  Future<void> _deleteClipboardImageFileIfExists(String? imagePath) async {
-    final path = imagePath?.trim();
-    if (path == null || path.isEmpty) {
-      return;
-    }
-
-    try {
-      final file = File(path);
-      if (await file.exists()) {
-        await file.delete();
-      }
-    } catch (_) {}
   }
 
   void _onShareQuery(ShareQueryEvent event) {
@@ -3007,6 +2935,12 @@ class DiscoveryController extends ChangeNotifier {
   void dispose() {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
+    _downloadHistoryBoundary.removeListener(
+      _handleDownloadHistoryBoundaryChanged,
+    );
+    _downloadHistoryBoundary.dispose();
+    _clipboardHistoryStore.removeListener(_handleClipboardHistoryStoreChanged);
+    _clipboardHistoryStore.dispose();
     _transferSessionCoordinator.removeListener(
       _handleTransferSessionCoordinatorChanged,
     );
@@ -3082,20 +3016,6 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     return DeviceAliasRepository.normalizeMac(existingMac);
-  }
-
-  Future<void> _loadDownloadHistory() async {
-    try {
-      final rows = await _transferHistoryRepository.listRecords(
-        direction: TransferHistoryDirection.download,
-        limit: 120,
-      );
-      _downloadHistory
-        ..clear()
-        ..addAll(rows);
-    } catch (error) {
-      _log('Failed to load transfer history: $error');
-    }
   }
 
   String? _resolveRemoteOwnerMac({

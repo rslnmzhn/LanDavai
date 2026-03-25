@@ -11,7 +11,7 @@ import '../../discovery/data/lan_discovery_service.dart';
 import '../../discovery/data/lan_packet_codec.dart';
 import '../../discovery/data/lan_protocol_events.dart';
 import '../../files/application/preview_cache_owner.dart';
-import '../../history/data/transfer_history_repository.dart';
+import '../../history/application/download_history_boundary.dart';
 import '../../history/domain/transfer_history_record.dart';
 import '../../settings/domain/app_settings.dart';
 import '../data/file_hash_service.dart';
@@ -28,14 +28,12 @@ class TransferSessionNotice {
     this.errorMessage,
     this.clearInfo = false,
     this.clearError = false,
-    this.reloadDownloadHistory = false,
   });
 
   final String? infoMessage;
   final String? errorMessage;
   final bool clearInfo;
   final bool clearError;
-  final bool reloadDownloadHistory;
 }
 
 class TransferSessionCoordinator extends ChangeNotifier {
@@ -46,7 +44,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
-    required TransferHistoryRepository transferHistoryRepository,
+    required DownloadHistoryBoundary downloadHistoryBoundary,
     required PreviewCacheOwner previewCacheOwner,
     required AppNotificationService appNotificationService,
     required AppSettings Function() settingsProvider,
@@ -68,7 +66,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
-       _transferHistoryRepository = transferHistoryRepository,
+       _downloadHistoryBoundary = downloadHistoryBoundary,
        _previewCacheOwner = previewCacheOwner,
        _appNotificationService = appNotificationService,
        _settingsProvider = settingsProvider,
@@ -83,7 +81,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
-  final TransferHistoryRepository _transferHistoryRepository;
+  final DownloadHistoryBoundary _downloadHistoryBoundary;
   final PreviewCacheOwner _previewCacheOwner;
   final AppNotificationService _appNotificationService;
   final AppSettings Function() _settingsProvider;
@@ -933,16 +931,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ? result.destinationDirectory
             : File(savedPaths.first).parent.path;
 
-        var reloadDownloadHistory = false;
         if (recordHistory) {
           try {
-            await _transferHistoryRepository.addRecord(
+            await _downloadHistoryBoundary.recordDownload(
               id: _fileHashService.buildStableId(
                 'download-history|${request.requestId}|'
                 '${DateTime.now().microsecondsSinceEpoch}',
               ),
               requestId: request.requestId,
-              direction: TransferHistoryDirection.download,
               peerName: request.senderName,
               peerIp: request.senderIp,
               rootPath: rootPath,
@@ -952,7 +948,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
               status: TransferHistoryStatus.completed,
               createdAtMs: DateTime.now().millisecondsSinceEpoch,
             );
-            reloadDownloadHistory = true;
           } catch (error) {
             _log('Failed to persist transfer history: $error');
           }
@@ -989,7 +984,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
                   'Received ${savedPaths.length} file(s) from ${request.senderName}. '
                   'Saved to $rootPath.$hashStatus',
               clearError: true,
-              reloadDownloadHistory: reloadDownloadHistory,
             ),
           );
         }

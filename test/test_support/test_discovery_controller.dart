@@ -1,6 +1,7 @@
 import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/desktop_window_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
+import 'package:landa/features/clipboard/application/clipboard_history_store.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
@@ -17,6 +18,7 @@ import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/files/application/preview_cache_owner.dart';
+import 'package:landa/features/history/application/download_history_boundary.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
@@ -40,6 +42,8 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.downloadHistoryBoundary,
+    required this.clipboardHistoryStore,
     required this.previewCacheOwner,
   });
 
@@ -50,6 +54,8 @@ class TestDiscoveryControllerHarness {
   final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final DownloadHistoryBoundary downloadHistoryBoundary;
+  final ClipboardHistoryStore clipboardHistoryStore;
   final PreviewCacheOwner previewCacheOwner;
 
   static Future<TestDiscoveryControllerHarness> create() async {
@@ -91,7 +97,19 @@ class TestDiscoveryControllerHarness {
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
     );
+    final downloadHistoryBoundary = DownloadHistoryBoundary(
+      transferHistoryRepository: transferHistoryRepository,
+    );
     final transferStorageService = TransferStorageService();
+    final clipboardHistoryRepository = ClipboardHistoryRepository(
+      database: database,
+    );
+    final clipboardCaptureService = ClipboardCaptureService();
+    final clipboardHistoryStore = ClipboardHistoryStore(
+      clipboardHistoryRepository: clipboardHistoryRepository,
+      clipboardCaptureService: clipboardCaptureService,
+      transferStorageService: transferStorageService,
+    );
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -103,7 +121,7 @@ class TestDiscoveryControllerHarness {
       fileHashService: fileHashService,
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
-      transferHistoryRepository: transferHistoryRepository,
+      downloadHistoryBoundary: downloadHistoryBoundary,
       previewCacheOwner: previewCacheOwner,
       appNotificationService: AppNotificationService.instance,
       settingsProvider: () => settingsStore.settings,
@@ -128,10 +146,10 @@ class TestDiscoveryControllerHarness {
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
-      clipboardHistoryRepository: ClipboardHistoryRepository(
-        database: database,
-      ),
-      clipboardCaptureService: ClipboardCaptureService(),
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      clipboardHistoryRepository: clipboardHistoryRepository,
+      clipboardCaptureService: clipboardCaptureService,
+      clipboardHistoryStore: clipboardHistoryStore,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -165,6 +183,8 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      clipboardHistoryStore: clipboardHistoryStore,
       previewCacheOwner: previewCacheOwner,
     );
   }
@@ -191,8 +211,10 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.settingsStore,
     required super.appNotificationService,
     required super.transferHistoryRepository,
+    super.downloadHistoryBoundary,
     required super.clipboardHistoryRepository,
     required super.clipboardCaptureService,
+    super.clipboardHistoryStore,
     required super.remoteShareBrowser,
     required super.sharedCacheCatalog,
     required super.sharedCacheIndexStore,
