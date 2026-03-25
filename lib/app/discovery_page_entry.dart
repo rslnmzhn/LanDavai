@@ -6,6 +6,7 @@ import '../core/utils/app_notification_service.dart';
 import '../core/utils/desktop_window_service.dart';
 import '../core/utils/path_opener.dart';
 import '../features/clipboard/application/clipboard_history_store.dart';
+import '../features/clipboard/application/remote_clipboard_projection_store.dart';
 import '../features/clipboard/data/clipboard_capture_service.dart';
 import '../features/clipboard/data/clipboard_history_repository.dart';
 import '../features/discovery/application/discovery_controller.dart';
@@ -47,6 +48,7 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.previewCacheOwner,
     this.downloadHistoryBoundary,
     this.clipboardHistoryStore,
+    this.remoteClipboardProjectionStore,
     this.desktopWindowService,
     this.transferStorageService,
     this.autoStartController = true,
@@ -59,9 +61,11 @@ class DiscoveryPageEntry extends StatefulWidget {
                  sharedCacheIndexStore != null &&
                  previewCacheOwner != null &&
                  downloadHistoryBoundary != null &&
-                 clipboardHistoryStore != null),
+                 clipboardHistoryStore != null &&
+                 remoteClipboardProjectionStore != null),
          'DiscoveryPageEntry requires readModel, remoteShareBrowser, '
-         'download history, clipboard history, and shared-cache boundaries when controller is injected.',
+         'download history, clipboard history, remote clipboard projection, '
+         'and shared-cache boundaries when controller is injected.',
        );
 
   final DiscoveryController? controller;
@@ -73,6 +77,7 @@ class DiscoveryPageEntry extends StatefulWidget {
   final PreviewCacheOwner? previewCacheOwner;
   final DownloadHistoryBoundary? downloadHistoryBoundary;
   final ClipboardHistoryStore? clipboardHistoryStore;
+  final RemoteClipboardProjectionStore? remoteClipboardProjectionStore;
   final DesktopWindowService? desktopWindowService;
   final TransferStorageService? transferStorageService;
   final bool autoStartController;
@@ -91,6 +96,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final PreviewCacheOwner _previewCacheOwner;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
+  late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
   late final DesktopWindowService _desktopWindowService;
   late final TransferStorageService _transferStorageService;
   late final bool _ownsController;
@@ -114,6 +120,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _previewCacheOwner = widget.previewCacheOwner!;
       _downloadHistoryBoundary = widget.downloadHistoryBoundary!;
       _clipboardHistoryStore = widget.clipboardHistoryStore!;
+      _remoteClipboardProjectionStore = widget.remoteClipboardProjectionStore!;
       _ownsController = false;
       _ownsReadModel = false;
       _ownsRemoteShareBrowser = false;
@@ -129,6 +136,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _previewCacheOwner = boundary.previewCacheOwner;
       _downloadHistoryBoundary = boundary.downloadHistoryBoundary;
       _clipboardHistoryStore = boundary.clipboardHistoryStore;
+      _remoteClipboardProjectionStore = boundary.remoteClipboardProjectionStore;
       _ownsController = true;
       _ownsReadModel = true;
       _ownsRemoteShareBrowser = true;
@@ -171,6 +179,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       previewCacheOwner: _previewCacheOwner,
       downloadHistoryBoundary: _downloadHistoryBoundary,
       clipboardHistoryStore: _clipboardHistoryStore,
+      remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
       desktopWindowService: _desktopWindowService,
       transferStorageService: _transferStorageService,
       isBoundaryReady: _isBoundaryReady,
@@ -239,6 +248,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       clipboardCaptureService: clipboardCaptureService,
       transferStorageService: _transferStorageService,
     );
+    final remoteClipboardProjectionStore = RemoteClipboardProjectionStore(
+      fileHashService: fileHashService,
+    );
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -277,6 +289,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       clipboardHistoryRepository: clipboardHistoryRepository,
       clipboardCaptureService: clipboardCaptureService,
       clipboardHistoryStore: clipboardHistoryStore,
+      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -314,6 +327,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheIndexStore: sharedCacheIndexStore,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
+      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       previewCacheOwner: previewCacheOwner,
     );
   }
@@ -329,6 +343,7 @@ class _DiscoveryBoundary {
     required this.sharedCacheIndexStore,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
+    required this.remoteClipboardProjectionStore,
     required this.previewCacheOwner,
   });
 
@@ -340,5 +355,6 @@ class _DiscoveryBoundary {
   final SharedCacheIndexStore sharedCacheIndexStore;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
+  final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
 }

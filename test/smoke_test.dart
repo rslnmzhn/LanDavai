@@ -35,6 +35,8 @@ void main() {
             previewCacheOwner: harness.previewCacheOwner,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
+            remoteClipboardProjectionStore:
+                harness.remoteClipboardProjectionStore,
             desktopWindowService: desktopWindowService,
             transferStorageService: transferStorageService,
             isBoundaryReady: false,
@@ -70,6 +72,8 @@ void main() {
             previewCacheOwner: harness.previewCacheOwner,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
+            remoteClipboardProjectionStore:
+                harness.remoteClipboardProjectionStore,
             desktopWindowService: desktopWindowService,
           ),
         ),
@@ -106,6 +110,8 @@ void main() {
             previewCacheOwner: harness.previewCacheOwner,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
+            remoteClipboardProjectionStore:
+                harness.remoteClipboardProjectionStore,
             desktopWindowService: desktopWindowService,
             transferStorageService: transferStorageService,
             isBoundaryReady: false,

@@ -10,6 +10,7 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
+import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/file_explorer_contract.dart';
 import '../../files/application/preview_cache_owner.dart';
@@ -38,6 +39,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.previewCacheOwner,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
+    required this.remoteClipboardProjectionStore,
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.isBoundaryReady,
@@ -53,6 +55,7 @@ class DiscoveryPage extends StatefulWidget {
   final PreviewCacheOwner previewCacheOwner;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
+  final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final bool isBoundaryReady;
@@ -80,6 +83,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       widget.downloadHistoryBoundary;
   ClipboardHistoryStore get _clipboardHistoryStore =>
       widget.clipboardHistoryStore;
+  RemoteClipboardProjectionStore get _remoteClipboardProjectionStore =>
+      widget.remoteClipboardProjectionStore;
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
@@ -511,6 +516,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             controller: _controller,
             readModel: _readModel,
             clipboardHistoryStore: _clipboardHistoryStore,
+            remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
           ),
         );
       },

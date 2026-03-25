@@ -17,6 +17,7 @@ import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
 import '../../history/domain/transfer_history_record.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
+import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
@@ -242,6 +243,7 @@ class DiscoveryController extends ChangeNotifier {
     required ClipboardHistoryRepository clipboardHistoryRepository,
     required ClipboardCaptureService clipboardCaptureService,
     ClipboardHistoryStore? clipboardHistoryStore,
+    RemoteClipboardProjectionStore? remoteClipboardProjectionStore,
     required RemoteShareBrowser remoteShareBrowser,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
@@ -281,6 +283,9 @@ class DiscoveryController extends ChangeNotifier {
           clipboardCaptureService: clipboardCaptureService,
           transferStorageService: transferStorageService,
         );
+    _remoteClipboardProjectionStore =
+        remoteClipboardProjectionStore ??
+        RemoteClipboardProjectionStore(fileHashService: fileHashService);
     _transferSessionCoordinator =
         transferSessionCoordinator ??
         TransferSessionCoordinator(
@@ -307,6 +312,9 @@ class DiscoveryController extends ChangeNotifier {
     );
     _downloadHistoryBoundary.addListener(_handleDownloadHistoryBoundaryChanged);
     _clipboardHistoryStore.addListener(_handleClipboardHistoryStoreChanged);
+    _remoteClipboardProjectionStore.addListener(
+      _handleRemoteClipboardProjectionStoreChanged,
+    );
   }
 
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
@@ -344,6 +352,7 @@ class DiscoveryController extends ChangeNotifier {
   final PathOpener _pathOpener;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
+  late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
   late final TransferSessionCoordinator _transferSessionCoordinator;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
@@ -353,8 +362,6 @@ class DiscoveryController extends ChangeNotifier {
   final Map<String, _PendingOutgoingFriendRequest>
   _pendingOutgoingFriendRequestsByRequestId =
       <String, _PendingOutgoingFriendRequest>{};
-  final Map<String, List<RemoteClipboardEntry>> _remoteClipboardByOwnerIp =
-      <String, List<RemoteClipboardEntry>>{};
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
   bool _started = false;
@@ -368,8 +375,6 @@ class DiscoveryController extends ChangeNotifier {
   SharedFolderIndexingProgress? _sharedFolderIndexingProgress;
   double? _sharedFolderIndexingVisualProgress;
   DateTime? _sharedRecacheCooldownUntil;
-  bool _isLoadingRemoteClipboard = false;
-  String? _activeClipboardQueryRequestId;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
@@ -462,14 +467,11 @@ class DiscoveryController extends ChangeNotifier {
 
   List<ClipboardHistoryEntry> get clipboardHistory =>
       _clipboardHistoryStore.entries;
-  bool get isLoadingRemoteClipboard => _isLoadingRemoteClipboard;
+  bool get isLoadingRemoteClipboard =>
+      _remoteClipboardProjectionStore.isLoading;
 
   List<RemoteClipboardEntry> remoteClipboardEntriesFor(String ownerIp) {
-    final entries = _remoteClipboardByOwnerIp[ownerIp];
-    if (entries == null) {
-      return const <RemoteClipboardEntry>[];
-    }
-    return List<RemoteClipboardEntry>.unmodifiable(entries);
+    return _remoteClipboardProjectionStore.entriesFor(ownerIp);
   }
 
   String? remoteThumbnailPath({
@@ -513,6 +515,10 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _handleClipboardHistoryStoreChanged() {
+    notifyListeners();
+  }
+
+  void _handleRemoteClipboardProjectionStoreChanged() {
     notifyListeners();
   }
 
@@ -1029,14 +1035,10 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    _isLoadingRemoteClipboard = true;
-    _remoteClipboardByOwnerIp.remove(device.ip);
-    notifyListeners();
-
-    final requestId = _fileHashService.buildStableId(
-      'clipboard-query|${DateTime.now().microsecondsSinceEpoch}|${device.ip}|$_localDeviceMac',
+    final requestId = _remoteClipboardProjectionStore.beginRequest(
+      ownerIp: device.ip,
+      localDeviceMac: _localDeviceMac,
     );
-    _activeClipboardQueryRequestId = requestId;
     try {
       await _lanDiscoveryService.sendClipboardQuery(
         targetIp: device.ip,
@@ -1047,15 +1049,14 @@ class DiscoveryController extends ChangeNotifier {
       );
       await Future<void>.delayed(const Duration(milliseconds: 900));
       _errorMessage = null;
-      if ((_remoteClipboardByOwnerIp[device.ip] ?? const []).isEmpty) {
+      if (!_remoteClipboardProjectionStore.hasEntriesFor(device.ip)) {
         _infoMessage = 'Clipboard history from ${device.displayName} is empty.';
       }
     } catch (error) {
       _errorMessage = 'Failed to request remote clipboard: $error';
       _log(_errorMessage!);
     } finally {
-      _isLoadingRemoteClipboard = false;
-      notifyListeners();
+      _remoteClipboardProjectionStore.finishRequest(requestId: requestId);
     }
   }
 
@@ -2312,39 +2313,10 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onClipboardCatalog(ClipboardCatalogEvent event) {
-    if (_activeClipboardQueryRequestId != null &&
-        event.requestId != _activeClipboardQueryRequestId) {
+    final applied = _remoteClipboardProjectionStore.applyCatalog(event);
+    if (!applied) {
       return;
     }
-
-    final mapped = <RemoteClipboardEntry>[];
-    for (final item in event.entries) {
-      final type = ClipboardEntryTypeX.fromValue(item.entryType);
-      List<int>? imageBytes;
-      if (type == ClipboardEntryType.image) {
-        final encoded = item.imagePreviewBase64;
-        if (encoded == null || encoded.trim().isEmpty) {
-          continue;
-        }
-        try {
-          imageBytes = base64Decode(encoded);
-        } catch (_) {
-          continue;
-        }
-      }
-      mapped.add(
-        RemoteClipboardEntry(
-          id: item.id,
-          type: type,
-          createdAt: DateTime.fromMillisecondsSinceEpoch(item.createdAtMs),
-          textValue: item.textValue,
-          imageBytes: imageBytes,
-        ),
-      );
-    }
-
-    mapped.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-    _remoteClipboardByOwnerIp[event.ownerIp] = mapped;
 
     final existing = _devicesByIp[event.ownerIp];
     final ownerMac = _resolveStableDeviceMac(
@@ -2941,6 +2913,10 @@ class DiscoveryController extends ChangeNotifier {
     _downloadHistoryBoundary.dispose();
     _clipboardHistoryStore.removeListener(_handleClipboardHistoryStoreChanged);
     _clipboardHistoryStore.dispose();
+    _remoteClipboardProjectionStore.removeListener(
+      _handleRemoteClipboardProjectionStoreChanged,
+    );
+    _remoteClipboardProjectionStore.dispose();
     _transferSessionCoordinator.removeListener(
       _handleTransferSessionCoordinatorChanged,
     );

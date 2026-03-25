@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_spacing.dart';
 import '../application/clipboard_history_store.dart';
+import '../application/remote_clipboard_projection_store.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
 import '../../discovery/application/discovery_controller.dart';
 import '../../discovery/application/discovery_read_model.dart';
@@ -15,12 +16,14 @@ class ClipboardSheet extends StatefulWidget {
     required this.controller,
     required this.readModel,
     required this.clipboardHistoryStore,
+    required this.remoteClipboardProjectionStore,
     super.key,
   });
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
   final ClipboardHistoryStore clipboardHistoryStore;
+  final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
 
   @override
   State<ClipboardSheet> createState() => _ClipboardSheetState();
@@ -89,7 +92,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
       child: AnimatedBuilder(
         animation: Listenable.merge(<Listenable>[
           widget.clipboardHistoryStore,
-          widget.controller,
+          widget.remoteClipboardProjectionStore,
           widget.readModel,
         ]),
         builder: (context, _) {
@@ -103,7 +106,9 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
           }
           final remoteEntries = _selectedRemoteIp == null
               ? const <RemoteClipboardEntry>[]
-              : widget.controller.remoteClipboardEntriesFor(_selectedRemoteIp!);
+              : widget.remoteClipboardProjectionStore.entriesFor(
+                  _selectedRemoteIp!,
+                );
 
           return Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
@@ -175,7 +180,9 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                             const SizedBox(width: AppSpacing.sm),
                             FilledButton(
                               onPressed:
-                                  widget.controller.isLoadingRemoteClipboard ||
+                                  widget
+                                          .remoteClipboardProjectionStore
+                                          .isLoading ||
                                       _selectedRemoteIp == null
                                   ? null
                                   : () {
@@ -193,7 +200,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                           ],
                         ),
                         const SizedBox(height: AppSpacing.sm),
-                        if (widget.controller.isLoadingRemoteClipboard)
+                        if (widget.remoteClipboardProjectionStore.isLoading)
                           const LinearProgressIndicator(minHeight: 2),
                         if (remoteEntries.isEmpty)
                           const Padding(

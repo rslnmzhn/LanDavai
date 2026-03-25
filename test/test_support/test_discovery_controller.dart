@@ -2,6 +2,7 @@ import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/desktop_window_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/application/clipboard_history_store.dart';
+import 'package:landa/features/clipboard/application/remote_clipboard_projection_store.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
@@ -44,6 +45,7 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheIndexStore,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
+    required this.remoteClipboardProjectionStore,
     required this.previewCacheOwner,
   });
 
@@ -56,6 +58,7 @@ class TestDiscoveryControllerHarness {
   final SharedCacheIndexStore sharedCacheIndexStore;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
+  final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
 
   static Future<TestDiscoveryControllerHarness> create() async {
@@ -110,6 +113,9 @@ class TestDiscoveryControllerHarness {
       clipboardCaptureService: clipboardCaptureService,
       transferStorageService: transferStorageService,
     );
+    final remoteClipboardProjectionStore = RemoteClipboardProjectionStore(
+      fileHashService: fileHashService,
+    );
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
@@ -150,6 +156,7 @@ class TestDiscoveryControllerHarness {
       clipboardHistoryRepository: clipboardHistoryRepository,
       clipboardCaptureService: clipboardCaptureService,
       clipboardHistoryStore: clipboardHistoryStore,
+      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -185,6 +192,7 @@ class TestDiscoveryControllerHarness {
       sharedCacheIndexStore: sharedCacheIndexStore,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
+      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       previewCacheOwner: previewCacheOwner,
     );
   }
@@ -215,6 +223,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.clipboardHistoryRepository,
     required super.clipboardCaptureService,
     super.clipboardHistoryStore,
+    super.remoteClipboardProjectionStore,
     required super.remoteShareBrowser,
     required super.sharedCacheCatalog,
     required super.sharedCacheIndexStore,
