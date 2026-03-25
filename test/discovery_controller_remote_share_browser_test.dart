@@ -76,7 +76,7 @@ void main() {
       await controller!.loadRemoteShareOptions();
 
       expect(remoteShareBrowser.startBrowseCalls, 1);
-      expect(controller!.isLoadingRemoteShares, isFalse);
+      expect(remoteShareBrowser.isLoading, isFalse);
       expect(controller!.errorMessage, isNull);
       expect(
         controller!.infoMessage,
@@ -136,12 +136,15 @@ void main() {
           ],
         ),
       );
-      await _pumpUntil(() => controller!.remoteShareOptions.isNotEmpty);
+      await _pumpUntil(
+        () => remoteShareBrowser.currentBrowseProjection.options.isNotEmpty,
+      );
 
       expect(remoteShareBrowser.applyRemoteCatalogCalls, 1);
-      expect(controller!.remoteShareOptions, hasLength(1));
-      expect(controller!.remoteShareOptions.single.ownerIp, '192.168.1.40');
-      expect(controller!.remoteShareOptions.single.ownerName, 'Remote device');
+      final options = remoteShareBrowser.currentBrowseProjection.options;
+      expect(options, hasLength(1));
+      expect(options.single.ownerIp, '192.168.1.40');
+      expect(options.single.ownerName, 'Remote device');
     },
   );
 }

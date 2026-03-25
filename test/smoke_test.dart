@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/app/discovery_page_entry.dart';
 import 'package:landa/features/discovery/presentation/discovery_page.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
+import 'dart:io';
+import 'package:path/path.dart' as p;
 
 import 'test_support/test_discovery_controller.dart';
 
@@ -21,7 +23,9 @@ void main() {
     'DiscoveryPage renders with injected dependencies and does not own controller disposal',
     (tester) async {
       final desktopWindowService = TrackingDesktopWindowService();
-      final transferStorageService = TransferStorageService();
+      final transferStorageService = StubTransferStorageService(
+        rootDirectory: harness.databaseHarness.rootDirectory,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
@@ -33,6 +37,7 @@ void main() {
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: harness.transferSessionCoordinator,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
             remoteClipboardProjectionStore:
@@ -70,6 +75,7 @@ void main() {
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: harness.transferSessionCoordinator,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
             remoteClipboardProjectionStore:
@@ -96,7 +102,9 @@ void main() {
     'DiscoveryPage receive flow starts remote browse through RemoteShareBrowser',
     (tester) async {
       final desktopWindowService = TrackingDesktopWindowService();
-      final transferStorageService = TransferStorageService();
+      final transferStorageService = StubTransferStorageService(
+        rootDirectory: harness.databaseHarness.rootDirectory,
+      );
 
       await tester.pumpWidget(
         MaterialApp(
@@ -108,6 +116,7 @@ void main() {
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: harness.transferSessionCoordinator,
             downloadHistoryBoundary: harness.downloadHistoryBoundary,
             clipboardHistoryStore: harness.clipboardHistoryStore,
             remoteClipboardProjectionStore:
@@ -134,4 +143,24 @@ void main() {
       await tester.pump();
     },
   );
+}
+
+class StubTransferStorageService extends TransferStorageService {
+  StubTransferStorageService({required this.rootDirectory});
+
+  final Directory rootDirectory;
+
+  @override
+  Future<Directory> resolveReceiveDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final directory = Directory(p.join(rootDirectory.path, 'incoming'));
+    await directory.create(recursive: true);
+    return directory;
+  }
+
+  @override
+  Future<Directory?> resolveAndroidPublicDownloadsDirectory() async {
+    return null;
+  }
 }

@@ -15,12 +15,12 @@ import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/file_explorer_contract.dart';
 import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
-import '../../files/presentation/file_explorer_facade.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
+import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
@@ -37,6 +37,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
+    required this.transferSessionCoordinator,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -53,6 +54,7 @@ class DiscoveryPage extends StatefulWidget {
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
+  final TransferSessionCoordinator transferSessionCoordinator;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -79,6 +81,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   SharedCacheIndexStore get _sharedCacheIndexStore =>
       widget.sharedCacheIndexStore;
   PreviewCacheOwner get _previewCacheOwner => widget.previewCacheOwner;
+  TransferSessionCoordinator get _transferSessionCoordinator =>
+      widget.transferSessionCoordinator;
   DownloadHistoryBoundary get _downloadHistoryBoundary =>
       widget.downloadHistoryBoundary;
   ClipboardHistoryStore get _clipboardHistoryStore =>
@@ -140,7 +144,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: Listenable.merge(<Listenable>[_controller, _readModel]),
+      animation: Listenable.merge(<Listenable>[
+        _controller,
+        _readModel,
+        _transferSessionCoordinator,
+      ]),
       builder: (context, _) {
         final devices = _readModel.devices;
         final isLeftHanded = _readModel.settings.isLeftHandedMode;
@@ -213,8 +221,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 _ErrorBanner(message: _controller.errorMessage!),
                 const SizedBox(height: AppSpacing.sm),
               ],
-              if (_controller.isUploading || _controller.isDownloading) ...[
-                _TransferProgressCard(controller: _controller),
+              if (_transferSessionCoordinator.isUploading ||
+                  _transferSessionCoordinator.isDownloading) ...[
+                _TransferProgressCard(
+                  transferSessionCoordinator: _transferSessionCoordinator,
+                ),
                 const SizedBox(height: AppSpacing.sm),
               ],
               if (_controller.isManualRefreshInProgress) ...[
@@ -308,6 +319,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               : mainContent,
           bottomNavigationBar: _ActionBar(
             controller: _controller,
+            transferSessionCoordinator: _transferSessionCoordinator,
             onReceive: _openReceivePanel,
             onAdd: _openAddShareMenu,
             onSend: _controller.sendFilesToSelectedDevice,
@@ -1000,11 +1012,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
 
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => FileExplorerFacade(
+        builder: (_) => FileExplorerPage.launch(
           sharedCacheCatalog: _sharedCacheCatalog,
           sharedCacheIndexStore: _sharedCacheIndexStore,
           previewCacheOwner: _previewCacheOwner,
-          ownerMacAddressProvider: () => _controller.localDeviceMac,
+          ownerMacAddress: _controller.localDeviceMac,
           receiveDirectoryPath: receiveDirectory.path,
           publicDownloadsDirectoryPath: publicDownloadsDirectory?.path,
           onRecacheSharedFolders: _handleSharedRecacheFromFiles,
@@ -1169,9 +1181,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         return FractionallySizedBox(
           heightFactor: 0.88,
           child: _ReceivePanelSheet(
-            controller: _controller,
+            onRefreshRemoteShares: _controller.loadRemoteShareOptions,
             remoteShareBrowser: _remoteShareBrowser,
             previewCacheOwner: _previewCacheOwner,
+            transferSessionCoordinator: _transferSessionCoordinator,
           ),
         );
       },
@@ -1569,9 +1582,9 @@ class _ErrorBanner extends StatelessWidget {
 }
 
 class _TransferProgressCard extends StatelessWidget {
-  const _TransferProgressCard({required this.controller});
+  const _TransferProgressCard({required this.transferSessionCoordinator});
 
-  final DiscoveryController controller;
+  final TransferSessionCoordinator transferSessionCoordinator;
 
   @override
   Widget build(BuildContext context) {
@@ -1585,17 +1598,18 @@ class _TransferProgressCard extends StatelessWidget {
               'Transfer Progress',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            if (controller.isUploading) ...[
+            if (transferSessionCoordinator.isUploading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Upload: ${(controller.uploadProgress * 100).toStringAsFixed(0)}%',
+                'Upload: ${(transferSessionCoordinator.uploadProgress * 100).toStringAsFixed(0)}%',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
                 _formatRateAndEta(
-                  speedBytesPerSecond: controller.uploadSpeedBytesPerSecond,
-                  eta: controller.uploadEta,
+                  speedBytesPerSecond:
+                      transferSessionCoordinator.uploadSpeedBytesPerSecond,
+                  eta: transferSessionCoordinator.uploadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -1603,23 +1617,24 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: controller.uploadProgress,
+                value: transferSessionCoordinator.uploadProgress,
                 minHeight: 6,
                 color: AppColors.brandPrimary,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (controller.isDownloading) ...[
+            if (transferSessionCoordinator.isDownloading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Download: ${(controller.downloadProgress * 100).toStringAsFixed(0)}%',
+                'Download: ${(transferSessionCoordinator.downloadProgress * 100).toStringAsFixed(0)}%',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
                 _formatRateAndEta(
-                  speedBytesPerSecond: controller.downloadSpeedBytesPerSecond,
-                  eta: controller.downloadEta,
+                  speedBytesPerSecond:
+                      transferSessionCoordinator.downloadSpeedBytesPerSecond,
+                  eta: transferSessionCoordinator.downloadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -1627,7 +1642,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: controller.downloadProgress,
+                value: transferSessionCoordinator.downloadProgress,
                 minHeight: 6,
                 color: AppColors.success,
                 backgroundColor: AppColors.mutedBorder,
@@ -1884,14 +1899,16 @@ class _EmptyState extends StatelessWidget {
 
 class _ReceivePanelSheet extends StatefulWidget {
   const _ReceivePanelSheet({
-    required this.controller,
+    required this.onRefreshRemoteShares,
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
+    required this.transferSessionCoordinator,
   });
 
-  final DiscoveryController controller;
+  final Future<void> Function() onRefreshRemoteShares;
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
+  final TransferSessionCoordinator transferSessionCoordinator;
 
   @override
   State<_ReceivePanelSheet> createState() => _ReceivePanelSheetState();
@@ -1904,7 +1921,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: Listenable.merge(<Listenable>[
-        widget.controller,
+        widget.transferSessionCoordinator,
         widget.remoteShareBrowser,
       ]),
       builder: (context, _) {
@@ -1916,7 +1933,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
         final selectedCount = browse.selectedCount;
         final isFileListCapped = browse.isFileListCapped;
         final hiddenFilesCount = browse.hiddenFilesCount;
-        final requests = widget.controller.incomingRequests;
+        final requests = widget.transferSessionCoordinator.incomingRequests;
 
         return SafeArea(
           child: Padding(
@@ -1936,7 +1953,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                       tooltip: 'Обновить список',
                       onPressed: widget.remoteShareBrowser.isLoading
                           ? null
-                          : widget.controller.loadRemoteShareOptions,
+                          : widget.onRefreshRemoteShares,
                       icon: const Icon(Icons.refresh),
                     ),
                   ],
@@ -2164,7 +2181,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                             ),
                             TextButton(
                               onPressed: () async {
-                                await widget.controller
+                                await widget.transferSessionCoordinator
                                     .respondToTransferRequest(
                                       requestId: request.requestId,
                                       approved: false,
@@ -2174,7 +2191,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
                             ),
                             FilledButton(
                               onPressed: () async {
-                                await widget.controller
+                                await widget.transferSessionCoordinator
                                     .respondToTransferRequest(
                                       requestId: request.requestId,
                                       approved: true,
@@ -2328,12 +2345,13 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
     });
 
     try {
-      final previewPath = await widget.controller.requestRemoteFilePreview(
-        ownerIp: file.ownerIp,
-        ownerName: file.ownerName,
-        cacheId: file.cacheId,
-        relativePath: file.relativePath,
-      );
+      final previewPath = await widget.transferSessionCoordinator
+          .requestRemoteFilePreview(
+            ownerIp: file.ownerIp,
+            ownerName: file.ownerName,
+            cacheId: file.cacheId,
+            relativePath: file.relativePath,
+          );
       if (!mounted || previewPath == null || previewPath.trim().isEmpty) {
         return;
       }
@@ -2360,7 +2378,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
   }) async {
     final selectedByCache = widget.remoteShareBrowser
         .buildSelectedRelativePathsByCache();
-    await widget.controller.requestDownloadFromRemoteFiles(
+    await widget.transferSessionCoordinator.requestDownloadFromRemoteFiles(
       ownerIp: owner.ip,
       ownerName: owner.name,
       selectedRelativePathsByCache: selectedByCache,
@@ -2381,7 +2399,7 @@ class _ReceivePanelSheetState extends State<_ReceivePanelSheet> {
       return;
     }
 
-    await widget.controller.requestDownloadFromRemoteFiles(
+    await widget.transferSessionCoordinator.requestDownloadFromRemoteFiles(
       ownerIp: owner.ip,
       ownerName: owner.name,
       selectedRelativePathsByCache: selectedByCache,
@@ -2521,12 +2539,14 @@ class _PreviewScheme {
 class _ActionBar extends StatelessWidget {
   const _ActionBar({
     required this.controller,
+    required this.transferSessionCoordinator,
     required this.onReceive,
     required this.onAdd,
     required this.onSend,
   });
 
   final DiscoveryController controller;
+  final TransferSessionCoordinator transferSessionCoordinator;
   final Future<void> Function() onReceive;
   final Future<void> Function() onAdd;
   final Future<void> Function() onSend;
@@ -2586,7 +2606,9 @@ class _ActionBar extends StatelessWidget {
                 const SizedBox(width: AppSpacing.xs),
                 Expanded(
                   child: _AdaptiveActionButton.filled(
-                    onPressed: controller.isSendingTransfer ? null : onSend,
+                    onPressed: transferSessionCoordinator.isSendingTransfer
+                        ? null
+                        : onSend,
                     icon: Icons.arrow_upward,
                     label: 'Отправить',
                     compactLabel: 'Отпр.',

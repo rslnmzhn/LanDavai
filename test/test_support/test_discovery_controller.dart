@@ -43,6 +43,7 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.transferSessionCoordinator,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -56,6 +57,7 @@ class TestDiscoveryControllerHarness {
   final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final TransferSessionCoordinator transferSessionCoordinator;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -190,6 +192,7 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      transferSessionCoordinator: transferSessionCoordinator,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,

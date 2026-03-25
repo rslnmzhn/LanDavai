@@ -331,8 +331,11 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(controller.incomingRequests, hasLength(1));
-        expect(controller.incomingRequests.single.requestId, 'transfer-3');
+        expect(transferSessionCoordinator.incomingRequests, hasLength(1));
+        expect(
+          transferSessionCoordinator.incomingRequests.single.requestId,
+          'transfer-3',
+        );
         expect(
           controller.infoMessage,
           'Incoming transfer request from LAN peer.',

@@ -29,65 +29,9 @@ import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/data/video_link_share_service.dart';
 
 import 'test_support/test_app_database.dart';
-import 'test_support/test_discovery_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-
-  test(
-    'DiscoveryController exposes RemoteClipboardProjectionStore-backed remote projection without owning a mirror',
-    () async {
-      final harness = await TestDiscoveryControllerHarness.create();
-      addTearDown(harness.dispose);
-
-      var controllerNotifications = 0;
-      void handleControllerChanged() {
-        controllerNotifications += 1;
-      }
-
-      harness.controller.addListener(handleControllerChanged);
-      addTearDown(
-        () => harness.controller.removeListener(handleControllerChanged),
-      );
-
-      final requestId = harness.remoteClipboardProjectionStore.beginRequest(
-        ownerIp: '192.168.1.70',
-        localDeviceMac: harness.controller.localDeviceMac,
-      );
-      final applied = harness.remoteClipboardProjectionStore.applyCatalog(
-        ClipboardCatalogEvent(
-          requestId: requestId,
-          ownerIp: '192.168.1.70',
-          ownerName: 'Remote peer',
-          ownerMacAddress: '11:22:33:44:55:66',
-          observedAt: DateTime(2026),
-          entries: const <ClipboardCatalogItem>[
-            ClipboardCatalogItem(
-              id: 'remote-entry-1',
-              entryType: 'text',
-              textValue: 'Remote clipboard value',
-              createdAtMs: 100,
-            ),
-          ],
-        ),
-      );
-      harness.remoteClipboardProjectionStore.finishRequest(
-        requestId: requestId,
-      );
-
-      expect(applied, isTrue);
-      expect(
-        harness.remoteClipboardProjectionStore.entriesFor('192.168.1.70'),
-        hasLength(1),
-      );
-      expect(
-        harness.controller.remoteClipboardEntriesFor('192.168.1.70'),
-        hasLength(1),
-      );
-      expect(harness.controller.isLoadingRemoteClipboard, isFalse);
-      expect(controllerNotifications, greaterThan(0));
-    },
-  );
 
   test(
     'DiscoveryController routes remote clipboard protocol callbacks through RemoteClipboardProjectionStore',
@@ -191,10 +135,13 @@ void main() {
         hasLength(1),
       );
       expect(
-        controller.remoteClipboardEntriesFor('192.168.1.80').single.textValue,
+        remoteClipboardProjectionStore
+            .entriesFor('192.168.1.80')
+            .single
+            .textValue,
         'Remote clipboard value',
       );
-      expect(controller.isLoadingRemoteClipboard, isFalse);
+      expect(remoteClipboardProjectionStore.isLoading, isFalse);
     },
   );
 }

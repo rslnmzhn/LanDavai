@@ -15,7 +15,6 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
-import '../../history/domain/transfer_history_record.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
@@ -34,7 +33,6 @@ import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
-import '../../transfer/domain/transfer_request.dart';
 import 'device_registry.dart';
 import 'internet_peer_endpoint_store.dart';
 import 'trusted_lan_peer_store.dart';
@@ -310,11 +308,6 @@ class DiscoveryController extends ChangeNotifier {
     _transferSessionCoordinator.addListener(
       _handleTransferSessionCoordinatorChanged,
     );
-    _downloadHistoryBoundary.addListener(_handleDownloadHistoryBoundaryChanged);
-    _clipboardHistoryStore.addListener(_handleClipboardHistoryStoreChanged);
-    _remoteClipboardProjectionStore.addListener(
-      _handleRemoteClipboardProjectionStoreChanged,
-    );
   }
 
   static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
@@ -416,23 +409,6 @@ class DiscoveryController extends ChangeNotifier {
     return remaining;
   }
 
-  bool get isSendingTransfer => _transferSessionCoordinator.isSendingTransfer;
-  bool get isLoadingRemoteShares => _remoteShareBrowser.isLoading;
-  bool get isUploading => _transferSessionCoordinator.isUploading;
-  bool get isDownloading => _transferSessionCoordinator.isDownloading;
-  double get uploadProgress => _transferSessionCoordinator.uploadProgress;
-  double get downloadProgress => _transferSessionCoordinator.downloadProgress;
-  int get uploadSentBytes => _transferSessionCoordinator.uploadSentBytes;
-  int get uploadTotalBytes => _transferSessionCoordinator.uploadTotalBytes;
-  int get downloadReceivedBytes =>
-      _transferSessionCoordinator.downloadReceivedBytes;
-  int get downloadTotalBytes => _transferSessionCoordinator.downloadTotalBytes;
-  double get uploadSpeedBytesPerSecond =>
-      _transferSessionCoordinator.uploadSpeedBytesPerSecond;
-  double get downloadSpeedBytesPerSecond =>
-      _transferSessionCoordinator.downloadSpeedBytesPerSecond;
-  Duration? get uploadEta => _transferSessionCoordinator.uploadEta;
-  Duration? get downloadEta => _transferSessionCoordinator.downloadEta;
   String? get localIp => _localIp;
   String get localName => _localName;
   String get localDeviceMac => _localDeviceMac;
@@ -444,14 +420,8 @@ class DiscoveryController extends ChangeNotifier {
   Duration get activeAutoRefreshInterval => _activeAutoRefreshInterval;
   String? get errorMessage => _errorMessage;
   String? get infoMessage => _infoMessage;
-  List<IncomingTransferRequest> get incomingRequests =>
-      _transferSessionCoordinator.incomingRequests;
   List<IncomingFriendRequest> get incomingFriendRequests =>
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
-  List<RemoteShareOption> get remoteShareOptions =>
-      _remoteShareBrowser.currentBrowseProjection.options;
-  List<TransferHistoryRecord> get downloadHistory =>
-      _downloadHistoryBoundary.records;
   VideoLinkShareSession? get videoLinkShareSession => _videoLinkShareSession;
   String? get videoLinkWatchUrl {
     final session = _videoLinkShareSession;
@@ -463,27 +433,6 @@ class DiscoveryController extends ChangeNotifier {
         ? InternetAddress.loopbackIPv4.address
         : host;
     return session.buildWatchUrl(hostAddress: safeHost);
-  }
-
-  List<ClipboardHistoryEntry> get clipboardHistory =>
-      _clipboardHistoryStore.entries;
-  bool get isLoadingRemoteClipboard =>
-      _remoteClipboardProjectionStore.isLoading;
-
-  List<RemoteClipboardEntry> remoteClipboardEntriesFor(String ownerIp) {
-    return _remoteClipboardProjectionStore.entriesFor(ownerIp);
-  }
-
-  String? remoteThumbnailPath({
-    required String ownerIp,
-    required String cacheId,
-    required String relativePath,
-  }) {
-    return _remoteShareBrowser.previewPathFor(
-      ownerIp: ownerIp,
-      cacheId: cacheId,
-      relativePath: relativePath,
-    );
   }
 
   AppSettings get _currentSettings => _settingsStore.settings;
@@ -510,18 +459,6 @@ class DiscoveryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleDownloadHistoryBoundaryChanged() {
-    notifyListeners();
-  }
-
-  void _handleClipboardHistoryStoreChanged() {
-    notifyListeners();
-  }
-
-  void _handleRemoteClipboardProjectionStoreChanged() {
-    notifyListeners();
-  }
-
   SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {
     for (final cache in _ownerCachesSnapshot) {
       if (cache.cacheId == cacheId) {
@@ -529,17 +466,6 @@ class DiscoveryController extends ChangeNotifier {
       }
     }
     return null;
-  }
-
-  String? _resolveCacheFilePath({
-    required SharedFolderCacheRecord cache,
-    required SharedFolderIndexEntry entry,
-  }) {
-    if (cache.rootPath.startsWith('selection://')) {
-      return entry.absolutePath;
-    }
-    final localRelative = entry.relativePath.replaceAll('/', p.separator);
-    return p.join(cache.rootPath, localRelative);
   }
 
   List<DiscoveredDevice> get devices {
@@ -1060,27 +986,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<void> removeClipboardHistoryEntry(String entryId) async {
-    final normalizedId = entryId.trim();
-    if (normalizedId.isEmpty) {
-      return;
-    }
-
-    try {
-      final removed = await _clipboardHistoryStore.deleteEntry(normalizedId);
-      if (removed == null) {
-        return;
-      }
-      _errorMessage = null;
-      _infoMessage = 'Clipboard entry removed.';
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to remove clipboard entry: $error';
-      _log(_errorMessage!);
-      notifyListeners();
-    }
-  }
-
   Future<void> loadRemoteShareOptions() async {
     final targets = devices.where((device) => device.isAppDetected).toList();
     try {
@@ -1115,42 +1020,6 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
     }
     notifyListeners();
-  }
-
-  Future<void> requestDownloadFromRemoteShare(RemoteShareOption option) async {
-    await requestDownloadFromRemoteFiles(
-      ownerIp: option.ownerIp,
-      ownerName: option.ownerName,
-      selectedRelativePathsByCache: <String, Set<String>>{
-        option.entry.cacheId: <String>{},
-      },
-    );
-  }
-
-  Future<void> requestDownloadFromRemoteFiles({
-    required String ownerIp,
-    required String ownerName,
-    required Map<String, Set<String>> selectedRelativePathsByCache,
-  }) async {
-    await _transferSessionCoordinator.requestDownloadFromRemoteFiles(
-      ownerIp: ownerIp,
-      ownerName: ownerName,
-      selectedRelativePathsByCache: selectedRelativePathsByCache,
-    );
-  }
-
-  Future<String?> requestRemoteFilePreview({
-    required String ownerIp,
-    required String ownerName,
-    required String cacheId,
-    required String relativePath,
-  }) async {
-    return _transferSessionCoordinator.requestRemoteFilePreview(
-      ownerIp: ownerIp,
-      ownerName: ownerName,
-      cacheId: cacheId,
-      relativePath: relativePath,
-    );
   }
 
   Future<void> renameDeviceAlias({
@@ -1769,85 +1638,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<List<ShareableLocalFile>> listShareableLocalFiles() async {
-    await _loadOwnerCaches();
-    final files = <ShareableLocalFile>[];
-    final seenPaths = <String>{};
-    var processed = 0;
-
-    for (final cache in _ownerCachesSnapshot) {
-      final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-      for (final entry in entries) {
-        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
-        if (absolutePath == null || absolutePath.trim().isEmpty) {
-          continue;
-        }
-        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
-        final dedupeKey = Platform.isWindows
-            ? normalizedPath.toLowerCase()
-            : normalizedPath;
-        if (!seenPaths.add(dedupeKey)) {
-          continue;
-        }
-
-        files.add(
-          ShareableLocalFile(
-            cacheId: cache.cacheId,
-            cacheDisplayName: cache.displayName,
-            relativePath: entry.relativePath,
-            virtualPath: _buildShareVirtualPath(cache: cache, entry: entry),
-            absolutePath: absolutePath,
-            sizeBytes: entry.sizeBytes,
-            modifiedAtMs: entry.modifiedAtMs,
-            isSelectionCache: cache.rootPath.startsWith('selection://'),
-          ),
-        );
-        processed += 1;
-        if (processed % 500 == 0) {
-          await Future<void>.delayed(Duration.zero);
-        }
-      }
-    }
-
-    files.sort((a, b) {
-      final nameCmp = p
-          .basename(a.relativePath)
-          .toLowerCase()
-          .compareTo(p.basename(b.relativePath).toLowerCase());
-      if (nameCmp != 0) {
-        return nameCmp;
-      }
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      return a.relativePath.toLowerCase().compareTo(
-        b.relativePath.toLowerCase(),
-      );
-    });
-    return files;
-  }
-
-  String _buildShareVirtualPath({
-    required SharedFolderCacheRecord cache,
-    required SharedFolderIndexEntry entry,
-  }) {
-    final normalizedRelative = _normalizeVirtualFolderPath(entry.relativePath);
-    if (cache.rootPath.startsWith('selection://')) {
-      return p.basename(normalizedRelative);
-    }
-    final cacheRoot = _normalizeVirtualFolderPath(cache.displayName);
-    if (cacheRoot.isEmpty) {
-      return normalizedRelative;
-    }
-    if (normalizedRelative.isEmpty) {
-      return cacheRoot;
-    }
-    return '$cacheRoot/$normalizedRelative';
-  }
-
   String _normalizeVirtualFolderPath(String value) {
     return value
         .replaceAll('\\', '/')
@@ -1929,20 +1719,6 @@ class DiscoveryController extends ChangeNotifier {
     } finally {
       notifyListeners();
     }
-  }
-
-  Future<void> respondToTransferRequest({
-    required String requestId,
-    required bool approved,
-    bool forPreview = false,
-    String? previewRelativePath,
-  }) async {
-    await _transferSessionCoordinator.respondToTransferRequest(
-      requestId: requestId,
-      approved: approved,
-      forPreview: forPreview,
-      previewRelativePath: previewRelativePath,
-    );
   }
 
   Future<void> _refresh({required bool isManual}) async {
@@ -2907,15 +2683,8 @@ class DiscoveryController extends ChangeNotifier {
   void dispose() {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
-    _downloadHistoryBoundary.removeListener(
-      _handleDownloadHistoryBoundaryChanged,
-    );
     _downloadHistoryBoundary.dispose();
-    _clipboardHistoryStore.removeListener(_handleClipboardHistoryStoreChanged);
     _clipboardHistoryStore.dispose();
-    _remoteClipboardProjectionStore.removeListener(
-      _handleRemoteClipboardProjectionStoreChanged,
-    );
     _remoteClipboardProjectionStore.dispose();
     _transferSessionCoordinator.removeListener(
       _handleTransferSessionCoordinatorChanged,

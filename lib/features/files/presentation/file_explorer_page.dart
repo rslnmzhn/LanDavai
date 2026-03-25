@@ -18,6 +18,9 @@ import '../../../app/theme/app_spacing.dart';
 import '../application/file_explorer_contract.dart';
 import '../application/files_feature_state_owner.dart';
 import '../application/preview_cache_owner.dart';
+import '../../transfer/application/shared_cache_catalog.dart';
+import '../../transfer/application/shared_cache_index_store.dart';
+import '../../transfer/domain/shared_folder_cache.dart';
 
 part 'file_explorer/file_explorer_models.dart';
 part 'file_explorer/file_explorer_recache_status.dart';
@@ -36,9 +39,32 @@ class FileExplorerPage extends StatefulWidget {
     this.sharedRecacheProgress,
     this.sharedRecacheDetails,
     super.key,
-  });
+  }) : _launchConfig = null;
 
-  final FilesFeatureStateOwner owner;
+  FileExplorerPage.launch({
+    required SharedCacheCatalog sharedCacheCatalog,
+    required SharedCacheIndexStore sharedCacheIndexStore,
+    required this.previewCacheOwner,
+    required String ownerMacAddress,
+    required String receiveDirectoryPath,
+    String? publicDownloadsDirectoryPath,
+    this.onRecacheSharedFolders,
+    this.onRemoveSharedCache,
+    this.recacheStateListenable,
+    this.isSharedRecacheInProgress,
+    this.sharedRecacheProgress,
+    this.sharedRecacheDetails,
+    super.key,
+  }) : owner = null,
+       _launchConfig = _FileExplorerLaunchConfig(
+         sharedCacheCatalog: sharedCacheCatalog,
+         sharedCacheIndexStore: sharedCacheIndexStore,
+         ownerMacAddress: ownerMacAddress,
+         receiveDirectoryPath: receiveDirectoryPath,
+         publicDownloadsDirectoryPath: publicDownloadsDirectoryPath,
+       );
+
+  final FilesFeatureStateOwner? owner;
   final PreviewCacheOwner previewCacheOwner;
   final Future<SharedRecacheActionResult> Function(String virtualFolderPath)?
   onRecacheSharedFolders;
@@ -48,6 +74,7 @@ class FileExplorerPage extends StatefulWidget {
   final bool Function()? isSharedRecacheInProgress;
   final double? Function()? sharedRecacheProgress;
   final SharedRecacheProgressDetails? Function()? sharedRecacheDetails;
+  final _FileExplorerLaunchConfig? _launchConfig;
 
   @override
   State<FileExplorerPage> createState() => _FileExplorerPageState();
@@ -55,6 +82,19 @@ class FileExplorerPage extends StatefulWidget {
 
 class _FileExplorerPageState extends State<FileExplorerPage> {
   final TextEditingController _searchController = TextEditingController();
+  FilesFeatureStateOwner? _ownedOwner;
+  FilesFeatureStateOwner? _attachedOwner;
+  String? _launchErrorMessage;
+
+  FilesFeatureStateOwner? get _owner => widget.owner ?? _ownedOwner;
+
+  FilesFeatureStateOwner get _requiredOwner {
+    final owner = _owner;
+    if (owner == null) {
+      throw StateError('File explorer owner is not ready.');
+    }
+    return owner;
+  }
 
   bool get _isSharedRecacheRunning {
     final resolver = widget.isSharedRecacheInProgress;
@@ -83,23 +123,34 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   @override
   void initState() {
     super.initState();
-    widget.owner.addListener(_handleOwnerChanged);
-    _syncSearchController();
+    _attachOwner(_owner);
+    if (_owner == null) {
+      unawaited(_initializeLaunchOwner());
+    }
   }
 
   @override
   void didUpdateWidget(covariant FileExplorerPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.owner != widget.owner) {
-      oldWidget.owner.removeListener(_handleOwnerChanged);
-      widget.owner.addListener(_handleOwnerChanged);
-      _syncSearchController();
+    if (!identical(oldWidget.owner, widget.owner)) {
+      _attachOwner(widget.owner);
+      if (widget.owner != null) {
+        _disposeOwnedOwner();
+        setState(() {
+          _launchErrorMessage = null;
+        });
+      }
+    } else if (widget.owner == null &&
+        _ownedOwner == null &&
+        widget._launchConfig != null) {
+      unawaited(_initializeLaunchOwner());
     }
   }
 
   @override
   void dispose() {
-    widget.owner.removeListener(_handleOwnerChanged);
+    _attachOwner(null);
+    _disposeOwnedOwner();
     _searchController.dispose();
     super.dispose();
   }
@@ -109,7 +160,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   }
 
   void _syncSearchController() {
-    final query = widget.owner.state.searchQuery;
+    final owner = _owner;
+    if (owner == null) {
+      return;
+    }
+    final query = owner.state.searchQuery;
     if (_searchController.text == query) {
       return;
     }
@@ -121,16 +176,38 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final owner = _owner;
+    if (owner == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Files')),
+        body: Center(
+          child: _launchErrorMessage == null
+              ? const CircularProgressIndicator()
+              : Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_launchErrorMessage!, textAlign: TextAlign.center),
+                      const SizedBox(height: AppSpacing.sm),
+                      FilledButton(
+                        onPressed: _initializeLaunchOwner,
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                ),
+        ),
+      );
+    }
+
     final animation = widget.recacheStateListenable == null
-        ? widget.owner
-        : Listenable.merge(<Listenable>[
-            widget.owner,
-            widget.recacheStateListenable!,
-          ]);
+        ? owner
+        : Listenable.merge(<Listenable>[owner, widget.recacheStateListenable!]);
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
-        final state = widget.owner.state;
+        final state = owner.state;
         final selectedRoot = state.selectedRoot;
         final visibleEntries = state.visibleEntries;
         final canRecacheSelectedRoot =
@@ -170,11 +247,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                 children: [
                   _ExplorerPathHeader(
                     rootLabel: selectedRoot?.label ?? 'Files',
-                    relativePath: widget.owner.relativePathLabel(),
-                    canGoUp: widget.owner.canGoUp,
-                    onGoUp: widget.owner.canGoUp
-                        ? () => widget.owner.goUp()
-                        : null,
+                    relativePath: owner.relativePathLabel(),
+                    canGoUp: owner.canGoUp,
+                    onGoUp: owner.canGoUp ? () => owner.goUp() : null,
                     canSelectRoot: state.roots.isNotEmpty,
                     onSelectRoot: state.roots.isNotEmpty ? _pickRoot : null,
                   ),
@@ -183,7 +258,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                     children: [
                       _DisplayModeToggle(
                         isGrid: state.viewMode == FilesFeatureViewMode.grid,
-                        onToggle: widget.owner.toggleViewMode,
+                        onToggle: owner.toggleViewMode,
                       ),
                       const SizedBox(width: AppSpacing.sm),
                       Expanded(
@@ -191,7 +266,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                           height: 40,
                           child: TextField(
                             controller: _searchController,
-                            onChanged: widget.owner.setSearchQuery,
+                            onChanged: owner.setSearchQuery,
                             decoration: const InputDecoration(
                               isDense: true,
                               border: OutlineInputBorder(),
@@ -303,7 +378,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                                           setMenuState(() {
                                             menuTileSize = next;
                                           });
-                                          widget.owner.setGridTileExtent(next);
+                                          owner.setGridTileExtent(next);
                                         },
                                       ),
                                     ],
@@ -347,7 +422,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                     const SizedBox(height: AppSpacing.sm),
                     _ExplorerErrorBanner(
                       message: state.errorMessage!,
-                      onRetry: widget.owner.refreshCurrentRoot,
+                      onRetry: owner.refreshCurrentRoot,
                     ),
                   ],
                   const SizedBox(height: AppSpacing.sm),
@@ -427,6 +502,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   }
 
   Future<void> _removeSharedCacheFromEntry(FilesFeatureEntry entry) async {
+    final owner = _requiredOwner;
     final cacheId = entry.removableSharedCacheId;
     if (cacheId == null || cacheId.trim().isEmpty) {
       return;
@@ -466,9 +542,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return;
     }
 
-    widget.owner.clearVirtualFolderIfRemoved(entry.virtualFolderPath ?? '');
-    widget.owner.invalidateSelectedVirtualRootCache();
-    await widget.owner.refreshCurrentRoot();
+    owner.clearVirtualFolderIfRemoved(entry.virtualFolderPath ?? '');
+    owner.invalidateSelectedVirtualRootCache();
+    await owner.refreshCurrentRoot();
   }
 
   String _formatEta(Duration eta) {
@@ -483,7 +559,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   }
 
   void _handleMenuAction(_ExplorerMenuAction action) {
-    widget.owner.setSortOption(_sortOptionFromMenuAction(action));
+    _requiredOwner.setSortOption(_sortOptionFromMenuAction(action));
   }
 
   FilesFeatureSortOption _sortOptionFromMenuAction(_ExplorerMenuAction action) {
@@ -508,7 +584,8 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
   }
 
   Future<void> _pickRoot() async {
-    final state = widget.owner.state;
+    final owner = _requiredOwner;
+    final state = owner.state;
     final selected = await showModalBottomSheet<int>(
       context: context,
       builder: (context) {
@@ -537,29 +614,30 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     if (selected == null || !mounted) {
       return;
     }
-    await widget.owner.selectRoot(selected);
+    await owner.selectRoot(selected);
   }
 
   Future<void> _handleRefreshAction({
     required bool canRecacheSelectedRoot,
   }) async {
+    final owner = _requiredOwner;
     if (!canRecacheSelectedRoot) {
-      widget.owner.invalidateSelectedVirtualRootCache();
-      await widget.owner.refreshCurrentRoot();
+      owner.invalidateSelectedVirtualRootCache();
+      await owner.refreshCurrentRoot();
       return;
     }
     final action = await widget.onRecacheSharedFolders!.call(
-      widget.owner.normalizedVirtualCurrentFolder,
+      owner.normalizedVirtualCurrentFolder,
     );
     if (action == SharedRecacheActionResult.cancelled) {
       return;
     }
-    widget.owner.invalidateSelectedVirtualRootCache();
-    await widget.owner.refreshCurrentRoot();
+    owner.invalidateSelectedVirtualRootCache();
+    await owner.refreshCurrentRoot();
   }
 
   Future<void> _openEntry(FilesFeatureEntry entry) async {
-    final openedDirectory = await widget.owner.openDirectory(entry);
+    final openedDirectory = await _requiredOwner.openDirectory(entry);
     if (openedDirectory) {
       return;
     }
@@ -578,4 +656,324 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       ),
     );
   }
+
+  void _attachOwner(FilesFeatureStateOwner? owner) {
+    if (identical(_attachedOwner, owner)) {
+      return;
+    }
+    _attachedOwner?.removeListener(_handleOwnerChanged);
+    _attachedOwner = owner;
+    _attachedOwner?.addListener(_handleOwnerChanged);
+    _syncSearchController();
+  }
+
+  void _disposeOwnedOwner() {
+    final owner = _ownedOwner;
+    if (owner == null) {
+      return;
+    }
+    if (identical(_attachedOwner, owner)) {
+      _attachOwner(null);
+    }
+    _ownedOwner = null;
+    owner.dispose();
+  }
+
+  Future<void> _initializeLaunchOwner() async {
+    final config = widget._launchConfig;
+    if (config == null) {
+      return;
+    }
+
+    setState(() {
+      _launchErrorMessage = null;
+    });
+
+    try {
+      final roots = await _buildLaunchRoots(config);
+      final nextOwner = FilesFeatureStateOwner(roots: roots);
+      await nextOwner.initialize();
+      if (!mounted) {
+        nextOwner.dispose();
+        return;
+      }
+
+      final previousOwner = _ownedOwner;
+      setState(() {
+        _ownedOwner = nextOwner;
+        _launchErrorMessage = null;
+      });
+      _attachOwner(nextOwner);
+      if (previousOwner != null && !identical(previousOwner, nextOwner)) {
+        previousOwner.dispose();
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _launchErrorMessage = 'Cannot open files: $error';
+      });
+    }
+  }
+
+  Future<List<FileExplorerRoot>> _buildLaunchRoots(
+    _FileExplorerLaunchConfig config,
+  ) async {
+    final roots = <FileExplorerRoot>[];
+    final seenPaths = <String>{};
+
+    void addLocalRoot({required String label, required String path}) {
+      final normalized = _normalizePathKey(path);
+      if (normalized.isEmpty || seenPaths.contains(normalized)) {
+        return;
+      }
+      if (!Directory(path).existsSync()) {
+        return;
+      }
+      seenPaths.add(normalized);
+      roots.add(FileExplorerRoot(label: label, path: path));
+    }
+
+    final publicDownloadsPath = config.publicDownloadsDirectoryPath?.trim();
+    if (publicDownloadsPath != null && publicDownloadsPath.isNotEmpty) {
+      addLocalRoot(label: 'Landa Downloads', path: publicDownloadsPath);
+    }
+    addLocalRoot(label: 'Incoming', path: config.receiveDirectoryPath);
+
+    final ownerCaches = await _loadOwnerCaches(config);
+    final hasSharedFiles = ownerCaches.any((cache) => cache.itemCount > 0);
+    if (hasSharedFiles) {
+      roots.add(
+        FileExplorerRoot(
+          label: 'My files',
+          path: 'virtual://my-files',
+          isSharedFolder: true,
+          virtualDirectoryLoader: (folderPath) =>
+              _listShareableLocalDirectory(config, folderPath),
+        ),
+      );
+    }
+
+    return roots;
+  }
+
+  Future<List<SharedFolderCacheRecord>> _loadOwnerCaches(
+    _FileExplorerLaunchConfig config,
+  ) async {
+    final ownerMacAddress = config.ownerMacAddress.trim();
+    if (ownerMacAddress.isNotEmpty) {
+      try {
+        await config.sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: ownerMacAddress,
+        );
+      } catch (_) {
+        // Keep using the last loaded owner snapshot in the current session.
+      }
+    }
+    return config.sharedCacheCatalog.ownerCaches;
+  }
+
+  Future<FileExplorerVirtualDirectory> _listShareableLocalDirectory(
+    _FileExplorerLaunchConfig config,
+    String virtualFolderPath,
+  ) async {
+    final caches = await _loadOwnerCaches(config);
+    final folder = _normalizeVirtualFolderPath(virtualFolderPath);
+    final foldersByPath = <String, FileExplorerVirtualFolder>{};
+    final files = <FileExplorerVirtualFile>[];
+    final seenFilePaths = <String>{};
+    var processed = 0;
+
+    for (final cache in caches) {
+      final isSelection = cache.rootPath.startsWith('selection://');
+      final cacheVirtualRoot = _normalizeVirtualFolderPath(cache.displayName);
+
+      if (folder.isEmpty && !isSelection) {
+        if (cacheVirtualRoot.isNotEmpty) {
+          final key = Platform.isWindows
+              ? cacheVirtualRoot.toLowerCase()
+              : cacheVirtualRoot;
+          foldersByPath.putIfAbsent(
+            key,
+            () => FileExplorerVirtualFolder(
+              name: cache.displayName,
+              folderPath: cacheVirtualRoot,
+              removableSharedCacheId: cache.cacheId,
+            ),
+          );
+        }
+        continue;
+      }
+
+      if (!isSelection &&
+          folder != cacheVirtualRoot &&
+          !folder.startsWith('$cacheVirtualRoot/')) {
+        continue;
+      }
+      if (isSelection && folder.isNotEmpty) {
+        continue;
+      }
+
+      final subFolder = !isSelection && folder != cacheVirtualRoot
+          ? folder.substring(cacheVirtualRoot.length + 1)
+          : '';
+      final entries = await config.sharedCacheIndexStore.readIndexEntries(
+        cache,
+      );
+      for (final entry in entries) {
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+
+        final virtualPath = _buildShareVirtualPath(cache: cache, entry: entry);
+        final relativeInsideCache = isSelection
+            ? _normalizeVirtualFolderPath(virtualPath)
+            : _normalizeVirtualFolderPath(entry.relativePath);
+        final rest = _relativeRestForFolder(
+          folder: subFolder,
+          targetPath: relativeInsideCache,
+        );
+        if (rest == null || rest.isEmpty) {
+          continue;
+        }
+
+        final slashIndex = rest.indexOf('/');
+        if (!isSelection && slashIndex != -1) {
+          final folderName = rest.substring(0, slashIndex);
+          final folderPath = folder.isEmpty
+              ? folderName
+              : '$folder/$folderName';
+          final normalizedFolderPath = _normalizeVirtualFolderPath(folderPath);
+          final dedupeKey = Platform.isWindows
+              ? normalizedFolderPath.toLowerCase()
+              : normalizedFolderPath;
+          foldersByPath.putIfAbsent(
+            dedupeKey,
+            () => FileExplorerVirtualFolder(
+              name: folderName,
+              folderPath: normalizedFolderPath,
+            ),
+          );
+          continue;
+        }
+
+        final normalizedPath = p.normalize(absolutePath).replaceAll('\\', '/');
+        final fileKey = Platform.isWindows
+            ? normalizedPath.toLowerCase()
+            : normalizedPath;
+        if (!seenFilePaths.add(fileKey)) {
+          continue;
+        }
+
+        files.add(
+          FileExplorerVirtualFile(
+            path: absolutePath,
+            subtitle: '${cache.displayName} / ${entry.relativePath}',
+            virtualPath: virtualPath,
+            sizeBytes: entry.sizeBytes,
+            modifiedAt: DateTime.fromMillisecondsSinceEpoch(entry.modifiedAtMs),
+            changedAt: DateTime.fromMillisecondsSinceEpoch(entry.modifiedAtMs),
+          ),
+        );
+        processed += 1;
+        if (processed % 500 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
+      }
+    }
+
+    final folders = foldersByPath.values.toList(growable: false)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    files.sort((a, b) {
+      final nameCmp = p
+          .basename(a.virtualPath)
+          .toLowerCase()
+          .compareTo(p.basename(b.virtualPath).toLowerCase());
+      if (nameCmp != 0) {
+        return nameCmp;
+      }
+      return a.virtualPath.toLowerCase().compareTo(b.virtualPath.toLowerCase());
+    });
+
+    return FileExplorerVirtualDirectory(folders: folders, files: files);
+  }
+
+  String _buildShareVirtualPath({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+  }) {
+    final normalizedRelative = _normalizeVirtualFolderPath(entry.relativePath);
+    if (cache.rootPath.startsWith('selection://')) {
+      return p.basename(normalizedRelative);
+    }
+    final cacheRoot = _normalizeVirtualFolderPath(cache.displayName);
+    if (cacheRoot.isEmpty) {
+      return normalizedRelative;
+    }
+    if (normalizedRelative.isEmpty) {
+      return cacheRoot;
+    }
+    return '$cacheRoot/$normalizedRelative';
+  }
+
+  String _normalizeVirtualFolderPath(String value) {
+    return value
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((part) => part.isNotEmpty && part != '.')
+        .join('/');
+  }
+
+  String _normalizePathKey(String value) {
+    var normalized = p.normalize(value).replaceAll('\\', '/').trim();
+    if (Platform.isWindows) {
+      normalized = normalized.toLowerCase();
+    }
+    return normalized;
+  }
+
+  String? _relativeRestForFolder({
+    required String folder,
+    required String targetPath,
+  }) {
+    if (folder.isEmpty) {
+      return targetPath;
+    }
+    if (targetPath == folder) {
+      return '';
+    }
+    if (!targetPath.startsWith('$folder/')) {
+      return null;
+    }
+    return targetPath.substring(folder.length + 1);
+  }
+
+  String? _resolveCacheFilePath({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+  }) {
+    if (cache.rootPath.startsWith('selection://')) {
+      return entry.absolutePath;
+    }
+    final localRelative = entry.relativePath.replaceAll('/', p.separator);
+    return p.join(cache.rootPath, localRelative);
+  }
+}
+
+class _FileExplorerLaunchConfig {
+  const _FileExplorerLaunchConfig({
+    required this.sharedCacheCatalog,
+    required this.sharedCacheIndexStore,
+    required this.ownerMacAddress,
+    required this.receiveDirectoryPath,
+    this.publicDownloadsDirectoryPath,
+  });
+
+  final SharedCacheCatalog sharedCacheCatalog;
+  final SharedCacheIndexStore sharedCacheIndexStore;
+  final String ownerMacAddress;
+  final String receiveDirectoryPath;
+  final String? publicDownloadsDirectoryPath;
 }

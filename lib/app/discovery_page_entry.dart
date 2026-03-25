@@ -46,6 +46,7 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.sharedCacheCatalog,
     this.sharedCacheIndexStore,
     this.previewCacheOwner,
+    this.transferSessionCoordinator,
     this.downloadHistoryBoundary,
     this.clipboardHistoryStore,
     this.remoteClipboardProjectionStore,
@@ -60,6 +61,7 @@ class DiscoveryPageEntry extends StatefulWidget {
                  sharedCacheCatalog != null &&
                  sharedCacheIndexStore != null &&
                  previewCacheOwner != null &&
+                 transferSessionCoordinator != null &&
                  downloadHistoryBoundary != null &&
                  clipboardHistoryStore != null &&
                  remoteClipboardProjectionStore != null),
@@ -75,6 +77,7 @@ class DiscoveryPageEntry extends StatefulWidget {
   final SharedCacheCatalog? sharedCacheCatalog;
   final SharedCacheIndexStore? sharedCacheIndexStore;
   final PreviewCacheOwner? previewCacheOwner;
+  final TransferSessionCoordinator? transferSessionCoordinator;
   final DownloadHistoryBoundary? downloadHistoryBoundary;
   final ClipboardHistoryStore? clipboardHistoryStore;
   final RemoteClipboardProjectionStore? remoteClipboardProjectionStore;
@@ -94,6 +97,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final SharedCacheCatalog _sharedCacheCatalog;
   late final SharedCacheIndexStore _sharedCacheIndexStore;
   late final PreviewCacheOwner _previewCacheOwner;
+  late final TransferSessionCoordinator _transferSessionCoordinator;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
@@ -118,6 +122,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalog = widget.sharedCacheCatalog!;
       _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
       _previewCacheOwner = widget.previewCacheOwner!;
+      _transferSessionCoordinator = widget.transferSessionCoordinator!;
       _downloadHistoryBoundary = widget.downloadHistoryBoundary!;
       _clipboardHistoryStore = widget.clipboardHistoryStore!;
       _remoteClipboardProjectionStore = widget.remoteClipboardProjectionStore!;
@@ -134,6 +139,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _sharedCacheCatalog = boundary.sharedCacheCatalog;
       _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
       _previewCacheOwner = boundary.previewCacheOwner;
+      _transferSessionCoordinator = boundary.transferSessionCoordinator;
       _downloadHistoryBoundary = boundary.downloadHistoryBoundary;
       _clipboardHistoryStore = boundary.clipboardHistoryStore;
       _remoteClipboardProjectionStore = boundary.remoteClipboardProjectionStore;
@@ -177,6 +183,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalog: _sharedCacheCatalog,
       sharedCacheIndexStore: _sharedCacheIndexStore,
       previewCacheOwner: _previewCacheOwner,
+      transferSessionCoordinator: _transferSessionCoordinator,
       downloadHistoryBoundary: _downloadHistoryBoundary,
       clipboardHistoryStore: _clipboardHistoryStore,
       remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
@@ -325,6 +332,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheCatalogBridge: sharedCacheCatalogBridge,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      transferSessionCoordinator: transferSessionCoordinator,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
@@ -341,6 +349,7 @@ class _DiscoveryBoundary {
     required this.sharedCacheCatalogBridge,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
+    required this.transferSessionCoordinator,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -353,6 +362,7 @@ class _DiscoveryBoundary {
   final SharedCacheCatalogBridge sharedCacheCatalogBridge;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
+  final TransferSessionCoordinator transferSessionCoordinator;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
