@@ -1,13 +1,14 @@
 # Test Gates Matrix
 
-Derived from `docs/refactor_master_plan.md` and the tactical workpacks in `docs/refactor_workpacks/`.
+Derived from `docs/refactor_master_plan.md` and `docs/refactor_workpacks/00_index.md`.
 
-| Gate ID | Test family | Required before workpack | Protects | Hard stop failure | Related compatibility anchor |
-| --- | --- | --- | --- | --- | --- |
-| GATE-01 | repository contract tests | `02`, `03a`, `03b`, `04`, `05`, `10`, `13`, `20` | SQLite table semantics and persistence invariants | persisted rows no longer round-trip under pre-migration semantics | `known_devices`, `shared_folder_caches`, `friends`, `app_settings`, `clipboard_history`, `transfer_history` |
-| GATE-02 | protocol compatibility tests | `07`, `08`, `09`, `13a`, `14`, `17`, `21` | packet identifiers and envelope semantics | packet shape or decode semantics drift | UDP packet envelope semantics, handshake identifiers visible from Dart |
-| GATE-03 | identity mapping tests | `02`, `04`, `05`, `20` | MAC-vs-IP identity continuity | alias or trust no longer follows the same MAC after IP change | `known_devices`, `normalizeMac` |
-| GATE-04 | session continuity tests | `09`, `17`, `21` | inbound and outbound transfer session continuity | accepted transfer cannot complete end-to-end | transfer request and decision packet families, transfer-session lifecycle |
-| GATE-05 | shared cache consistency tests | `10`, `11`, `12`, `14`, `22` | metadata and index alignment plus receiver-cache stability | DB rows and JSON index diverge | `shared_folder_caches`, shared cache JSON index files |
-| GATE-06 | UI integration smoke tests | `03`, `06`, `12`, `13`, `13a`, `13b`, `14`, `15`, `16`, `20`, `22`, `23` | screen, sheet, and feature-flow survivability during cutovers | page, sheet, or feature flow cannot open or use the target boundary | `DiscoveryPage`, `ClipboardSheet`, files feature entry flows, history sheet entry flow |
-| GATE-07 | migration regression tests | `03a`, `04`, `06`, `12`, `13`, `13a`, `13b`, `14`, `15`, `16`, `17`, `20`, `22`, `23` | parity between legacy and target paths during temporary cutovers | old and new paths diverge before deletion proof | legacy mirrors, temporary bridges, temporary facades |
+| Gate ID | Test family | Required before workpack | Protects | Hard stop failure |
+| --- | --- | --- | --- | --- |
+| `GATE-01` | local identity and persistence contract tests | `01` | `local_peer_id` semantics and isolation from friend endpoint ownership | local peer identity still round-trips only through `FriendRepository` or silently drifts |
+| `GATE-02` | shared-cache maintenance and catalog/index integration tests | `04`, `05`, `07` | shared-cache maintenance commands, progress, metadata/index consistency | shared-cache maintenance path or metadata/index parity drifts |
+| `GATE-03` | discovery/files UI smoke and widget tests | `02`, `03`, `04`, `05` | discovery entry flows, files entry flows, history/clipboard launch survivability after UI shell changes | a key screen or modal can no longer open or render correctly |
+| `GATE-04` | remote-share media and thumbnail regression tests | `06`, `07` | thumbnail reuse, projection update, preview/thumbnail path continuity | remote-share media updates require controller/repository bypass to work |
+| `GATE-05` | transfer and video-link continuity tests | `08` | separation between file-transfer session truth and watch-link session truth | transfer and video-link flows interfere or one breaks during separation |
+| `GATE-06` | protocol compatibility tests | `09` | packet identifiers, envelope semantics, and codec parity during module split | wire semantics drift or decode parity breaks |
+| `GATE-07` | architecture guard tests | `04`, `05`, `10` | no reintroduction of temporary bridges, callback backchannels, or critical `part` ownership | prohibited architectural residue can be added without a failing test |
+| `GATE-08` | full regression suite | `01` through `10` | overall app continuity after every structural change | `flutter analyze` or `flutter test` fails |
