@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/core/storage/app_database.dart';
-import 'package:landa/features/discovery/data/friend_repository.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
@@ -11,7 +11,7 @@ void main() {
   late TestAppDatabaseHarness harness;
   late AppSettingsRepository repository;
   late SettingsStore store;
-  late FriendRepository friendRepository;
+  late LocalPeerIdentityStore localPeerIdentityStore;
 
   setUp(() async {
     harness = await TestAppDatabaseHarness.create(
@@ -19,7 +19,7 @@ void main() {
     );
     repository = AppSettingsRepository(database: harness.database);
     store = SettingsStore(appSettingsRepository: repository);
-    friendRepository = FriendRepository(database: harness.database);
+    localPeerIdentityStore = LocalPeerIdentityStore(database: harness.database);
   });
 
   tearDown(() async {
@@ -30,7 +30,7 @@ void main() {
   test(
     'load ignores local_peer_id contamination when no app settings exist',
     () async {
-      await friendRepository.loadOrCreateLocalPeerId();
+      await localPeerIdentityStore.loadOrCreateLocalPeerId();
 
       await store.load();
 
@@ -76,7 +76,8 @@ void main() {
   test(
     'save preserves existing local_peer_id row while keeping app_settings semantics unchanged',
     () async {
-      final localPeerId = await friendRepository.loadOrCreateLocalPeerId();
+      final localPeerId = await localPeerIdentityStore
+          .loadOrCreateLocalPeerId();
       const expected = AppSettings(
         backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
         downloadAttemptNotificationsEnabled: false,

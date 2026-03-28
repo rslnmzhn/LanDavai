@@ -13,6 +13,7 @@ import '../features/discovery/application/discovery_controller.dart';
 import '../features/discovery/application/discovery_read_model.dart';
 import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/application/internet_peer_endpoint_store.dart';
+import '../features/discovery/application/local_peer_identity_store.dart';
 import '../features/discovery/application/remote_share_browser.dart';
 import '../features/discovery/application/shared_cache_catalog_bridge.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
@@ -210,6 +211,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final database = AppDatabase.instance;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
+    final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
     final settingsRepository = AppSettingsRepository(database: database);
     final settingsStore = SettingsStore(
       appSettingsRepository: settingsRepository,
@@ -288,7 +290,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
-      friendRepository: friendRepository,
+      localPeerIdentityStore: localPeerIdentityStore,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,

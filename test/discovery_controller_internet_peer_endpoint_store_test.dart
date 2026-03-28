@@ -7,13 +7,13 @@ import 'package:landa/features/clipboard/data/clipboard_history_repository.dart'
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
-import 'package:landa/features/discovery/domain/friend_peer.dart';
 import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
@@ -31,7 +31,6 @@ import 'test_support/test_app_database.dart';
 void main() {
   late TestAppDatabaseHarness harness;
   late FriendRepository storeRepository;
-  late ThrowingEndpointFriendRepository controllerRepository;
   late InternetPeerEndpointStore endpointStore;
   late RecordingLanDiscoveryService lanDiscoveryService;
   DiscoveryController? controller;
@@ -41,9 +40,6 @@ void main() {
       prefix: 'landa_discovery_endpoint_store_',
     );
     storeRepository = FriendRepository(database: harness.database);
-    controllerRepository = ThrowingEndpointFriendRepository(
-      database: harness.database,
-    );
     endpointStore = InternetPeerEndpointStore(
       friendRepository: storeRepository,
     );
@@ -63,7 +59,6 @@ void main() {
         database: harness.database,
         lanDiscoveryService: lanDiscoveryService,
         endpointStore: endpointStore,
-        friendRepository: controllerRepository,
       );
 
       await controller!.saveFriend(
@@ -95,7 +90,6 @@ void main() {
         database: harness.database,
         lanDiscoveryService: lanDiscoveryService,
         endpointStore: endpointStore,
-        friendRepository: controllerRepository,
       );
 
       await controller!.setFriendEnabled(friendId: 'peer-1', enabled: false);
@@ -117,7 +111,6 @@ DiscoveryController _buildController({
   required AppDatabase database,
   required RecordingLanDiscoveryService lanDiscoveryService,
   required InternetPeerEndpointStore endpointStore,
-  required FriendRepository friendRepository,
 }) {
   final deviceAliasRepository = DeviceAliasRepository(database: database);
   final deviceRegistry = DeviceRegistry(
@@ -126,6 +119,7 @@ DiscoveryController _buildController({
   final settingsStore = SettingsStore(
     appSettingsRepository: AppSettingsRepository(database: database),
   );
+  final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
   final sharedFolderCacheRepository = SharedFolderCacheRepository(
     database: database,
   );
@@ -149,7 +143,7 @@ DiscoveryController _buildController({
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     ),
-    friendRepository: friendRepository,
+    localPeerIdentityStore: localPeerIdentityStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -168,47 +162,6 @@ DiscoveryController _buildController({
     videoLinkShareService: VideoLinkShareService(),
     pathOpener: PathOpener(),
   );
-}
-
-class ThrowingEndpointFriendRepository extends FriendRepository {
-  ThrowingEndpointFriendRepository({required super.database});
-
-  @override
-  Future<List<FriendPeer>> listFriends() {
-    throw StateError(
-      'DiscoveryController must not read endpoint rows directly',
-    );
-  }
-
-  @override
-  Future<void> upsertFriend({
-    required String friendId,
-    required String displayName,
-    required String endpointHost,
-    required int endpointPort,
-    required bool isEnabled,
-  }) {
-    throw StateError(
-      'DiscoveryController must not write endpoint rows directly',
-    );
-  }
-
-  @override
-  Future<void> removeFriend(String friendId) {
-    throw StateError(
-      'DiscoveryController must not remove endpoint rows directly',
-    );
-  }
-
-  @override
-  Future<void> setFriendEnabled({
-    required String friendId,
-    required bool isEnabled,
-  }) {
-    throw StateError(
-      'DiscoveryController must not toggle endpoint rows directly',
-    );
-  }
 }
 
 class RecordingLanDiscoveryService extends LanDiscoveryService {

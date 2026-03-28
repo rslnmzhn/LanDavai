@@ -35,9 +35,9 @@ import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'device_registry.dart';
 import 'internet_peer_endpoint_store.dart';
+import 'local_peer_identity_store.dart';
 import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
-import '../data/friend_repository.dart';
 import '../data/lan_discovery_service.dart';
 import '../data/lan_packet_codec.dart';
 import '../data/lan_protocol_events.dart';
@@ -233,7 +233,7 @@ class DiscoveryController extends ChangeNotifier {
     required DeviceRegistry deviceRegistry,
     required InternetPeerEndpointStore internetPeerEndpointStore,
     required TrustedLanPeerStore trustedLanPeerStore,
-    required FriendRepository friendRepository,
+    required LocalPeerIdentityStore localPeerIdentityStore,
     required SettingsStore settingsStore,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
@@ -258,7 +258,7 @@ class DiscoveryController extends ChangeNotifier {
        _deviceRegistry = deviceRegistry,
        _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
-       _friendRepository = friendRepository,
+       _localPeerIdentityStore = localPeerIdentityStore,
        _settingsStore = settingsStore,
        _appNotificationService = appNotificationService,
        _remoteShareBrowser = remoteShareBrowser,
@@ -332,7 +332,7 @@ class DiscoveryController extends ChangeNotifier {
   final DeviceRegistry _deviceRegistry;
   final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
-  final FriendRepository _friendRepository;
+  final LocalPeerIdentityStore _localPeerIdentityStore;
   final SettingsStore _settingsStore;
   final AppNotificationService _appNotificationService;
   final RemoteShareBrowser _remoteShareBrowser;
@@ -514,7 +514,7 @@ class DiscoveryController extends ChangeNotifier {
     _started = true;
 
     await _resolveLocalAddress();
-    _localPeerId = await _friendRepository.loadOrCreateLocalPeerId();
+    _localPeerId = await _localPeerIdentityStore.loadOrCreateLocalPeerId();
     _resolveLocalDeviceMac();
     try {
       await _deviceRegistry.load();

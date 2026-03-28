@@ -7,6 +7,7 @@ import 'package:landa/features/clipboard/data/clipboard_history_repository.dart'
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
@@ -61,6 +62,7 @@ void main() {
         sharedCacheIndexStore: sharedCacheIndexStore,
       );
       final fileHashService = FileHashService();
+      final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
       final remoteClipboardProjectionStore =
           TrackingRemoteClipboardProjectionStore(
             fileHashService: fileHashService,
@@ -78,7 +80,7 @@ void main() {
           friendRepository: FriendRepository(database: database),
         ),
         trustedLanPeerStore: trustedLanPeerStore,
-        friendRepository: FriendRepository(database: database),
+        localPeerIdentityStore: localPeerIdentityStore,
         settingsStore: settingsStore,
         appNotificationService: AppNotificationService.instance,
         transferHistoryRepository: TransferHistoryRepository(

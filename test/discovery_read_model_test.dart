@@ -8,6 +8,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
@@ -159,6 +160,7 @@ DiscoveryController _buildController({
     sharedCacheIndexStore: sharedCacheIndexStore,
   );
   final fileHashService = FileHashService();
+  final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
   final previewCacheOwner = PreviewCacheOwner(
     sharedFolderCacheRepository: sharedFolderCacheRepository,
     sharedCacheIndexStore: sharedCacheIndexStore,
@@ -172,7 +174,7 @@ DiscoveryController _buildController({
     deviceRegistry: deviceRegistry,
     internetPeerEndpointStore: internetPeerEndpointStore,
     trustedLanPeerStore: trustedLanPeerStore,
-    friendRepository: FriendRepository(database: database),
+    localPeerIdentityStore: localPeerIdentityStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),

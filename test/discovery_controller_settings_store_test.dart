@@ -7,6 +7,7 @@ import 'package:landa/features/clipboard/data/clipboard_history_repository.dart'
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
@@ -100,8 +101,11 @@ void main() {
   test(
     'settings mutation routes through SettingsStore and leaves local_peer_id untouched',
     () async {
-      final friendRepository = FriendRepository(database: harness.database);
-      final localPeerId = await friendRepository.loadOrCreateLocalPeerId();
+      final localPeerIdentityStore = LocalPeerIdentityStore(
+        database: harness.database,
+      );
+      final localPeerId = await localPeerIdentityStore
+          .loadOrCreateLocalPeerId();
       final trackingSettingsStore = TrackingSettingsStore(
         appSettingsRepository: AppSettingsRepository(
           database: harness.database,
@@ -143,6 +147,7 @@ DiscoveryController _buildController({
     deviceAliasRepository: deviceAliasRepository,
   );
   final endpointRepository = FriendRepository(database: database);
+  final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
   final sharedFolderCacheRepository = SharedFolderCacheRepository(
     database: database,
   );
@@ -168,7 +173,7 @@ DiscoveryController _buildController({
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     ),
-    friendRepository: FriendRepository(database: database),
+    localPeerIdentityStore: localPeerIdentityStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),

@@ -1,6 +1,5 @@
-import 'dart:math';
-
 import 'package:sqflite/sqflite.dart';
+
 import '../../../core/storage/app_database.dart';
 import '../domain/friend_peer.dart';
 
@@ -8,35 +7,6 @@ class FriendRepository {
   FriendRepository({required AppDatabase database}) : _database = database;
 
   final AppDatabase _database;
-
-  static const String _localPeerIdKey = 'local_peer_id';
-
-  Future<String> loadOrCreateLocalPeerId() async {
-    final db = await _database.database;
-    final row = await db.query(
-      AppDatabase.appSettingsTable,
-      columns: <String>['setting_value'],
-      where: 'setting_key = ?',
-      whereArgs: <Object>[_localPeerIdKey],
-      limit: 1,
-    );
-    if (row.isNotEmpty) {
-      final existing = row.first['setting_value'] as String?;
-      final value = existing?.trim() ?? '';
-      if (value.isNotEmpty) {
-        return value;
-      }
-    }
-
-    final peerId = _generatePeerId();
-    final now = DateTime.now().millisecondsSinceEpoch;
-    await db.insert(AppDatabase.appSettingsTable, <String, Object>{
-      'setting_key': _localPeerIdKey,
-      'setting_value': peerId,
-      'updated_at': now,
-    }, conflictAlgorithm: ConflictAlgorithm.replace);
-    return peerId;
-  }
 
   Future<List<FriendPeer>> listFriends() async {
     final db = await _database.database;
@@ -120,15 +90,5 @@ class FriendRepository {
       isEnabled: ((row['is_enabled'] as int?) ?? 0) == 1,
       updatedAtMs: (row['updated_at'] as int?) ?? 0,
     );
-  }
-
-  String _generatePeerId() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final random = Random.secure();
-    final buffer = StringBuffer('LN-');
-    for (var i = 0; i < 10; i += 1) {
-      buffer.write(alphabet[random.nextInt(alphabet.length)]);
-    }
-    return buffer.toString();
   }
 }

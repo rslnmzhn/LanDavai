@@ -9,6 +9,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
+import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/shared_cache_catalog_bridge.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
@@ -70,6 +71,7 @@ class TestDiscoveryControllerHarness {
     final database = databaseHarness.database;
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
+    final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
     final settingsStore = SettingsStore(
       appSettingsRepository: AppSettingsRepository(database: database),
     );
@@ -150,7 +152,7 @@ class TestDiscoveryControllerHarness {
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
-      friendRepository: friendRepository,
+      localPeerIdentityStore: localPeerIdentityStore,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
@@ -218,7 +220,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.deviceRegistry,
     required super.internetPeerEndpointStore,
     required super.trustedLanPeerStore,
-    required super.friendRepository,
+    required super.localPeerIdentityStore,
     required super.settingsStore,
     required super.appNotificationService,
     required super.transferHistoryRepository,
