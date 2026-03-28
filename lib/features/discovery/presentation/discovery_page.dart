@@ -12,7 +12,6 @@ import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
-import '../../files/application/file_explorer_contract.dart';
 import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../history/application/download_history_boundary.dart';
@@ -21,11 +20,13 @@ import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
+import '../../transfer/data/thumbnail_cache_service.dart';
 import '../../transfer/data/transfer_storage_service.dart';
+import '../../transfer/domain/shared_folder_cache.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
 import '../application/remote_share_browser.dart';
-import '../application/shared_cache_catalog_bridge.dart';
+import '../application/shared_cache_maintenance_boundary.dart';
 import '../domain/discovered_device.dart';
 
 class DiscoveryPage extends StatefulWidget {
@@ -33,7 +34,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.controller,
     required this.readModel,
     required this.remoteShareBrowser,
-    required this.sharedCacheCatalogBridge,
+    required this.sharedCacheMaintenanceBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
@@ -50,7 +51,7 @@ class DiscoveryPage extends StatefulWidget {
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
-  final SharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
@@ -75,8 +76,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   DiscoveryController get _controller => widget.controller;
   DiscoveryReadModel get _readModel => widget.readModel;
   RemoteShareBrowser get _remoteShareBrowser => widget.remoteShareBrowser;
-  SharedCacheCatalogBridge get _sharedCacheCatalogBridge =>
-      widget.sharedCacheCatalogBridge;
+  SharedCacheMaintenanceBoundary get _sharedCacheMaintenanceBoundary =>
+      widget.sharedCacheMaintenanceBoundary;
   SharedCacheCatalog get _sharedCacheCatalog => widget.sharedCacheCatalog;
   SharedCacheIndexStore get _sharedCacheIndexStore =>
       widget.sharedCacheIndexStore;
@@ -112,8 +113,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       if (widget.isBoundaryReady) {
         unawaited(_reloadShareableVideoFiles());
       }
-    } else if (oldWidget.sharedCacheCatalogBridge !=
-            widget.sharedCacheCatalogBridge ||
+    } else if (oldWidget.sharedCacheCatalog != widget.sharedCacheCatalog ||
+        oldWidget.sharedCacheIndexStore != widget.sharedCacheIndexStore ||
         (!oldWidget.isBoundaryReady && widget.isBoundaryReady)) {
       unawaited(_reloadShareableVideoFiles());
     }
@@ -147,6 +148,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       animation: Listenable.merge(<Listenable>[
         _controller,
         _readModel,
+        _sharedCacheMaintenanceBoundary,
         _transferSessionCoordinator,
       ]),
       builder: (context, _) {
@@ -319,6 +321,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               : mainContent,
           bottomNavigationBar: _ActionBar(
             controller: _controller,
+            sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
             transferSessionCoordinator: _transferSessionCoordinator,
             onReceive: _openReceivePanel,
             onAdd: _openAddShareMenu,
@@ -631,130 +634,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
   }
 
-  Future<SharedRecacheActionResult> _handleSharedRecacheFromFiles(
-    String virtualFolderPath,
-  ) async {
-    final normalizedFolder = virtualFolderPath
-        .replaceAll('\\', '/')
-        .split('/')
-        .where((part) => part.isNotEmpty && part != '.')
-        .join('/');
-    if (_controller.isSharedRecacheInProgress) {
-      return SharedRecacheActionResult.refreshedOnly;
-    }
-    if (_controller.isSharedRecacheCooldownActive) {
-      return SharedRecacheActionResult.refreshedOnly;
-    }
-
-    final before = await _sharedCacheCatalogBridge.summarizeOwnerSharedContent(
-      virtualFolderPath: normalizedFolder,
-    );
-    if (!mounted) {
-      return SharedRecacheActionResult.cancelled;
-    }
-    if (before.totalCaches == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            normalizedFolder.isEmpty
-                ? 'No shared folders/files to re-cache yet.'
-                : 'Selected folder has no shared files to re-cache.',
-          ),
-        ),
-      );
-      return SharedRecacheActionResult.refreshedOnly;
-    }
-
-    final agreed = await _confirmSharedRecacheAgreement(
-      before,
-      virtualFolderPath: normalizedFolder,
-    );
-    if (!agreed) {
-      return SharedRecacheActionResult.cancelled;
-    }
-
-    final report = await _controller.recacheSharedContent(
-      virtualFolderPath: normalizedFolder,
-    );
-    if (!mounted) {
-      return SharedRecacheActionResult.started;
-    }
-    if (report != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Before cache: ${report.before.totalFiles} files, '
-            'after re-cache: ${report.after.totalFiles} files.',
-          ),
-        ),
-      );
-    }
-    await _reloadShareableVideoFiles();
-    return SharedRecacheActionResult.started;
-  }
-
-  Future<bool> _handleRemoveSharedCacheFromFiles(
-    String cacheId,
-    String cacheLabel,
-  ) async {
-    final removed = await _controller.removeSharedCacheById(cacheId);
-    if (!mounted) {
-      return removed;
-    }
-
-    if (removed) {
-      await _reloadShareableVideoFiles();
-      if (!mounted) {
-        return removed;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Removed from sharing: $cacheLabel')),
-      );
-    } else if (_controller.errorMessage != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_controller.errorMessage!)));
-    }
-    return removed;
-  }
-
-  Future<bool> _confirmSharedRecacheAgreement(
-    SharedCacheSummary before, {
-    required String virtualFolderPath,
-  }) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        final folderLabel = before.folderCaches == 1 ? 'folder' : 'folders';
-        final fileLabel = before.totalFiles == 1 ? 'file' : 'files';
-        final selectionText = before.selectionCaches > 0
-            ? '\nSelection caches: ${before.selectionCaches}'
-            : '';
-        final scopeText = virtualFolderPath.isEmpty
-            ? 'Re-cache will rebuild indexes for all shared folders/files.'
-            : 'Re-cache will rebuild indexes only in: $virtualFolderPath';
-        return AlertDialog(
-          title: const Text('Start re-cache?'),
-          content: Text(
-            'Currently cached: ${before.folderCaches} $folderLabel, '
-            '${before.totalFiles} $fileLabel.$selectionText\n\n$scopeText',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Start'),
-            ),
-          ],
-        );
-      },
-    );
-    return result ?? false;
-  }
-
   Future<void> _copyToClipboard(String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) {
@@ -786,7 +665,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       _isLoadingShareableVideoFiles = true;
     });
     try {
-      final files = await _sharedCacheCatalogBridge.listShareableVideoFiles();
+      final files = await _listShareableVideoFiles();
       if (!mounted) {
         return;
       }
@@ -1013,34 +892,20 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => FileExplorerPage.launch(
+          sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
           sharedCacheCatalog: _sharedCacheCatalog,
           sharedCacheIndexStore: _sharedCacheIndexStore,
           previewCacheOwner: _previewCacheOwner,
           ownerMacAddress: _controller.localDeviceMac,
           receiveDirectoryPath: receiveDirectory.path,
           publicDownloadsDirectoryPath: publicDownloadsDirectory?.path,
-          onRecacheSharedFolders: _handleSharedRecacheFromFiles,
-          onRemoveSharedCache: _handleRemoveSharedCacheFromFiles,
-          recacheStateListenable: _controller,
-          isSharedRecacheInProgress: () =>
-              _controller.isSharedRecacheInProgress,
-          sharedRecacheProgress: () => _controller.sharedRecacheProgress,
-          sharedRecacheDetails: () {
-            final details = _controller.sharedRecacheDetails;
-            if (details == null) {
-              return null;
-            }
-            return SharedRecacheProgressDetails(
-              processedFiles: details.processedFiles,
-              totalFiles: details.totalFiles,
-              currentCacheLabel: details.currentCacheLabel,
-              currentRelativePath: details.currentRelativePath,
-              eta: details.eta,
-            );
-          },
         ),
       ),
     );
+    if (!mounted) {
+      return;
+    }
+    await _reloadShareableVideoFiles();
   }
 
   Future<void> _openHistorySheet() async {
@@ -1205,6 +1070,89 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     }
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(2)} GB';
+  }
+
+  Future<List<SharedFolderCacheRecord>> _loadOwnerCachesForVideos() async {
+    final ownerMacAddress = _controller.localDeviceMac.trim();
+    if (ownerMacAddress.isNotEmpty) {
+      try {
+        await _sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: ownerMacAddress,
+        );
+      } catch (_) {
+        // Keep using the last loaded owner snapshot in the current session.
+      }
+    }
+    return _sharedCacheCatalog.ownerCaches;
+  }
+
+  Future<List<ShareableVideoFile>> _listShareableVideoFiles({
+    String? cacheId,
+  }) async {
+    final caches = await _loadOwnerCachesForVideos();
+    final files = <ShareableVideoFile>[];
+    for (final cache in caches) {
+      if (cacheId != null && cache.cacheId != cacheId) {
+        continue;
+      }
+      final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
+      for (final entry in entries) {
+        if (!_isVideoPath(entry.relativePath)) {
+          continue;
+        }
+        final absolutePath = _resolveCacheFilePath(cache: cache, entry: entry);
+        if (absolutePath == null || absolutePath.trim().isEmpty) {
+          continue;
+        }
+        final file = File(absolutePath);
+        if (!await file.exists()) {
+          continue;
+        }
+        final stat = await file.stat();
+        if (stat.type != FileSystemEntityType.file) {
+          continue;
+        }
+        files.add(
+          ShareableVideoFile(
+            id: '${cache.cacheId}|${entry.relativePath}',
+            cacheId: cache.cacheId,
+            cacheDisplayName: cache.displayName,
+            relativePath: entry.relativePath,
+            absolutePath: absolutePath,
+            sizeBytes: stat.size,
+          ),
+        );
+      }
+    }
+    files.sort((a, b) {
+      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+        b.cacheDisplayName.toLowerCase(),
+      );
+      if (cacheCmp != 0) {
+        return cacheCmp;
+      }
+      return a.relativePath.toLowerCase().compareTo(
+        b.relativePath.toLowerCase(),
+      );
+    });
+    return files;
+  }
+
+  bool _isVideoPath(String relativePath) {
+    return ThumbnailCacheService.videoExtensions.contains(
+      p.extension(relativePath).toLowerCase(),
+    );
+  }
+
+  String? _resolveCacheFilePath({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+  }) {
+    if (cache.rootPath.startsWith('selection://')) {
+      return entry.absolutePath;
+    }
+    final localRelative = entry.relativePath.replaceAll('/', p.separator);
+    return p.join(cache.rootPath, localRelative);
   }
 
   String _formatTime(DateTime time) {
@@ -2539,6 +2487,7 @@ class _PreviewScheme {
 class _ActionBar extends StatelessWidget {
   const _ActionBar({
     required this.controller,
+    required this.sharedCacheMaintenanceBoundary,
     required this.transferSessionCoordinator,
     required this.onReceive,
     required this.onAdd,
@@ -2546,6 +2495,7 @@ class _ActionBar extends StatelessWidget {
   });
 
   final DiscoveryController controller;
+  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final TransferSessionCoordinator transferSessionCoordinator;
   final Future<void> Function() onReceive;
   final Future<void> Function() onAdd;
@@ -2583,10 +2533,13 @@ class _ActionBar extends StatelessWidget {
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 Expanded(
-                  child: controller.isSharedRecacheInProgress
+                  child: sharedCacheMaintenanceBoundary.isRecacheInProgress
                       ? _SharedRecacheActionButton(
-                          progress: controller.sharedRecacheProgress,
-                          eta: controller.sharedRecacheDetails?.eta,
+                          progress: sharedCacheMaintenanceBoundary
+                              .recacheProgressValue,
+                          eta: sharedCacheMaintenanceBoundary
+                              .recacheProgress
+                              ?.eta,
                         )
                       : indexingProgress != null
                       ? _SharedRecacheActionButton(

@@ -15,6 +15,7 @@ import 'package:video_player/video_player.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../discovery/application/shared_cache_maintenance_boundary.dart';
 import '../application/file_explorer_contract.dart';
 import '../application/files_feature_state_owner.dart';
 import '../application/preview_cache_owner.dart';
@@ -32,12 +33,7 @@ class FileExplorerPage extends StatefulWidget {
   const FileExplorerPage({
     required this.owner,
     required this.previewCacheOwner,
-    this.onRecacheSharedFolders,
-    this.onRemoveSharedCache,
-    this.recacheStateListenable,
-    this.isSharedRecacheInProgress,
-    this.sharedRecacheProgress,
-    this.sharedRecacheDetails,
+    required this.sharedCacheMaintenanceBoundary,
     super.key,
   }) : _launchConfig = null;
 
@@ -45,15 +41,10 @@ class FileExplorerPage extends StatefulWidget {
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
     required this.previewCacheOwner,
+    required this.sharedCacheMaintenanceBoundary,
     required String ownerMacAddress,
     required String receiveDirectoryPath,
     String? publicDownloadsDirectoryPath,
-    this.onRecacheSharedFolders,
-    this.onRemoveSharedCache,
-    this.recacheStateListenable,
-    this.isSharedRecacheInProgress,
-    this.sharedRecacheProgress,
-    this.sharedRecacheDetails,
     super.key,
   }) : owner = null,
        _launchConfig = _FileExplorerLaunchConfig(
@@ -66,14 +57,7 @@ class FileExplorerPage extends StatefulWidget {
 
   final FilesFeatureStateOwner? owner;
   final PreviewCacheOwner previewCacheOwner;
-  final Future<SharedRecacheActionResult> Function(String virtualFolderPath)?
-  onRecacheSharedFolders;
-  final Future<bool> Function(String cacheId, String cacheLabel)?
-  onRemoveSharedCache;
-  final Listenable? recacheStateListenable;
-  final bool Function()? isSharedRecacheInProgress;
-  final double? Function()? sharedRecacheProgress;
-  final SharedRecacheProgressDetails? Function()? sharedRecacheDetails;
+  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final _FileExplorerLaunchConfig? _launchConfig;
 
   @override
@@ -96,29 +80,14 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     return owner;
   }
 
-  bool get _isSharedRecacheRunning {
-    final resolver = widget.isSharedRecacheInProgress;
-    if (resolver == null) {
-      return false;
-    }
-    return resolver();
-  }
+  bool get _isSharedRecacheRunning =>
+      widget.sharedCacheMaintenanceBoundary.isRecacheInProgress;
 
-  double? get _sharedRecacheProgressValue {
-    final resolver = widget.sharedRecacheProgress;
-    if (resolver == null) {
-      return null;
-    }
-    return resolver();
-  }
+  double? get _sharedRecacheProgressValue =>
+      widget.sharedCacheMaintenanceBoundary.recacheProgressValue;
 
-  SharedRecacheProgressDetails? get _sharedRecacheDetailsValue {
-    final resolver = widget.sharedRecacheDetails;
-    if (resolver == null) {
-      return null;
-    }
-    return resolver();
-  }
+  SharedCacheMaintenanceProgress? get _sharedRecacheDetailsValue =>
+      widget.sharedCacheMaintenanceBoundary.recacheProgress;
 
   @override
   void initState() {
@@ -201,21 +170,19 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       );
     }
 
-    final animation = widget.recacheStateListenable == null
-        ? owner
-        : Listenable.merge(<Listenable>[owner, widget.recacheStateListenable!]);
+    final animation = Listenable.merge(<Listenable>[
+      owner,
+      widget.sharedCacheMaintenanceBoundary,
+    ]);
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
         final state = owner.state;
         final selectedRoot = state.selectedRoot;
         final visibleEntries = state.visibleEntries;
-        final canRecacheSelectedRoot =
-            selectedRoot?.isSharedFolder == true &&
-            widget.onRecacheSharedFolders != null;
+        final canRecacheSelectedRoot = selectedRoot?.isSharedFolder == true;
         final canRemoveSharedCachesFromFiles =
-            selectedRoot?.isSharedFolder == true &&
-            widget.onRemoveSharedCache != null;
+            selectedRoot?.isSharedFolder == true;
         final refreshActionTooltip = canRecacheSelectedRoot
             ? 'Re-cache shared folders/files'
             : 'Refresh';
@@ -507,10 +474,6 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     if (cacheId == null || cacheId.trim().isEmpty) {
       return;
     }
-    final removeHandler = widget.onRemoveSharedCache;
-    if (removeHandler == null) {
-      return;
-    }
 
     final agreed = await showDialog<bool>(
       context: context,
@@ -537,14 +500,39 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return;
     }
 
-    final removed = await removeHandler(cacheId, entry.name);
+    bool removed = false;
+    try {
+      removed = await widget.sharedCacheMaintenanceBoundary.removeCacheById(
+        cacheId,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to remove shared folder: $error')),
+        );
+      }
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
     if (!removed || !mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Shared folder is no longer available.')),
+      );
       return;
     }
 
     owner.clearVirtualFolderIfRemoved(entry.virtualFolderPath ?? '');
     owner.invalidateSelectedVirtualRootCache();
     await owner.refreshCurrentRoot();
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Removed from sharing: ${entry.name}')),
+    );
   }
 
   String _formatEta(Duration eta) {
@@ -626,14 +614,106 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       await owner.refreshCurrentRoot();
       return;
     }
-    final action = await widget.onRecacheSharedFolders!.call(
-      owner.normalizedVirtualCurrentFolder,
+    final boundary = widget.sharedCacheMaintenanceBoundary;
+    if (boundary.isRecacheInProgress || boundary.isRecacheCooldownActive) {
+      owner.invalidateSelectedVirtualRootCache();
+      await owner.refreshCurrentRoot();
+      return;
+    }
+
+    final normalizedFolder = owner.normalizedVirtualCurrentFolder;
+    final before = await boundary.summarizeOwnerSharedContent(
+      virtualFolderPath: normalizedFolder,
     );
-    if (action == SharedRecacheActionResult.cancelled) {
+    if (!mounted) {
+      return;
+    }
+    if (before.totalCaches == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            normalizedFolder.isEmpty
+                ? 'No shared folders/files to re-cache yet.'
+                : 'Selected folder has no shared files to re-cache.',
+          ),
+        ),
+      );
+      owner.invalidateSelectedVirtualRootCache();
+      await owner.refreshCurrentRoot();
+      return;
+    }
+
+    final agreed = await _confirmSharedRecacheAgreement(
+      before,
+      virtualFolderPath: normalizedFolder,
+    );
+    if (!agreed || !mounted) {
+      return;
+    }
+
+    try {
+      final report = await boundary.recacheOwner(
+        virtualFolderPath: normalizedFolder,
+      );
+      if (mounted && report != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Before cache: ${report.before.totalFiles} files, '
+              'after re-cache: ${report.after.totalFiles} files.',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to re-cache shared folders/files: $error'),
+          ),
+        );
+      }
       return;
     }
     owner.invalidateSelectedVirtualRootCache();
     await owner.refreshCurrentRoot();
+  }
+
+  Future<bool> _confirmSharedRecacheAgreement(
+    SharedCacheSummary before, {
+    required String virtualFolderPath,
+  }) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final folderLabel = before.folderCaches == 1 ? 'folder' : 'folders';
+        final fileLabel = before.totalFiles == 1 ? 'file' : 'files';
+        final selectionText = before.selectionCaches > 0
+            ? '\nSelection caches: ${before.selectionCaches}'
+            : '';
+        final scopeText = virtualFolderPath.isEmpty
+            ? 'Re-cache will rebuild indexes for all shared folders/files.'
+            : 'Re-cache will rebuild indexes only in: $virtualFolderPath';
+        return AlertDialog(
+          title: const Text('Start re-cache?'),
+          content: Text(
+            'Currently cached: ${before.folderCaches} $folderLabel, '
+            '${before.totalFiles} $fileLabel.$selectionText\n\n$scopeText',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Start'),
+            ),
+          ],
+        );
+      },
+    );
+    return result ?? false;
   }
 
   Future<void> _openEntry(FilesFeatureEntry entry) async {

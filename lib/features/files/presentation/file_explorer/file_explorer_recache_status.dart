@@ -8,7 +8,7 @@ class _SharedRecacheStatusCard extends StatelessWidget {
   });
 
   final double? progress;
-  final SharedRecacheProgressDetails? details;
+  final SharedCacheMaintenanceProgress? details;
   final String Function(Duration eta) formatEta;
 
   @override

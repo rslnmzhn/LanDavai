@@ -15,7 +15,7 @@ import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/application/internet_peer_endpoint_store.dart';
 import '../features/discovery/application/local_peer_identity_store.dart';
 import '../features/discovery/application/remote_share_browser.dart';
-import '../features/discovery/application/shared_cache_catalog_bridge.dart';
+import '../features/discovery/application/shared_cache_maintenance_boundary.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
 import '../features/discovery/data/device_alias_repository.dart';
 import '../features/discovery/data/friend_repository.dart';
@@ -43,7 +43,7 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.controller,
     this.readModel,
     this.remoteShareBrowser,
-    this.sharedCacheCatalogBridge,
+    this.sharedCacheMaintenanceBoundary,
     this.sharedCacheCatalog,
     this.sharedCacheIndexStore,
     this.previewCacheOwner,
@@ -58,7 +58,7 @@ class DiscoveryPageEntry extends StatefulWidget {
          controller == null ||
              (readModel != null &&
                  remoteShareBrowser != null &&
-                 sharedCacheCatalogBridge != null &&
+                 sharedCacheMaintenanceBoundary != null &&
                  sharedCacheCatalog != null &&
                  sharedCacheIndexStore != null &&
                  previewCacheOwner != null &&
@@ -74,7 +74,7 @@ class DiscoveryPageEntry extends StatefulWidget {
   final DiscoveryController? controller;
   final DiscoveryReadModel? readModel;
   final RemoteShareBrowser? remoteShareBrowser;
-  final SharedCacheCatalogBridge? sharedCacheCatalogBridge;
+  final SharedCacheMaintenanceBoundary? sharedCacheMaintenanceBoundary;
   final SharedCacheCatalog? sharedCacheCatalog;
   final SharedCacheIndexStore? sharedCacheIndexStore;
   final PreviewCacheOwner? previewCacheOwner;
@@ -94,7 +94,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryController _controller;
   late final DiscoveryReadModel _readModel;
   late final RemoteShareBrowser _remoteShareBrowser;
-  late final SharedCacheCatalogBridge _sharedCacheCatalogBridge;
+  late final SharedCacheMaintenanceBoundary _sharedCacheMaintenanceBoundary;
   late final SharedCacheCatalog _sharedCacheCatalog;
   late final SharedCacheIndexStore _sharedCacheIndexStore;
   late final PreviewCacheOwner _previewCacheOwner;
@@ -119,7 +119,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _controller = widget.controller!;
       _readModel = widget.readModel!;
       _remoteShareBrowser = widget.remoteShareBrowser!;
-      _sharedCacheCatalogBridge = widget.sharedCacheCatalogBridge!;
+      _sharedCacheMaintenanceBoundary = widget.sharedCacheMaintenanceBoundary!;
       _sharedCacheCatalog = widget.sharedCacheCatalog!;
       _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
       _previewCacheOwner = widget.previewCacheOwner!;
@@ -136,7 +136,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _controller = boundary.controller;
       _readModel = boundary.readModel;
       _remoteShareBrowser = boundary.remoteShareBrowser;
-      _sharedCacheCatalogBridge = boundary.sharedCacheCatalogBridge;
+      _sharedCacheMaintenanceBoundary = boundary.sharedCacheMaintenanceBoundary;
       _sharedCacheCatalog = boundary.sharedCacheCatalog;
       _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
       _previewCacheOwner = boundary.previewCacheOwner;
@@ -180,7 +180,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       controller: _controller,
       readModel: _readModel,
       remoteShareBrowser: _remoteShareBrowser,
-      sharedCacheCatalogBridge: _sharedCacheCatalogBridge,
+      sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
       sharedCacheCatalog: _sharedCacheCatalog,
       sharedCacheIndexStore: _sharedCacheIndexStore,
       previewCacheOwner: _previewCacheOwner,
@@ -322,16 +322,18 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       trustedLanPeerStore: trustedLanPeerStore,
       settingsStore: settingsStore,
     );
-    final sharedCacheCatalogBridge = SharedCacheCatalogBridge(
+    final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      appNotificationService: AppNotificationService.instance,
       ownerMacAddressProvider: () => controller.localDeviceMac,
+      settingsProvider: () => settingsStore.settings,
     );
     return _DiscoveryBoundary(
       controller: controller,
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
-      sharedCacheCatalogBridge: sharedCacheCatalogBridge,
+      sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
@@ -348,7 +350,7 @@ class _DiscoveryBoundary {
     required this.controller,
     required this.readModel,
     required this.remoteShareBrowser,
-    required this.sharedCacheCatalogBridge,
+    required this.sharedCacheMaintenanceBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
@@ -361,7 +363,7 @@ class _DiscoveryBoundary {
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
-  final SharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;

@@ -61,21 +61,3 @@ class FileExplorerVirtualDirectory {
   final List<FileExplorerVirtualFolder> folders;
   final List<FileExplorerVirtualFile> files;
 }
-
-enum SharedRecacheActionResult { started, refreshedOnly, cancelled }
-
-class SharedRecacheProgressDetails {
-  const SharedRecacheProgressDetails({
-    required this.processedFiles,
-    required this.totalFiles,
-    required this.currentCacheLabel,
-    required this.currentRelativePath,
-    required this.eta,
-  });
-
-  final int processedFiles;
-  final int totalFiles;
-  final String currentCacheLabel;
-  final String currentRelativePath;
-  final Duration? eta;
-}

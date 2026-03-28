@@ -11,7 +11,7 @@ import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
-import 'package:landa/features/discovery/application/shared_cache_catalog_bridge.dart';
+import 'package:landa/features/discovery/application/shared_cache_maintenance_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -41,7 +41,7 @@ class TestDiscoveryControllerHarness {
     required this.controller,
     required this.readModel,
     required this.remoteShareBrowser,
-    required this.sharedCacheCatalogBridge,
+    required this.sharedCacheMaintenanceBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
@@ -55,7 +55,7 @@ class TestDiscoveryControllerHarness {
   final TrackingDiscoveryController controller;
   final DiscoveryReadModel readModel;
   final TrackingRemoteShareBrowser remoteShareBrowser;
-  final TrackingSharedCacheCatalogBridge sharedCacheCatalogBridge;
+  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
@@ -180,10 +180,12 @@ class TestDiscoveryControllerHarness {
       trustedLanPeerStore: trustedLanPeerStore,
       settingsStore: settingsStore,
     );
-    final sharedCacheCatalogBridge = TrackingSharedCacheCatalogBridge(
+    final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
+      appNotificationService: AppNotificationService.instance,
       ownerMacAddressProvider: () => controller.localDeviceMac,
+      settingsProvider: () => settingsStore.settings,
     );
 
     return TestDiscoveryControllerHarness._(
@@ -191,7 +193,7 @@ class TestDiscoveryControllerHarness {
       controller: controller,
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
-      sharedCacheCatalogBridge: sharedCacheCatalogBridge,
+      sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
@@ -319,50 +321,6 @@ class TrackingRemoteShareBrowser extends RemoteShareBrowser {
     selectOwnerCalls += 1;
     lastSelectedOwnerIp = ownerIp;
     super.selectOwner(ownerIp);
-  }
-}
-
-class TrackingSharedCacheCatalogBridge extends SharedCacheCatalogBridge {
-  TrackingSharedCacheCatalogBridge({
-    required super.sharedCacheCatalog,
-    required super.sharedCacheIndexStore,
-    required super.ownerMacAddressProvider,
-  });
-
-  int shareableVideoListCalls = 0;
-  int summarizeOwnerSharedContentCalls = 0;
-  final List<String> listShareableLocalDirectoryFolders = <String>[];
-
-  @override
-  Future<List<ShareableVideoFile>> listShareableVideoFiles({
-    String? cacheId,
-  }) async {
-    shareableVideoListCalls += 1;
-    return const <ShareableVideoFile>[];
-  }
-
-  @override
-  Future<SharedCacheSummary> summarizeOwnerSharedContent({
-    String virtualFolderPath = '',
-  }) async {
-    summarizeOwnerSharedContentCalls += 1;
-    return const SharedCacheSummary(
-      totalCaches: 1,
-      folderCaches: 1,
-      selectionCaches: 0,
-      totalFiles: 1,
-    );
-  }
-
-  @override
-  Future<ShareableLocalDirectoryListing> listShareableLocalDirectory({
-    required String virtualFolderPath,
-  }) async {
-    listShareableLocalDirectoryFolders.add(virtualFolderPath);
-    return const ShareableLocalDirectoryListing(
-      folders: <ShareableLocalFolder>[],
-      files: <ShareableLocalFile>[],
-    );
   }
 }
 

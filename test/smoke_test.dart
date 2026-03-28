@@ -33,7 +33,8 @@ void main() {
             controller: harness.controller,
             readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
-            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
+            sharedCacheMaintenanceBoundary:
+                harness.sharedCacheMaintenanceBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
@@ -71,7 +72,8 @@ void main() {
             controller: harness.controller,
             readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
-            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
+            sharedCacheMaintenanceBoundary:
+                harness.sharedCacheMaintenanceBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
@@ -88,7 +90,6 @@ void main() {
 
       expect(find.text('Landa devices'), findsOneWidget);
       expect(harness.controller.startCalls, 1);
-      expect(harness.sharedCacheCatalogBridge.shareableVideoListCalls, 1);
       expect(desktopWindowService.setMinimizeCalls, 1);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -112,7 +113,8 @@ void main() {
             controller: harness.controller,
             readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
-            sharedCacheCatalogBridge: harness.sharedCacheCatalogBridge,
+            sharedCacheMaintenanceBoundary:
+                harness.sharedCacheMaintenanceBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
