@@ -137,6 +137,50 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('DiscoveryPage menu opens extracted friends sheet flow', (
+    tester,
+  ) async {
+    final desktopWindowService = TrackingDesktopWindowService();
+    final transferStorageService = StubTransferStorageService(
+      rootDirectory: harness.databaseHarness.rootDirectory,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DiscoveryPage(
+          controller: harness.controller,
+          readModel: harness.readModel,
+          remoteShareBrowser: harness.remoteShareBrowser,
+          sharedCacheMaintenanceBoundary:
+              harness.sharedCacheMaintenanceBoundary,
+          videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
+          sharedCacheCatalog: harness.sharedCacheCatalog,
+          sharedCacheIndexStore: harness.sharedCacheIndexStore,
+          previewCacheOwner: harness.previewCacheOwner,
+          transferSessionCoordinator: harness.transferSessionCoordinator,
+          downloadHistoryBoundary: harness.downloadHistoryBoundary,
+          clipboardHistoryStore: harness.clipboardHistoryStore,
+          remoteClipboardProjectionStore:
+              harness.remoteClipboardProjectionStore,
+          desktopWindowService: desktopWindowService,
+          transferStorageService: transferStorageService,
+          isBoundaryReady: false,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Menu'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(ListTile, 'Friends'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Friendship requires confirmation from both devices.'),
+      findsOneWidget,
+    );
+  });
 }
 
 class StubTransferStorageService extends TransferStorageService {
