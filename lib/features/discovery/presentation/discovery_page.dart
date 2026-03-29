@@ -27,6 +27,7 @@ import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
 import '../application/remote_share_browser.dart';
 import '../application/shared_cache_maintenance_boundary.dart';
+import '../application/video_link_session_boundary.dart';
 import '../domain/discovered_device.dart';
 
 class DiscoveryPage extends StatefulWidget {
@@ -35,6 +36,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheMaintenanceBoundary,
+    required this.videoLinkSessionBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
@@ -52,6 +54,7 @@ class DiscoveryPage extends StatefulWidget {
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
@@ -78,6 +81,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   RemoteShareBrowser get _remoteShareBrowser => widget.remoteShareBrowser;
   SharedCacheMaintenanceBoundary get _sharedCacheMaintenanceBoundary =>
       widget.sharedCacheMaintenanceBoundary;
+  VideoLinkSessionBoundary get _videoLinkSessionBoundary =>
+      widget.videoLinkSessionBoundary;
   SharedCacheCatalog get _sharedCacheCatalog => widget.sharedCacheCatalog;
   SharedCacheIndexStore get _sharedCacheIndexStore =>
       widget.sharedCacheIndexStore;
@@ -149,12 +154,14 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         _controller,
         _readModel,
         _sharedCacheMaintenanceBoundary,
+        _videoLinkSessionBoundary,
         _transferSessionCoordinator,
       ]),
       builder: (context, _) {
         final devices = _readModel.devices;
         final isLeftHanded = _readModel.settings.isLeftHandedMode;
         final isTabletLayout = MediaQuery.sizeOf(context).width >= 900;
+        final videoLinkWatchUrl = _videoLinkSessionBoundary.watchUrl;
         final sideMenu = _SideMenuDrawer(
           onOpenFriends: _openFriendsSheet,
           onOpenSettings: _openSettingsSheet,
@@ -164,7 +171,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           onRefresh: _controller.isManualRefreshInProgress
               ? null
               : _controller.refresh,
-          controller: _controller,
+          videoLinkSessionBoundary: _videoLinkSessionBoundary,
           videos: _shareableVideoFiles,
           selectedVideoId: _selectedShareableVideoId,
           isLoadingVideos: _isLoadingShareableVideoFiles,
@@ -175,10 +182,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           },
           onOpenVideoList: () => unawaited(_reloadShareableVideoFiles()),
           onToggleVideoServer: _toggleVideoLinkServer,
-          onCopyVideoLink: _controller.videoLinkWatchUrl == null
+          onCopyVideoLink: videoLinkWatchUrl == null
               ? null
-              : () =>
-                    unawaited(_copyToClipboard(_controller.videoLinkWatchUrl!)),
+              : () => unawaited(_copyToClipboard(videoLinkWatchUrl)),
         );
         final sideMenuPanel = SizedBox(
           width: 296,
@@ -193,7 +199,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               onRefresh: _controller.isManualRefreshInProgress
                   ? null
                   : _controller.refresh,
-              controller: _controller,
+              videoLinkSessionBoundary: _videoLinkSessionBoundary,
               videos: _shareableVideoFiles,
               selectedVideoId: _selectedShareableVideoId,
               isLoadingVideos: _isLoadingShareableVideoFiles,
@@ -204,11 +210,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               },
               onOpenVideoList: () => unawaited(_reloadShareableVideoFiles()),
               onToggleVideoServer: _toggleVideoLinkServer,
-              onCopyVideoLink: _controller.videoLinkWatchUrl == null
+              onCopyVideoLink: videoLinkWatchUrl == null
                   ? null
-                  : () => unawaited(
-                      _copyToClipboard(_controller.videoLinkWatchUrl!),
-                    ),
+                  : () => unawaited(_copyToClipboard(videoLinkWatchUrl)),
               closeOnTap: false,
             ),
           ),
@@ -644,6 +648,18 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
   }
 
+  void _showVideoLinkMessage(String message, {bool isError = false}) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? AppColors.error : null,
+      ),
+    );
+  }
+
   ShareableVideoFile? get _selectedShareableVideoFile {
     final selectedId = _selectedShareableVideoId;
     if (selectedId == null) {
@@ -698,20 +714,41 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   Future<void> _publishSelectedVideoLink() async {
     final selected = _selectedShareableVideoFile;
     if (selected == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Select a video file first.')),
-      );
+      _showVideoLinkMessage('Select a video file first.', isError: true);
       return;
     }
     final password = _readModel.settings.videoLinkPassword.trim();
     if (password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Set a web-link password in Settings.')),
+      _showVideoLinkMessage(
+        'Set a web-link password in Settings.',
+        isError: true,
       );
       return;
     }
 
-    await _controller.publishVideoLinkShare(file: selected, password: password);
+    try {
+      final link = await _videoLinkSessionBoundary.publishVideoLinkShare(
+        filePath: selected.absolutePath,
+        displayName: selected.fileName,
+        password: password,
+      );
+      if (!mounted) {
+        return;
+      }
+      _showVideoLinkMessage(
+        link == null
+            ? 'Video link updated for ${selected.fileName}.'
+            : 'Video link updated: $link',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showVideoLinkMessage(
+        'Failed to publish video link: $error',
+        isError: true,
+      );
+    }
   }
 
   Future<void> _toggleVideoLinkServer(bool enabled) async {
@@ -726,7 +763,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       return;
     }
 
-    final activeSession = _controller.videoLinkShareSession;
+    final activeSession = _videoLinkSessionBoundary.activeSession;
     if (activeSession == null) {
       return;
     }
@@ -734,7 +771,21 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     if (!shouldStop) {
       return;
     }
-    await _controller.stopVideoLinkShare();
+    try {
+      await _videoLinkSessionBoundary.stopVideoLinkShare();
+      if (!mounted) {
+        return;
+      }
+      _showVideoLinkMessage('Video link sharing stopped.');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showVideoLinkMessage(
+        'Failed to stop video link sharing: $error',
+        isError: true,
+      );
+    }
   }
 
   Future<bool> _confirmStopVideoLinkShare() async {
@@ -1172,7 +1223,7 @@ class _SideMenuDrawer extends StatelessWidget {
     required this.onOpenHistory,
     required this.onOpenFiles,
     required this.onRefresh,
-    required this.controller,
+    required this.videoLinkSessionBoundary,
     required this.videos,
     required this.selectedVideoId,
     required this.isLoadingVideos,
@@ -1188,7 +1239,7 @@ class _SideMenuDrawer extends StatelessWidget {
   final Future<void> Function() onOpenHistory;
   final Future<void> Function() onOpenFiles;
   final Future<void> Function()? onRefresh;
-  final DiscoveryController controller;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final List<ShareableVideoFile> videos;
   final String? selectedVideoId;
   final bool isLoadingVideos;
@@ -1207,7 +1258,7 @@ class _SideMenuDrawer extends StatelessWidget {
         onOpenHistory: onOpenHistory,
         onOpenFiles: onOpenFiles,
         onRefresh: onRefresh,
-        controller: controller,
+        videoLinkSessionBoundary: videoLinkSessionBoundary,
         videos: videos,
         selectedVideoId: selectedVideoId,
         isLoadingVideos: isLoadingVideos,
@@ -1229,7 +1280,7 @@ class _SideMenuActions extends StatelessWidget {
     required this.onOpenHistory,
     required this.onOpenFiles,
     required this.onRefresh,
-    required this.controller,
+    required this.videoLinkSessionBoundary,
     required this.videos,
     required this.selectedVideoId,
     required this.isLoadingVideos,
@@ -1246,7 +1297,7 @@ class _SideMenuActions extends StatelessWidget {
   final Future<void> Function() onOpenHistory;
   final Future<void> Function() onOpenFiles;
   final Future<void> Function()? onRefresh;
-  final DiscoveryController controller;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final List<ShareableVideoFile> videos;
   final String? selectedVideoId;
   final bool isLoadingVideos;
@@ -1303,7 +1354,7 @@ class _SideMenuActions extends StatelessWidget {
             onTap: onRefresh,
           ),
           _VideoLinkServerCard(
-            controller: controller,
+            videoLinkSessionBoundary: videoLinkSessionBoundary,
             videos: videos,
             selectedVideoId: selectedVideoId,
             isLoadingVideos: isLoadingVideos,
@@ -1407,7 +1458,7 @@ class _NetworkSummaryCard extends StatelessWidget {
 
 class _VideoLinkServerCard extends StatelessWidget {
   const _VideoLinkServerCard({
-    required this.controller,
+    required this.videoLinkSessionBoundary,
     required this.videos,
     required this.selectedVideoId,
     required this.isLoadingVideos,
@@ -1417,7 +1468,7 @@ class _VideoLinkServerCard extends StatelessWidget {
     this.onCopyLink,
   });
 
-  final DiscoveryController controller;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final List<ShareableVideoFile> videos;
   final String? selectedVideoId;
   final bool isLoadingVideos;
@@ -1428,8 +1479,8 @@ class _VideoLinkServerCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeSession = controller.videoLinkShareSession;
-    final activeUrl = controller.videoLinkWatchUrl;
+    final activeSession = videoLinkSessionBoundary.activeSession;
+    final activeUrl = videoLinkSessionBoundary.watchUrl;
     final enabled = activeSession != null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

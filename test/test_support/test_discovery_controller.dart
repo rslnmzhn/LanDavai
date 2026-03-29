@@ -13,6 +13,7 @@ import 'package:landa/features/discovery/application/local_peer_identity_store.d
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/shared_cache_maintenance_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
+import 'package:landa/features/discovery/application/video_link_session_boundary.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
@@ -42,6 +43,7 @@ class TestDiscoveryControllerHarness {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheMaintenanceBoundary,
+    required this.videoLinkSessionBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
@@ -56,6 +58,7 @@ class TestDiscoveryControllerHarness {
   final DiscoveryReadModel readModel;
   final TrackingRemoteShareBrowser remoteShareBrowser;
   final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
@@ -123,6 +126,7 @@ class TestDiscoveryControllerHarness {
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
+    final videoLinkShareService = VideoLinkShareService();
     late final TrackingDiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
@@ -169,9 +173,13 @@ class TestDiscoveryControllerHarness {
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
       previewCacheOwner: previewCacheOwner,
-      videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       transferSessionCoordinator: transferSessionCoordinator,
+    );
+    final videoLinkSessionBoundary = VideoLinkSessionBoundary(
+      videoLinkShareService: videoLinkShareService,
+      hostAddressProvider: () => controller.localIp,
+      hostChangeListenable: controller,
     );
     final readModel = DiscoveryReadModel(
       legacyController: controller,
@@ -194,6 +202,7 @@ class TestDiscoveryControllerHarness {
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
+      videoLinkSessionBoundary: videoLinkSessionBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
@@ -206,6 +215,7 @@ class TestDiscoveryControllerHarness {
 
   Future<void> dispose() async {
     readModel.dispose();
+    videoLinkSessionBoundary.dispose();
     if (!controller.wasDisposed) {
       controller.dispose();
     }
@@ -239,7 +249,6 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.fileTransferService,
     required super.transferStorageService,
     required super.previewCacheOwner,
-    required super.videoLinkShareService,
     required super.pathOpener,
     super.transferSessionCoordinator,
   });

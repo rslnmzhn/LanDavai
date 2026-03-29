@@ -11,6 +11,7 @@ import 'package:landa/features/discovery/application/internet_peer_endpoint_stor
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
+import 'package:landa/features/discovery/application/video_link_session_boundary.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
@@ -253,6 +254,7 @@ void main() {
       final remoteShareBrowser = RemoteShareBrowser(
         sharedCacheCatalog: sharedCacheCatalog,
       );
+      final videoLinkShareService = VideoLinkShareService();
       late final DiscoveryController controller;
       final transferSessionCoordinator = TransferSessionCoordinator(
         lanDiscoveryService: lanDiscoveryService,
@@ -301,9 +303,13 @@ void main() {
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
         previewCacheOwner: previewCacheOwner,
-        videoLinkShareService: VideoLinkShareService(),
         pathOpener: PathOpener(),
         transferSessionCoordinator: transferSessionCoordinator,
+      );
+      final videoLinkSessionBoundary = VideoLinkSessionBoundary(
+        videoLinkShareService: videoLinkShareService,
+        hostAddressProvider: () => controller.localIp,
+        hostChangeListenable: controller,
       );
 
       try {
@@ -342,8 +348,9 @@ void main() {
           controller.infoMessage,
           'Incoming transfer request from LAN peer.',
         );
-        expect(controller.videoLinkShareSession, isNull);
+        expect(videoLinkSessionBoundary.activeSession, isNull);
       } finally {
+        videoLinkSessionBoundary.dispose();
         controller.dispose();
         remoteShareBrowser.dispose();
         previewCacheOwner.dispose();

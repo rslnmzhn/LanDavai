@@ -31,7 +31,6 @@ import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/shared_folder_cache_repository.dart';
 import '../../transfer/data/transfer_storage_service.dart';
-import '../../transfer/data/video_link_share_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'device_registry.dart';
 import 'internet_peer_endpoint_store.dart';
@@ -139,7 +138,6 @@ class DiscoveryController extends ChangeNotifier {
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
     required PreviewCacheOwner previewCacheOwner,
-    required VideoLinkShareService videoLinkShareService,
     required PathOpener pathOpener,
     TransferSessionCoordinator? transferSessionCoordinator,
   }) : _lanDiscoveryService = lanDiscoveryService,
@@ -156,7 +154,6 @@ class DiscoveryController extends ChangeNotifier {
        _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
-       _videoLinkShareService = videoLinkShareService,
        _pathOpener = pathOpener {
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
@@ -223,7 +220,6 @@ class DiscoveryController extends ChangeNotifier {
   final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
-  final VideoLinkShareService _videoLinkShareService;
   final PathOpener _pathOpener;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
@@ -253,7 +249,6 @@ class DiscoveryController extends ChangeNotifier {
   String _localDeviceMac = '02:00:00:00:00:01';
   String _localPeerId = '';
   bool _ownerCacheMacRebindChecked = false;
-  VideoLinkShareSession? _videoLinkShareSession;
   bool _isFriendMutationInProgress = false;
   String? _selectedDeviceIp;
   String? _errorMessage;
@@ -280,18 +275,6 @@ class DiscoveryController extends ChangeNotifier {
   String? get infoMessage => _infoMessage;
   List<IncomingFriendRequest> get incomingFriendRequests =>
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
-  VideoLinkShareSession? get videoLinkShareSession => _videoLinkShareSession;
-  String? get videoLinkWatchUrl {
-    final session = _videoLinkShareSession;
-    if (session == null) {
-      return null;
-    }
-    final host = _localIp?.trim();
-    final safeHost = host == null || host.isEmpty
-        ? InternetAddress.loopbackIPv4.address
-        : host;
-    return session.buildWatchUrl(hostAddress: safeHost);
-  }
 
   AppSettings get _currentSettings => _settingsStore.settings;
 
@@ -1099,50 +1082,6 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
     } finally {
       _isAddingShare = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> publishVideoLinkShare({
-    required ShareableVideoFile file,
-    required String password,
-  }) async {
-    final normalizedPassword = password.trim();
-    if (normalizedPassword.isEmpty) {
-      _errorMessage = 'Password is required for video link sharing.';
-      notifyListeners();
-      return;
-    }
-
-    try {
-      _videoLinkShareSession = await _videoLinkShareService.publish(
-        filePath: file.absolutePath,
-        displayName: file.fileName,
-        password: normalizedPassword,
-      );
-      final link = videoLinkWatchUrl;
-      _errorMessage = null;
-      _infoMessage = link == null
-          ? 'Video link updated for ${file.fileName}.'
-          : 'Video link updated: $link';
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to publish video link: $error';
-      _log(_errorMessage!);
-      notifyListeners();
-    }
-  }
-
-  Future<void> stopVideoLinkShare() async {
-    try {
-      await _videoLinkShareService.stop();
-      _videoLinkShareSession = null;
-      _errorMessage = null;
-      _infoMessage = 'Video link sharing stopped.';
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to stop video link sharing: $error';
-      _log(_errorMessage!);
       notifyListeners();
     }
   }
@@ -2148,7 +2087,6 @@ class DiscoveryController extends ChangeNotifier {
     );
     _transferSessionCoordinator.dispose();
     _lanDiscoveryService.stop();
-    unawaited(_videoLinkShareService.stop());
     super.dispose();
   }
 

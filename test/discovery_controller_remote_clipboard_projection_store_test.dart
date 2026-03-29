@@ -27,7 +27,6 @@ import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
-import 'package:landa/features/transfer/data/video_link_share_service.dart';
 
 import 'test_support/test_app_database.dart';
 
@@ -101,7 +100,6 @@ void main() {
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
         previewCacheOwner: previewCacheOwner,
-        videoLinkShareService: VideoLinkShareService(),
         pathOpener: PathOpener(),
       );
 

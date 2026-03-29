@@ -35,6 +35,7 @@ void main() {
             remoteShareBrowser: harness.remoteShareBrowser,
             sharedCacheMaintenanceBoundary:
                 harness.sharedCacheMaintenanceBoundary,
+            videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
@@ -74,6 +75,7 @@ void main() {
             remoteShareBrowser: harness.remoteShareBrowser,
             sharedCacheMaintenanceBoundary:
                 harness.sharedCacheMaintenanceBoundary,
+            videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,
@@ -115,6 +117,7 @@ void main() {
             remoteShareBrowser: harness.remoteShareBrowser,
             sharedCacheMaintenanceBoundary:
                 harness.sharedCacheMaintenanceBoundary,
+            videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
             sharedCacheCatalog: harness.sharedCacheCatalog,
             sharedCacheIndexStore: harness.sharedCacheIndexStore,
             previewCacheOwner: harness.previewCacheOwner,

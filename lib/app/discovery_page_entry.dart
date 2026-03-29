@@ -17,6 +17,7 @@ import '../features/discovery/application/local_peer_identity_store.dart';
 import '../features/discovery/application/remote_share_browser.dart';
 import '../features/discovery/application/shared_cache_maintenance_boundary.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
+import '../features/discovery/application/video_link_session_boundary.dart';
 import '../features/discovery/data/device_alias_repository.dart';
 import '../features/discovery/data/friend_repository.dart';
 import '../features/discovery/data/lan_discovery_service.dart';
@@ -44,6 +45,7 @@ class DiscoveryPageEntry extends StatefulWidget {
     this.readModel,
     this.remoteShareBrowser,
     this.sharedCacheMaintenanceBoundary,
+    this.videoLinkSessionBoundary,
     this.sharedCacheCatalog,
     this.sharedCacheIndexStore,
     this.previewCacheOwner,
@@ -59,6 +61,7 @@ class DiscoveryPageEntry extends StatefulWidget {
              (readModel != null &&
                  remoteShareBrowser != null &&
                  sharedCacheMaintenanceBoundary != null &&
+                 videoLinkSessionBoundary != null &&
                  sharedCacheCatalog != null &&
                  sharedCacheIndexStore != null &&
                  previewCacheOwner != null &&
@@ -68,13 +71,15 @@ class DiscoveryPageEntry extends StatefulWidget {
                  remoteClipboardProjectionStore != null),
          'DiscoveryPageEntry requires readModel, remoteShareBrowser, '
          'download history, clipboard history, remote clipboard projection, '
-         'and shared-cache boundaries when controller is injected.',
+         'video-link session, and shared-cache boundaries when controller is '
+         'injected.',
        );
 
   final DiscoveryController? controller;
   final DiscoveryReadModel? readModel;
   final RemoteShareBrowser? remoteShareBrowser;
   final SharedCacheMaintenanceBoundary? sharedCacheMaintenanceBoundary;
+  final VideoLinkSessionBoundary? videoLinkSessionBoundary;
   final SharedCacheCatalog? sharedCacheCatalog;
   final SharedCacheIndexStore? sharedCacheIndexStore;
   final PreviewCacheOwner? previewCacheOwner;
@@ -95,6 +100,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryReadModel _readModel;
   late final RemoteShareBrowser _remoteShareBrowser;
   late final SharedCacheMaintenanceBoundary _sharedCacheMaintenanceBoundary;
+  late final VideoLinkSessionBoundary _videoLinkSessionBoundary;
   late final SharedCacheCatalog _sharedCacheCatalog;
   late final SharedCacheIndexStore _sharedCacheIndexStore;
   late final PreviewCacheOwner _previewCacheOwner;
@@ -108,6 +114,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final bool _ownsReadModel;
   late final bool _ownsRemoteShareBrowser;
   late final bool _ownsPreviewCacheOwner;
+  late final bool _ownsVideoLinkSessionBoundary;
   bool _isBoundaryReady = false;
 
   @override
@@ -120,6 +127,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _readModel = widget.readModel!;
       _remoteShareBrowser = widget.remoteShareBrowser!;
       _sharedCacheMaintenanceBoundary = widget.sharedCacheMaintenanceBoundary!;
+      _videoLinkSessionBoundary = widget.videoLinkSessionBoundary!;
       _sharedCacheCatalog = widget.sharedCacheCatalog!;
       _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
       _previewCacheOwner = widget.previewCacheOwner!;
@@ -131,12 +139,14 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _ownsReadModel = false;
       _ownsRemoteShareBrowser = false;
       _ownsPreviewCacheOwner = false;
+      _ownsVideoLinkSessionBoundary = false;
     } else {
       final boundary = _buildDiscoveryBoundary();
       _controller = boundary.controller;
       _readModel = boundary.readModel;
       _remoteShareBrowser = boundary.remoteShareBrowser;
       _sharedCacheMaintenanceBoundary = boundary.sharedCacheMaintenanceBoundary;
+      _videoLinkSessionBoundary = boundary.videoLinkSessionBoundary;
       _sharedCacheCatalog = boundary.sharedCacheCatalog;
       _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
       _previewCacheOwner = boundary.previewCacheOwner;
@@ -148,6 +158,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _ownsReadModel = true;
       _ownsRemoteShareBrowser = true;
       _ownsPreviewCacheOwner = true;
+      _ownsVideoLinkSessionBoundary = true;
     }
     _desktopWindowService =
         widget.desktopWindowService ?? DesktopWindowService();
@@ -168,6 +179,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     if (_ownsPreviewCacheOwner) {
       _previewCacheOwner.dispose();
     }
+    if (_ownsVideoLinkSessionBoundary) {
+      _videoLinkSessionBoundary.dispose();
+    }
     if (_ownsController) {
       _controller.dispose();
     }
@@ -181,6 +195,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       readModel: _readModel,
       remoteShareBrowser: _remoteShareBrowser,
       sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
+      videoLinkSessionBoundary: _videoLinkSessionBoundary,
       sharedCacheCatalog: _sharedCacheCatalog,
       sharedCacheIndexStore: _sharedCacheIndexStore,
       previewCacheOwner: _previewCacheOwner,
@@ -263,6 +278,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
+    final videoLinkShareService = VideoLinkShareService();
     late final DiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
@@ -307,13 +323,17 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       fileTransferService: fileTransferService,
       transferStorageService: _transferStorageService,
       previewCacheOwner: previewCacheOwner,
-      videoLinkShareService: VideoLinkShareService(),
       pathOpener: PathOpener(),
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(
         allowTcpFallback: Platform.isAndroid,
       ),
       transferSessionCoordinator: transferSessionCoordinator,
+    );
+    final videoLinkSessionBoundary = VideoLinkSessionBoundary(
+      videoLinkShareService: videoLinkShareService,
+      hostAddressProvider: () => controller.localIp,
+      hostChangeListenable: controller,
     );
     final readModel = DiscoveryReadModel(
       legacyController: controller,
@@ -334,6 +354,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       readModel: readModel,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
+      videoLinkSessionBoundary: videoLinkSessionBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
@@ -351,6 +372,7 @@ class _DiscoveryBoundary {
     required this.readModel,
     required this.remoteShareBrowser,
     required this.sharedCacheMaintenanceBoundary,
+    required this.videoLinkSessionBoundary,
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
@@ -364,6 +386,7 @@ class _DiscoveryBoundary {
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
+  final VideoLinkSessionBoundary videoLinkSessionBoundary;
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
