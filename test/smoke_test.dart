@@ -66,27 +66,16 @@ void main() {
     'DiscoveryPageEntry starts injected controller above the screen lifecycle',
     (tester) async {
       final desktopWindowService = TrackingDesktopWindowService();
+      final transferStorageService = StubTransferStorageService(
+        rootDirectory: harness.databaseHarness.rootDirectory,
+      );
+      final composition = harness.createEntryComposition(
+        desktopWindowService: desktopWindowService,
+        transferStorageService: transferStorageService,
+      );
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: DiscoveryPageEntry(
-            controller: harness.controller,
-            readModel: harness.readModel,
-            remoteShareBrowser: harness.remoteShareBrowser,
-            sharedCacheMaintenanceBoundary:
-                harness.sharedCacheMaintenanceBoundary,
-            videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
-            sharedCacheCatalog: harness.sharedCacheCatalog,
-            sharedCacheIndexStore: harness.sharedCacheIndexStore,
-            previewCacheOwner: harness.previewCacheOwner,
-            transferSessionCoordinator: harness.transferSessionCoordinator,
-            downloadHistoryBoundary: harness.downloadHistoryBoundary,
-            clipboardHistoryStore: harness.clipboardHistoryStore,
-            remoteClipboardProjectionStore:
-                harness.remoteClipboardProjectionStore,
-            desktopWindowService: desktopWindowService,
-          ),
-        ),
+        MaterialApp(home: DiscoveryPageEntry(composition: composition)),
       );
       await tester.pumpAndSettle();
 

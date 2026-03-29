@@ -1,3 +1,4 @@
+import 'package:landa/app/discovery/discovery_composition.dart';
 import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/desktop_window_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
@@ -67,6 +68,30 @@ class TestDiscoveryControllerHarness {
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
+
+  DiscoveryCompositionResult createEntryComposition({
+    required DesktopWindowService desktopWindowService,
+    required TransferStorageService transferStorageService,
+  }) {
+    return DiscoveryCompositionResult.injected(
+      pageDependencies: DiscoveryPageDependencies(
+        controller: controller,
+        readModel: readModel,
+        remoteShareBrowser: remoteShareBrowser,
+        sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
+        videoLinkSessionBoundary: videoLinkSessionBoundary,
+        sharedCacheCatalog: sharedCacheCatalog,
+        sharedCacheIndexStore: sharedCacheIndexStore,
+        previewCacheOwner: previewCacheOwner,
+        transferSessionCoordinator: transferSessionCoordinator,
+        downloadHistoryBoundary: downloadHistoryBoundary,
+        clipboardHistoryStore: clipboardHistoryStore,
+        remoteClipboardProjectionStore: remoteClipboardProjectionStore,
+        desktopWindowService: desktopWindowService,
+        transferStorageService: transferStorageService,
+      ),
+    );
+  }
 
   static Future<TestDiscoveryControllerHarness> create() async {
     final databaseHarness = await TestAppDatabaseHarness.create(

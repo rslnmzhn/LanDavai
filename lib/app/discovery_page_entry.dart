@@ -1,95 +1,20 @@
 import 'dart:async';
-import 'dart:io';
 
-import '../core/storage/app_database.dart';
-import '../core/utils/app_notification_service.dart';
-import '../core/utils/desktop_window_service.dart';
-import '../core/utils/path_opener.dart';
-import '../features/clipboard/application/clipboard_history_store.dart';
-import '../features/clipboard/application/remote_clipboard_projection_store.dart';
-import '../features/clipboard/data/clipboard_capture_service.dart';
-import '../features/clipboard/data/clipboard_history_repository.dart';
-import '../features/discovery/application/discovery_controller.dart';
-import '../features/discovery/application/discovery_read_model.dart';
-import '../features/discovery/application/device_registry.dart';
-import '../features/discovery/application/internet_peer_endpoint_store.dart';
-import '../features/discovery/application/local_peer_identity_store.dart';
-import '../features/discovery/application/remote_share_browser.dart';
-import '../features/discovery/application/remote_share_media_projection_boundary.dart';
-import '../features/discovery/application/shared_cache_maintenance_boundary.dart';
-import '../features/discovery/application/trusted_lan_peer_store.dart';
-import '../features/discovery/application/video_link_session_boundary.dart';
-import '../features/discovery/data/device_alias_repository.dart';
-import '../features/discovery/data/friend_repository.dart';
-import '../features/discovery/data/lan_discovery_service.dart';
-import '../features/discovery/data/network_host_scanner.dart';
-import '../features/discovery/presentation/discovery_page.dart';
-import '../features/files/application/preview_cache_owner.dart';
-import '../features/history/application/download_history_boundary.dart';
-import '../features/history/data/transfer_history_repository.dart';
-import '../features/settings/application/settings_store.dart';
-import '../features/settings/data/app_settings_repository.dart';
-import '../features/transfer/application/shared_cache_catalog.dart';
-import '../features/transfer/application/shared_cache_index_store.dart';
-import '../features/transfer/application/transfer_session_coordinator.dart';
-import '../features/transfer/data/file_hash_service.dart';
-import '../features/transfer/data/file_transfer_service.dart';
-import '../features/transfer/data/shared_folder_cache_repository.dart';
-import '../features/transfer/data/transfer_storage_service.dart';
-import '../features/transfer/data/video_link_share_service.dart';
 import 'package:flutter/widgets.dart';
+
+import 'discovery/discovery_composition.dart';
+import '../features/discovery/presentation/discovery_page.dart';
 
 class DiscoveryPageEntry extends StatefulWidget {
   const DiscoveryPageEntry({
     super.key,
-    this.controller,
-    this.readModel,
-    this.remoteShareBrowser,
-    this.sharedCacheMaintenanceBoundary,
-    this.videoLinkSessionBoundary,
-    this.sharedCacheCatalog,
-    this.sharedCacheIndexStore,
-    this.previewCacheOwner,
-    this.transferSessionCoordinator,
-    this.downloadHistoryBoundary,
-    this.clipboardHistoryStore,
-    this.remoteClipboardProjectionStore,
-    this.desktopWindowService,
-    this.transferStorageService,
+    this.composition,
+    this.compositionFactory = const DiscoveryCompositionFactory(),
     this.autoStartController = true,
-  }) : assert(
-         controller == null ||
-             (readModel != null &&
-                 remoteShareBrowser != null &&
-                 sharedCacheMaintenanceBoundary != null &&
-                 videoLinkSessionBoundary != null &&
-                 sharedCacheCatalog != null &&
-                 sharedCacheIndexStore != null &&
-                 previewCacheOwner != null &&
-                 transferSessionCoordinator != null &&
-                 downloadHistoryBoundary != null &&
-                 clipboardHistoryStore != null &&
-                 remoteClipboardProjectionStore != null),
-         'DiscoveryPageEntry requires readModel, remoteShareBrowser, '
-         'download history, clipboard history, remote clipboard projection, '
-         'video-link session, and shared-cache boundaries when controller is '
-         'injected.',
-       );
+  });
 
-  final DiscoveryController? controller;
-  final DiscoveryReadModel? readModel;
-  final RemoteShareBrowser? remoteShareBrowser;
-  final SharedCacheMaintenanceBoundary? sharedCacheMaintenanceBoundary;
-  final VideoLinkSessionBoundary? videoLinkSessionBoundary;
-  final SharedCacheCatalog? sharedCacheCatalog;
-  final SharedCacheIndexStore? sharedCacheIndexStore;
-  final PreviewCacheOwner? previewCacheOwner;
-  final TransferSessionCoordinator? transferSessionCoordinator;
-  final DownloadHistoryBoundary? downloadHistoryBoundary;
-  final ClipboardHistoryStore? clipboardHistoryStore;
-  final RemoteClipboardProjectionStore? remoteClipboardProjectionStore;
-  final DesktopWindowService? desktopWindowService;
-  final TransferStorageService? transferStorageService;
+  final DiscoveryCompositionResult? composition;
+  final DiscoveryCompositionFactory compositionFactory;
   final bool autoStartController;
 
   @override
@@ -97,124 +22,50 @@ class DiscoveryPageEntry extends StatefulWidget {
 }
 
 class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
-  late final DiscoveryController _controller;
-  late final DiscoveryReadModel _readModel;
-  late final RemoteShareBrowser _remoteShareBrowser;
-  late final SharedCacheMaintenanceBoundary _sharedCacheMaintenanceBoundary;
-  late final VideoLinkSessionBoundary _videoLinkSessionBoundary;
-  late final SharedCacheCatalog _sharedCacheCatalog;
-  late final SharedCacheIndexStore _sharedCacheIndexStore;
-  late final PreviewCacheOwner _previewCacheOwner;
-  late final TransferSessionCoordinator _transferSessionCoordinator;
-  late final DownloadHistoryBoundary _downloadHistoryBoundary;
-  late final ClipboardHistoryStore _clipboardHistoryStore;
-  late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
-  late final DesktopWindowService _desktopWindowService;
-  late final TransferStorageService _transferStorageService;
-  late final bool _ownsController;
-  late final bool _ownsReadModel;
-  late final bool _ownsRemoteShareBrowser;
-  late final bool _ownsPreviewCacheOwner;
-  late final bool _ownsVideoLinkSessionBoundary;
+  late final DiscoveryCompositionResult _composition;
   bool _isBoundaryReady = false;
 
   @override
   void initState() {
     super.initState();
-    _transferStorageService =
-        widget.transferStorageService ?? TransferStorageService();
-    if (widget.controller != null) {
-      _controller = widget.controller!;
-      _readModel = widget.readModel!;
-      _remoteShareBrowser = widget.remoteShareBrowser!;
-      _sharedCacheMaintenanceBoundary = widget.sharedCacheMaintenanceBoundary!;
-      _videoLinkSessionBoundary = widget.videoLinkSessionBoundary!;
-      _sharedCacheCatalog = widget.sharedCacheCatalog!;
-      _sharedCacheIndexStore = widget.sharedCacheIndexStore!;
-      _previewCacheOwner = widget.previewCacheOwner!;
-      _transferSessionCoordinator = widget.transferSessionCoordinator!;
-      _downloadHistoryBoundary = widget.downloadHistoryBoundary!;
-      _clipboardHistoryStore = widget.clipboardHistoryStore!;
-      _remoteClipboardProjectionStore = widget.remoteClipboardProjectionStore!;
-      _ownsController = false;
-      _ownsReadModel = false;
-      _ownsRemoteShareBrowser = false;
-      _ownsPreviewCacheOwner = false;
-      _ownsVideoLinkSessionBoundary = false;
-    } else {
-      final boundary = _buildDiscoveryBoundary();
-      _controller = boundary.controller;
-      _readModel = boundary.readModel;
-      _remoteShareBrowser = boundary.remoteShareBrowser;
-      _sharedCacheMaintenanceBoundary = boundary.sharedCacheMaintenanceBoundary;
-      _videoLinkSessionBoundary = boundary.videoLinkSessionBoundary;
-      _sharedCacheCatalog = boundary.sharedCacheCatalog;
-      _sharedCacheIndexStore = boundary.sharedCacheIndexStore;
-      _previewCacheOwner = boundary.previewCacheOwner;
-      _transferSessionCoordinator = boundary.transferSessionCoordinator;
-      _downloadHistoryBoundary = boundary.downloadHistoryBoundary;
-      _clipboardHistoryStore = boundary.clipboardHistoryStore;
-      _remoteClipboardProjectionStore = boundary.remoteClipboardProjectionStore;
-      _ownsController = true;
-      _ownsReadModel = true;
-      _ownsRemoteShareBrowser = true;
-      _ownsPreviewCacheOwner = true;
-      _ownsVideoLinkSessionBoundary = true;
-    }
-    _desktopWindowService =
-        widget.desktopWindowService ?? DesktopWindowService();
-
+    _composition = widget.composition ?? widget.compositionFactory.create();
     if (widget.autoStartController) {
-      unawaited(_initializeBoundary());
+      unawaited(_initializeComposition());
     }
   }
 
   @override
   void dispose() {
-    if (_ownsReadModel) {
-      _readModel.dispose();
-    }
-    if (_ownsRemoteShareBrowser) {
-      _remoteShareBrowser.dispose();
-    }
-    if (_ownsPreviewCacheOwner) {
-      _previewCacheOwner.dispose();
-    }
-    if (_ownsVideoLinkSessionBoundary) {
-      _videoLinkSessionBoundary.dispose();
-    }
-    if (_ownsController) {
-      _controller.dispose();
-    }
+    _composition.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final pageDependencies = _composition.pageDependencies;
     return DiscoveryPage(
-      controller: _controller,
-      readModel: _readModel,
-      remoteShareBrowser: _remoteShareBrowser,
-      sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
-      videoLinkSessionBoundary: _videoLinkSessionBoundary,
-      sharedCacheCatalog: _sharedCacheCatalog,
-      sharedCacheIndexStore: _sharedCacheIndexStore,
-      previewCacheOwner: _previewCacheOwner,
-      transferSessionCoordinator: _transferSessionCoordinator,
-      downloadHistoryBoundary: _downloadHistoryBoundary,
-      clipboardHistoryStore: _clipboardHistoryStore,
-      remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
-      desktopWindowService: _desktopWindowService,
-      transferStorageService: _transferStorageService,
+      controller: pageDependencies.controller,
+      readModel: pageDependencies.readModel,
+      remoteShareBrowser: pageDependencies.remoteShareBrowser,
+      sharedCacheMaintenanceBoundary:
+          pageDependencies.sharedCacheMaintenanceBoundary,
+      videoLinkSessionBoundary: pageDependencies.videoLinkSessionBoundary,
+      sharedCacheCatalog: pageDependencies.sharedCacheCatalog,
+      sharedCacheIndexStore: pageDependencies.sharedCacheIndexStore,
+      previewCacheOwner: pageDependencies.previewCacheOwner,
+      transferSessionCoordinator: pageDependencies.transferSessionCoordinator,
+      downloadHistoryBoundary: pageDependencies.downloadHistoryBoundary,
+      clipboardHistoryStore: pageDependencies.clipboardHistoryStore,
+      remoteClipboardProjectionStore:
+          pageDependencies.remoteClipboardProjectionStore,
+      desktopWindowService: pageDependencies.desktopWindowService,
+      transferStorageService: pageDependencies.transferStorageService,
       isBoundaryReady: _isBoundaryReady,
     );
   }
 
-  Future<void> _initializeBoundary() async {
-    await _controller.start();
-    await _desktopWindowService.setMinimizeToTrayEnabled(
-      _readModel.settings.minimizeToTrayOnClose,
-    );
+  Future<void> _initializeComposition() async {
+    await _composition.start();
     if (!mounted) {
       return;
     }
@@ -222,186 +73,4 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       _isBoundaryReady = true;
     });
   }
-
-  _DiscoveryBoundary _buildDiscoveryBoundary() {
-    final database = AppDatabase.instance;
-    final deviceAliasRepository = DeviceAliasRepository(database: database);
-    final friendRepository = FriendRepository(database: database);
-    final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
-    final settingsRepository = AppSettingsRepository(database: database);
-    final settingsStore = SettingsStore(
-      appSettingsRepository: settingsRepository,
-    );
-    final deviceRegistry = DeviceRegistry(
-      deviceAliasRepository: deviceAliasRepository,
-    );
-    final internetPeerEndpointStore = InternetPeerEndpointStore(
-      friendRepository: friendRepository,
-    );
-    final trustedLanPeerStore = TrustedLanPeerStore(
-      deviceRegistry: deviceRegistry,
-      deviceAliasRepository: deviceAliasRepository,
-    );
-    final sharedFolderCacheRepository = SharedFolderCacheRepository(
-      database: database,
-    );
-    final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
-    final sharedCacheCatalog = SharedCacheCatalog(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-    );
-    final fileHashService = FileHashService();
-    final previewCacheOwner = PreviewCacheOwner(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-      fileHashService: fileHashService,
-    );
-    final lanDiscoveryService = LanDiscoveryService();
-    final fileTransferService = FileTransferService();
-    final transferHistoryRepository = TransferHistoryRepository(
-      database: database,
-    );
-    final downloadHistoryBoundary = DownloadHistoryBoundary(
-      transferHistoryRepository: transferHistoryRepository,
-    );
-    final clipboardHistoryRepository = ClipboardHistoryRepository(
-      database: database,
-    );
-    final clipboardCaptureService = ClipboardCaptureService();
-    final clipboardHistoryStore = ClipboardHistoryStore(
-      clipboardHistoryRepository: clipboardHistoryRepository,
-      clipboardCaptureService: clipboardCaptureService,
-      transferStorageService: _transferStorageService,
-    );
-    final remoteClipboardProjectionStore = RemoteClipboardProjectionStore(
-      fileHashService: fileHashService,
-    );
-    final remoteShareBrowser = RemoteShareBrowser(
-      sharedCacheCatalog: sharedCacheCatalog,
-    );
-    final remoteShareMediaProjectionBoundary =
-        RemoteShareMediaProjectionBoundary(
-          remoteShareBrowser: remoteShareBrowser,
-          sharedCacheCatalog: sharedCacheCatalog,
-          sharedCacheIndexStore: sharedCacheIndexStore,
-          sharedFolderCacheRepository: sharedFolderCacheRepository,
-          fileHashService: fileHashService,
-          lanDiscoveryService: lanDiscoveryService,
-        );
-    final videoLinkShareService = VideoLinkShareService();
-    late final DiscoveryController controller;
-    final transferSessionCoordinator = TransferSessionCoordinator(
-      lanDiscoveryService: lanDiscoveryService,
-      sharedCacheCatalog: sharedCacheCatalog,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-      fileHashService: fileHashService,
-      fileTransferService: fileTransferService,
-      transferStorageService: _transferStorageService,
-      downloadHistoryBoundary: downloadHistoryBoundary,
-      previewCacheOwner: previewCacheOwner,
-      appNotificationService: AppNotificationService.instance,
-      settingsProvider: () => settingsStore.settings,
-      localNameProvider: () => controller.localName,
-      localDeviceMacProvider: () => controller.localDeviceMac,
-      isTrustedSender: (normalizedMac) =>
-          trustedLanPeerStore.isTrustedMac(normalizedMac),
-      resolveRemoteOwnerMac:
-          ({required String ownerIp, required String cacheId}) =>
-              remoteShareBrowser.ownerMacForCache(
-                ownerIp: ownerIp,
-                cacheId: cacheId,
-              ),
-    );
-    controller = DiscoveryController(
-      deviceRegistry: deviceRegistry,
-      internetPeerEndpointStore: internetPeerEndpointStore,
-      trustedLanPeerStore: trustedLanPeerStore,
-      localPeerIdentityStore: localPeerIdentityStore,
-      settingsStore: settingsStore,
-      appNotificationService: AppNotificationService.instance,
-      transferHistoryRepository: transferHistoryRepository,
-      downloadHistoryBoundary: downloadHistoryBoundary,
-      clipboardHistoryRepository: clipboardHistoryRepository,
-      clipboardCaptureService: clipboardCaptureService,
-      clipboardHistoryStore: clipboardHistoryStore,
-      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
-      remoteShareBrowser: remoteShareBrowser,
-      remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
-      sharedCacheCatalog: sharedCacheCatalog,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-      fileHashService: fileHashService,
-      fileTransferService: fileTransferService,
-      transferStorageService: _transferStorageService,
-      previewCacheOwner: previewCacheOwner,
-      pathOpener: PathOpener(),
-      lanDiscoveryService: lanDiscoveryService,
-      networkHostScanner: NetworkHostScanner(
-        allowTcpFallback: Platform.isAndroid,
-      ),
-      transferSessionCoordinator: transferSessionCoordinator,
-    );
-    final videoLinkSessionBoundary = VideoLinkSessionBoundary(
-      videoLinkShareService: videoLinkShareService,
-      hostAddressProvider: () => controller.localIp,
-      hostChangeListenable: controller,
-    );
-    final readModel = DiscoveryReadModel(
-      legacyController: controller,
-      deviceRegistry: deviceRegistry,
-      internetPeerEndpointStore: internetPeerEndpointStore,
-      trustedLanPeerStore: trustedLanPeerStore,
-      settingsStore: settingsStore,
-    );
-    final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
-      sharedCacheCatalog: sharedCacheCatalog,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-      appNotificationService: AppNotificationService.instance,
-      ownerMacAddressProvider: () => controller.localDeviceMac,
-      settingsProvider: () => settingsStore.settings,
-    );
-    return _DiscoveryBoundary(
-      controller: controller,
-      readModel: readModel,
-      remoteShareBrowser: remoteShareBrowser,
-      sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
-      videoLinkSessionBoundary: videoLinkSessionBoundary,
-      sharedCacheCatalog: sharedCacheCatalog,
-      sharedCacheIndexStore: sharedCacheIndexStore,
-      transferSessionCoordinator: transferSessionCoordinator,
-      downloadHistoryBoundary: downloadHistoryBoundary,
-      clipboardHistoryStore: clipboardHistoryStore,
-      remoteClipboardProjectionStore: remoteClipboardProjectionStore,
-      previewCacheOwner: previewCacheOwner,
-    );
-  }
-}
-
-class _DiscoveryBoundary {
-  const _DiscoveryBoundary({
-    required this.controller,
-    required this.readModel,
-    required this.remoteShareBrowser,
-    required this.sharedCacheMaintenanceBoundary,
-    required this.videoLinkSessionBoundary,
-    required this.sharedCacheCatalog,
-    required this.sharedCacheIndexStore,
-    required this.transferSessionCoordinator,
-    required this.downloadHistoryBoundary,
-    required this.clipboardHistoryStore,
-    required this.remoteClipboardProjectionStore,
-    required this.previewCacheOwner,
-  });
-
-  final DiscoveryController controller;
-  final DiscoveryReadModel readModel;
-  final RemoteShareBrowser remoteShareBrowser;
-  final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
-  final VideoLinkSessionBoundary videoLinkSessionBoundary;
-  final SharedCacheCatalog sharedCacheCatalog;
-  final SharedCacheIndexStore sharedCacheIndexStore;
-  final TransferSessionCoordinator transferSessionCoordinator;
-  final DownloadHistoryBoundary downloadHistoryBoundary;
-  final ClipboardHistoryStore clipboardHistoryStore;
-  final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
-  final PreviewCacheOwner previewCacheOwner;
 }
