@@ -210,6 +210,74 @@ void main() {
       expect(browser.currentBrowseProjection.options, isEmpty);
     },
   );
+
+  test(
+    'records preview-path projection updates through owner-backed batch writes',
+    () async {
+      await browser.startBrowse(
+        targets: <DiscoveredDevice>[
+          DiscoveredDevice(
+            ip: '192.168.1.20',
+            isAppDetected: true,
+            lastSeen: DateTime(2026),
+          ),
+        ],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Landa desktop',
+        requestId: 'request-3',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-3',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Remote Mac',
+          ownerMacAddress: '11-22-33-44-55-66',
+          removedCacheIds: const <String>[],
+          observedAt: DateTime(2026),
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Remote cache',
+              itemCount: 1,
+              totalBytes: 1000,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(
+                  relativePath: 'videos/demo.mp4',
+                  sizeBytes: 1000,
+                  thumbnailId: 'thumb-1',
+                ),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Alias device',
+        ownerMacAddress: '11-22-33-44-55-66',
+      );
+
+      browser.recordPreviewPaths(const <RemoteBrowsePreviewPathUpdate>[
+        RemoteBrowsePreviewPathUpdate(
+          ownerIp: '192.168.1.20',
+          cacheId: 'remote-cache-1',
+          relativePath: 'videos/demo.mp4',
+          previewPath: 'C:/tmp/thumb-1.jpg',
+        ),
+      ]);
+      browser.selectOwner('192.168.1.20');
+
+      expect(
+        browser.currentBrowseProjection.files.single.previewPath,
+        'C:/tmp/thumb-1.jpg',
+      );
+    },
+  );
 }
 
 class RecordingSharedCacheCatalog extends SharedCacheCatalog {

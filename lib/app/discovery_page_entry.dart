@@ -15,6 +15,7 @@ import '../features/discovery/application/device_registry.dart';
 import '../features/discovery/application/internet_peer_endpoint_store.dart';
 import '../features/discovery/application/local_peer_identity_store.dart';
 import '../features/discovery/application/remote_share_browser.dart';
+import '../features/discovery/application/remote_share_media_projection_boundary.dart';
 import '../features/discovery/application/shared_cache_maintenance_boundary.dart';
 import '../features/discovery/application/trusted_lan_peer_store.dart';
 import '../features/discovery/application/video_link_session_boundary.dart';
@@ -278,6 +279,15 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
+    final remoteShareMediaProjectionBoundary =
+        RemoteShareMediaProjectionBoundary(
+          remoteShareBrowser: remoteShareBrowser,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          sharedFolderCacheRepository: sharedFolderCacheRepository,
+          fileHashService: fileHashService,
+          lanDiscoveryService: lanDiscoveryService,
+        );
     final videoLinkShareService = VideoLinkShareService();
     late final DiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
@@ -316,9 +326,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       remoteShareBrowser: remoteShareBrowser,
+      remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: fileHashService,
       fileTransferService: fileTransferService,
       transferStorageService: _transferStorageService,

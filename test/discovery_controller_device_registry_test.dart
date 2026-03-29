@@ -9,6 +9,7 @@ import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
+import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -134,8 +135,20 @@ DiscoveryController _buildController({
     sharedCacheIndexStore: sharedCacheIndexStore,
     fileHashService: fileHashService,
   );
+  final lanDiscoveryService = LanDiscoveryService();
+  final remoteShareBrowser = RemoteShareBrowser(
+    sharedCacheCatalog: sharedCacheCatalog,
+  );
+  final remoteShareMediaProjectionBoundary = RemoteShareMediaProjectionBoundary(
+    remoteShareBrowser: remoteShareBrowser,
+    sharedCacheCatalog: sharedCacheCatalog,
+    sharedCacheIndexStore: sharedCacheIndexStore,
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    fileHashService: fileHashService,
+    lanDiscoveryService: lanDiscoveryService,
+  );
   return DiscoveryController(
-    lanDiscoveryService: LanDiscoveryService(),
+    lanDiscoveryService: lanDiscoveryService,
     networkHostScanner: networkHostScanner,
     deviceRegistry: deviceRegistry,
     internetPeerEndpointStore: InternetPeerEndpointStore(
@@ -151,12 +164,10 @@ DiscoveryController _buildController({
     transferHistoryRepository: TransferHistoryRepository(database: database),
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
     clipboardCaptureService: ClipboardCaptureService(),
-    remoteShareBrowser: RemoteShareBrowser(
-      sharedCacheCatalog: sharedCacheCatalog,
-    ),
+    remoteShareBrowser: remoteShareBrowser,
+    remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
-    sharedFolderCacheRepository: sharedFolderCacheRepository,
     fileHashService: fileHashService,
     fileTransferService: FileTransferService(),
     transferStorageService: TransferStorageService(),

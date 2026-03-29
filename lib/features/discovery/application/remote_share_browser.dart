@@ -40,6 +40,20 @@ class RemoteBrowseStartResult {
   final int optionCount;
 }
 
+class RemoteBrowsePreviewPathUpdate {
+  const RemoteBrowsePreviewPathUpdate({
+    required this.ownerIp,
+    required this.cacheId,
+    required this.relativePath,
+    required this.previewPath,
+  });
+
+  final String ownerIp;
+  final String cacheId;
+  final String relativePath;
+  final String previewPath;
+}
+
 class RemoteBrowseProjection {
   const RemoteBrowseProjection({
     required this.options,
@@ -490,17 +504,33 @@ class RemoteShareBrowser extends ChangeNotifier {
     required String previewPath,
     bool notify = true,
   }) {
-    final normalizedPath = previewPath.trim();
-    if (normalizedPath.isEmpty) {
-      return;
+    final changed = _recordPreviewPathValue(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+      relativePath: relativePath,
+      previewPath: previewPath,
+    );
+    if (notify && changed) {
+      notifyListeners();
     }
-    _previewPathsByFileKey[_previewKey(
-          ownerIp: ownerIp,
-          cacheId: cacheId,
-          relativePath: relativePath,
-        )] =
-        normalizedPath;
-    if (notify) {
+  }
+
+  void recordPreviewPaths(
+    Iterable<RemoteBrowsePreviewPathUpdate> updates, {
+    bool notify = true,
+  }) {
+    var changed = false;
+    for (final update in updates) {
+      changed =
+          _recordPreviewPathValue(
+            ownerIp: update.ownerIp,
+            cacheId: update.cacheId,
+            relativePath: update.relativePath,
+            previewPath: update.previewPath,
+          ) ||
+          changed;
+    }
+    if (notify && changed) {
       notifyListeners();
     }
   }
@@ -572,6 +602,28 @@ class RemoteShareBrowser extends ChangeNotifier {
     if (notify) {
       notifyListeners();
     }
+  }
+
+  bool _recordPreviewPathValue({
+    required String ownerIp,
+    required String cacheId,
+    required String relativePath,
+    required String previewPath,
+  }) {
+    final normalizedPath = previewPath.trim();
+    if (normalizedPath.isEmpty) {
+      return false;
+    }
+    final key = _previewKey(
+      ownerIp: ownerIp,
+      cacheId: cacheId,
+      relativePath: relativePath,
+    );
+    if (_previewPathsByFileKey[key] == normalizedPath) {
+      return false;
+    }
+    _previewPathsByFileKey[key] = normalizedPath;
+    return true;
   }
 
   void _reconcileSelection() {

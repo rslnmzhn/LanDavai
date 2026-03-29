@@ -11,6 +11,7 @@ import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
+import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/shared_cache_maintenance_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/application/video_link_session_boundary.dart';
@@ -126,6 +127,15 @@ class TestDiscoveryControllerHarness {
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
+    final remoteShareMediaProjectionBoundary =
+        RemoteShareMediaProjectionBoundary(
+          remoteShareBrowser: remoteShareBrowser,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          sharedFolderCacheRepository: sharedFolderCacheRepository,
+          fileHashService: fileHashService,
+          lanDiscoveryService: lanDiscoveryService,
+        );
     final videoLinkShareService = VideoLinkShareService();
     late final TrackingDiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
@@ -166,9 +176,9 @@ class TestDiscoveryControllerHarness {
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       remoteShareBrowser: remoteShareBrowser,
+      remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
       fileHashService: fileHashService,
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
@@ -242,9 +252,9 @@ class TrackingDiscoveryController extends DiscoveryController {
     super.clipboardHistoryStore,
     super.remoteClipboardProjectionStore,
     required super.remoteShareBrowser,
+    required super.remoteShareMediaProjectionBoundary,
     required super.sharedCacheCatalog,
     required super.sharedCacheIndexStore,
-    required super.sharedFolderCacheRepository,
     required super.fileHashService,
     required super.fileTransferService,
     required super.transferStorageService,

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'dart:typed_data';
 import 'package:landa/core/storage/app_database.dart';
 import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
@@ -9,6 +10,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
+import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -147,6 +149,96 @@ void main() {
       expect(options.single.ownerName, 'Remote device');
     },
   );
+
+  test(
+    'thumbnail packets update RemoteShareBrowser preview paths through the media projection boundary',
+    () async {
+      await controller!.start();
+      expect(lanDiscoveryService.onShareCatalog, isNotNull);
+      expect(lanDiscoveryService.onThumbnailPacket, isNotNull);
+
+      await remoteShareBrowser.startBrowse(
+        targets: <DiscoveredDevice>[
+          DiscoveredDevice(
+            ip: '192.168.1.40',
+            macAddress: '11:22:33:44:55:66',
+            isAppDetected: true,
+            lastSeen: DateTime(2026),
+          ),
+        ],
+        receiverMacAddress: controller!.localDeviceMac,
+        requesterName: controller!.localName,
+        requestId: 'request-2',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+
+      lanDiscoveryService.onShareCatalog!(
+        ShareCatalogEvent(
+          requestId: 'request-2',
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote device',
+          ownerMacAddress: '11-22-33-44-55-66',
+          removedCacheIds: const <String>[],
+          observedAt: DateTime(2026),
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Photos',
+              itemCount: 1,
+              totalBytes: 42,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(
+                  relativePath: 'album/photo.jpg',
+                  sizeBytes: 42,
+                  thumbnailId: 'thumb-1',
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      await _pumpUntil(
+        () => remoteShareBrowser.currentBrowseProjection.options.isNotEmpty,
+      );
+
+      lanDiscoveryService.onThumbnailPacket!(
+        ThumbnailPacketEvent(
+          requestId: 'request-2',
+          ownerIp: '192.168.1.40',
+          ownerMacAddress: '11-22-33-44-55-66',
+          cacheId: 'remote-cache-1',
+          relativePath: 'album/photo.jpg',
+          thumbnailId: 'thumb-1',
+          bytes: Uint8List.fromList(<int>[1, 2, 3]),
+          observedAt: DateTime(2026),
+        ),
+      );
+      await _pumpUntil(
+        () =>
+            remoteShareBrowser.previewPathFor(
+              ownerIp: '192.168.1.40',
+              cacheId: 'remote-cache-1',
+              relativePath: 'album/photo.jpg',
+            ) !=
+            null,
+      );
+
+      expect(
+        remoteShareBrowser.previewPathFor(
+          ownerIp: '192.168.1.40',
+          cacheId: 'remote-cache-1',
+          relativePath: 'album/photo.jpg',
+        ),
+        isNotNull,
+      );
+    },
+  );
 }
 
 Future<void> _pumpUntil(
@@ -182,6 +274,14 @@ DiscoveryController _buildController({
     sharedCacheIndexStore: sharedCacheIndexStore,
     fileHashService: fileHashService,
   );
+  final remoteShareMediaProjectionBoundary = RemoteShareMediaProjectionBoundary(
+    remoteShareBrowser: remoteShareBrowser,
+    sharedCacheCatalog: sharedCacheCatalog,
+    sharedCacheIndexStore: sharedCacheIndexStore,
+    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    fileHashService: fileHashService,
+    lanDiscoveryService: lanDiscoveryService,
+  );
 
   return DiscoveryController(
     lanDiscoveryService: lanDiscoveryService,
@@ -203,9 +303,9 @@ DiscoveryController _buildController({
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
     clipboardCaptureService: ClipboardCaptureService(),
     remoteShareBrowser: remoteShareBrowser,
+    remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
-    sharedFolderCacheRepository: sharedFolderCacheRepository,
     fileHashService: fileHashService,
     fileTransferService: FileTransferService(),
     transferStorageService: TransferStorageService(),
@@ -262,6 +362,8 @@ class TrackingRemoteShareBrowser extends RemoteShareBrowser {
 
 class CapturingLanDiscoveryService extends LanDiscoveryService {
   void Function(ShareCatalogEvent event)? onShareCatalog;
+  void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest;
+  void Function(ThumbnailPacketEvent event)? onThumbnailPacket;
 
   @override
   Future<void> start({
@@ -282,6 +384,8 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     String? preferredSourceIp,
   }) async {
     this.onShareCatalog = onShareCatalog;
+    this.onThumbnailSyncRequest = onThumbnailSyncRequest;
+    this.onThumbnailPacket = onThumbnailPacket;
   }
 
   @override

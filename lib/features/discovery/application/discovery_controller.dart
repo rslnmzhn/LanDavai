@@ -21,6 +21,7 @@ import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../clipboard/domain/clipboard_entry.dart';
 import '../../files/application/preview_cache_owner.dart';
+import 'remote_share_media_projection_boundary.dart';
 import 'remote_share_browser.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
@@ -131,9 +132,10 @@ class DiscoveryController extends ChangeNotifier {
     ClipboardHistoryStore? clipboardHistoryStore,
     RemoteClipboardProjectionStore? remoteClipboardProjectionStore,
     required RemoteShareBrowser remoteShareBrowser,
+    required RemoteShareMediaProjectionBoundary
+    remoteShareMediaProjectionBoundary,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
-    required SharedFolderCacheRepository sharedFolderCacheRepository,
     required FileHashService fileHashService,
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
@@ -149,9 +151,9 @@ class DiscoveryController extends ChangeNotifier {
        _settingsStore = settingsStore,
        _appNotificationService = appNotificationService,
        _remoteShareBrowser = remoteShareBrowser,
+       _remoteShareMediaProjectionBoundary = remoteShareMediaProjectionBoundary,
        _sharedCacheCatalog = sharedCacheCatalog,
        _sharedCacheIndexStore = sharedCacheIndexStore,
-       _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
        _pathOpener = pathOpener {
@@ -201,7 +203,6 @@ class DiscoveryController extends ChangeNotifier {
     milliseconds: 120,
   );
   static const double _sharedFolderScanProgressWeight = 0.35;
-  static const int _maxThumbnailSyncItemsPerCatalog = 240;
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
@@ -215,9 +216,9 @@ class DiscoveryController extends ChangeNotifier {
   final SettingsStore _settingsStore;
   final AppNotificationService _appNotificationService;
   final RemoteShareBrowser _remoteShareBrowser;
+  final RemoteShareMediaProjectionBoundary _remoteShareMediaProjectionBoundary;
   final SharedCacheCatalog _sharedCacheCatalog;
   final SharedCacheIndexStore _sharedCacheIndexStore;
-  final SharedFolderCacheRepository _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
@@ -298,15 +299,6 @@ class DiscoveryController extends ChangeNotifier {
       }
     }
     notifyListeners();
-  }
-
-  SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {
-    for (final cache in _ownerCachesSnapshot) {
-      if (cache.cacheId == cacheId) {
-        return cache;
-      }
-    }
-    return null;
   }
 
   List<DiscoveredDevice> get devices {
@@ -1718,7 +1710,17 @@ class DiscoveryController extends ChangeNotifier {
         ownerDisplayName: aliasName ?? event.ownerName,
         ownerMacAddress: ownerMac ?? event.ownerMacAddress,
       );
-      unawaited(_syncRemoteThumbnails(event));
+      unawaited(
+        _remoteShareMediaProjectionBoundary
+            .syncRemoteThumbnails(event: event, requesterName: _localName)
+            .catchError((Object error, StackTrace stack) {
+              _log(
+                'Unhandled remote share media projection error '
+                'from ${event.ownerIp}: $error',
+              );
+              _log(stack.toString());
+            }),
+      );
       notifyListeners();
     } catch (error, stackTrace) {
       _errorMessage = 'Failed to process remote share list: $error';
@@ -1730,191 +1732,32 @@ class DiscoveryController extends ChangeNotifier {
 
   void _onThumbnailSyncRequest(ThumbnailSyncRequestEvent event) {
     unawaited(
-      _handleThumbnailSyncRequest(event).catchError((
-        Object error,
-        StackTrace stack,
-      ) {
-        _log(
-          'Unhandled thumbnail sync request error from ${event.requesterIp}: $error',
-        );
-        _log(stack.toString());
-      }),
+      _remoteShareMediaProjectionBoundary
+          .handleThumbnailSyncRequest(
+            event: event,
+            ownerMacAddress: _localDeviceMac,
+          )
+          .catchError((Object error, StackTrace stack) {
+            _log(
+              'Unhandled thumbnail sync request error '
+              'from ${event.requesterIp}: $error',
+            );
+            _log(stack.toString());
+          }),
     );
-  }
-
-  Future<void> _handleThumbnailSyncRequest(
-    ThumbnailSyncRequestEvent event,
-  ) async {
-    await _loadOwnerCaches();
-    final entriesByCache = <String, Map<String, SharedFolderIndexEntry>>{};
-    for (final item in event.items) {
-      final cache = _findOwnerCacheById(item.cacheId);
-      if (cache == null) {
-        continue;
-      }
-      final byRelative = entriesByCache.putIfAbsent(
-        item.cacheId,
-        () => <String, SharedFolderIndexEntry>{},
-      );
-      if (!byRelative.containsKey(item.relativePath)) {
-        final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-        for (final entry in entries) {
-          byRelative[entry.relativePath] = entry;
-        }
-      }
-
-      final entry = byRelative[item.relativePath];
-      if (entry == null ||
-          entry.thumbnailId == null ||
-          entry.thumbnailId != item.thumbnailId) {
-        continue;
-      }
-
-      final bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
-        cacheId: item.cacheId,
-        thumbnailId: item.thumbnailId,
-      );
-      if (bytes == null || bytes.isEmpty) {
-        continue;
-      }
-
-      await _lanDiscoveryService.sendThumbnailPacket(
-        targetIp: event.requesterIp,
-        requestId: event.requestId,
-        ownerMacAddress: _localDeviceMac,
-        cacheId: item.cacheId,
-        relativePath: item.relativePath,
-        thumbnailId: item.thumbnailId,
-        bytes: bytes,
-      );
-    }
   }
 
   void _onThumbnailPacket(ThumbnailPacketEvent event) {
     unawaited(
-      _handleThumbnailPacket(event).catchError((
-        Object error,
-        StackTrace stack,
-      ) {
-        _log('Unhandled thumbnail packet error from ${event.ownerIp}: $error');
-        _log(stack.toString());
-      }),
-    );
-  }
-
-  Future<void> _handleThumbnailPacket(ThumbnailPacketEvent event) async {
-    if (event.bytes.isEmpty) {
-      return;
-    }
-    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
-    if (ownerMac == null) {
-      return;
-    }
-    final savedPath = await _sharedFolderCacheRepository
-        .saveReceiverThumbnailBytes(
-          ownerMacAddress: ownerMac,
-          cacheId: event.cacheId,
-          thumbnailId: event.thumbnailId,
-          bytes: event.bytes,
-        );
-    _remoteShareBrowser.recordPreviewPath(
-      ownerIp: event.ownerIp,
-      cacheId: event.cacheId,
-      relativePath: event.relativePath,
-      previewPath: savedPath,
-    );
-  }
-
-  Future<void> _syncRemoteThumbnails(ShareCatalogEvent event) async {
-    final ownerMac = DeviceAliasRepository.normalizeMac(event.ownerMacAddress);
-    if (ownerMac == null) {
-      return;
-    }
-
-    final requested = <ThumbnailSyncItem>[];
-    var syncLimitReached = false;
-    var resolvedLocalPreview = false;
-    for (final entry in event.entries) {
-      for (final file in entry.files) {
-        final thumbId = file.thumbnailId;
-        if (thumbId == null || thumbId.isEmpty) {
-          continue;
-        }
-
-        final existing = _remoteShareBrowser.previewPathFor(
-          ownerIp: event.ownerIp,
-          cacheId: entry.cacheId,
-          relativePath: file.relativePath,
-        );
-        if (existing != null && await File(existing).exists()) {
-          continue;
-        }
-
-        final localPath = await _sharedFolderCacheRepository
-            .resolveReceiverThumbnailPath(
-              ownerMacAddress: ownerMac,
-              cacheId: entry.cacheId,
-              thumbnailId: thumbId,
+      _remoteShareMediaProjectionBoundary
+          .handleThumbnailPacket(event: event)
+          .catchError((Object error, StackTrace stack) {
+            _log(
+              'Unhandled thumbnail packet error from ${event.ownerIp}: $error',
             );
-        if (localPath != null) {
-          _remoteShareBrowser.recordPreviewPath(
-            ownerIp: event.ownerIp,
-            cacheId: entry.cacheId,
-            relativePath: file.relativePath,
-            previewPath: localPath,
-            notify: false,
-          );
-          resolvedLocalPreview = true;
-          continue;
-        }
-
-        requested.add(
-          ThumbnailSyncItem(
-            cacheId: entry.cacheId,
-            relativePath: file.relativePath,
-            thumbnailId: thumbId,
-          ),
-        );
-        if (requested.length >= _maxThumbnailSyncItemsPerCatalog) {
-          syncLimitReached = true;
-          break;
-        }
-      }
-      if (syncLimitReached) {
-        break;
-      }
-    }
-
-    if (requested.isEmpty) {
-      if (resolvedLocalPreview) {
-        _remoteShareBrowser.notifyListeners();
-      }
-      return;
-    }
-
-    final requestId = _fileHashService.buildStableId(
-      'thumb-sync|${event.ownerIp}|${DateTime.now().microsecondsSinceEpoch}',
+            _log(stack.toString());
+          }),
     );
-    try {
-      await _lanDiscoveryService.sendThumbnailSyncRequest(
-        targetIp: event.ownerIp,
-        requestId: requestId,
-        requesterName: _localName,
-        items: requested,
-      );
-      if (syncLimitReached) {
-        _log(
-          'Thumbnail sync request capped at '
-          '$_maxThumbnailSyncItemsPerCatalog items for ${event.ownerIp}.',
-        );
-      }
-    } catch (error) {
-      _log('Failed to request remote thumbnails: $error');
-    } finally {
-      if (resolvedLocalPreview) {
-        _remoteShareBrowser.notifyListeners();
-      }
-    }
   }
 
   void _onDownloadRequest(DownloadRequestEvent event) {

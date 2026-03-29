@@ -9,6 +9,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
+import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
@@ -71,6 +72,18 @@ void main() {
         sharedCacheIndexStore: sharedCacheIndexStore,
         fileHashService: fileHashService,
       );
+      final remoteShareBrowser = RemoteShareBrowser(
+        sharedCacheCatalog: sharedCacheCatalog,
+      );
+      final remoteShareMediaProjectionBoundary =
+          RemoteShareMediaProjectionBoundary(
+            remoteShareBrowser: remoteShareBrowser,
+            sharedCacheCatalog: sharedCacheCatalog,
+            sharedCacheIndexStore: sharedCacheIndexStore,
+            sharedFolderCacheRepository: sharedFolderCacheRepository,
+            fileHashService: fileHashService,
+            lanDiscoveryService: lanDiscoveryService,
+          );
       final controller = DiscoveryController(
         lanDiscoveryService: lanDiscoveryService,
         networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -90,12 +103,10 @@ void main() {
         ),
         clipboardCaptureService: ClipboardCaptureService(),
         remoteClipboardProjectionStore: remoteClipboardProjectionStore,
-        remoteShareBrowser: RemoteShareBrowser(
-          sharedCacheCatalog: sharedCacheCatalog,
-        ),
+        remoteShareBrowser: remoteShareBrowser,
+        remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
         sharedCacheCatalog: sharedCacheCatalog,
         sharedCacheIndexStore: sharedCacheIndexStore,
-        sharedFolderCacheRepository: sharedFolderCacheRepository,
         fileHashService: fileHashService,
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),

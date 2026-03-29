@@ -10,6 +10,7 @@ import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
+import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/application/video_link_session_boundary.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
@@ -278,6 +279,15 @@ void main() {
                   cacheId: cacheId,
                 ),
       );
+      final remoteShareMediaProjectionBoundary =
+          RemoteShareMediaProjectionBoundary(
+            remoteShareBrowser: remoteShareBrowser,
+            sharedCacheCatalog: sharedCacheCatalog,
+            sharedCacheIndexStore: sharedCacheIndexStore,
+            sharedFolderCacheRepository: sharedFolderCacheRepository,
+            fileHashService: fileHashService,
+            lanDiscoveryService: lanDiscoveryService,
+          );
       controller = DiscoveryController(
         lanDiscoveryService: lanDiscoveryService,
         networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -296,9 +306,9 @@ void main() {
         ),
         clipboardCaptureService: ClipboardCaptureService(),
         remoteShareBrowser: remoteShareBrowser,
+        remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
         sharedCacheCatalog: sharedCacheCatalog,
         sharedCacheIndexStore: sharedCacheIndexStore,
-        sharedFolderCacheRepository: sharedFolderCacheRepository,
         fileHashService: fileHashService,
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
