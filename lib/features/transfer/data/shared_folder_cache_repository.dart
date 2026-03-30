@@ -8,33 +8,15 @@ import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 
 import '../../../core/storage/app_database.dart';
+import '../application/shared_cache_owner_contracts.dart';
 import '../../discovery/data/device_alias_repository.dart';
 import '../domain/shared_folder_cache.dart';
+import 'shared_cache_record_store.dart';
+import 'shared_cache_thumbnail_store.dart';
 import 'thumbnail_cache_service.dart';
 
-class OwnerFolderCacheUpsertResult {
-  const OwnerFolderCacheUpsertResult({
-    required this.record,
-    required this.created,
-    required this.previousItemCount,
-  });
-
-  final SharedFolderCacheRecord record;
-  final bool created;
-  final int previousItemCount;
-}
-
-typedef OwnerCacheProgressCallback =
-    void Function({
-      required int processedFiles,
-      required int totalFiles,
-      required String relativePath,
-      required OwnerCacheProgressStage stage,
-    });
-
-enum OwnerCacheProgressStage { scanning, indexing }
-
-class SharedFolderCacheRepository {
+class SharedFolderCacheRepository
+    implements SharedCacheRecordStore, SharedCacheThumbnailStore {
   SharedFolderCacheRepository({
     required AppDatabase database,
     ThumbnailCacheService? thumbnailCacheService,
@@ -321,6 +303,7 @@ class SharedFolderCacheRepository {
     return record;
   }
 
+  @override
   Future<List<SharedFolderCacheRecord>> listCaches({
     SharedFolderCacheRole? role,
     String? ownerMacAddress,
@@ -358,6 +341,7 @@ class SharedFolderCacheRepository {
     return rows.map(SharedFolderCacheRecord.fromDbMap).toList(growable: false);
   }
 
+  @override
   Future<SharedFolderCacheRecord?> findCacheById(String cacheId) async {
     final db = await _database.database;
     final rows = await db.query(
@@ -372,6 +356,7 @@ class SharedFolderCacheRepository {
     return SharedFolderCacheRecord.fromDbMap(rows.first);
   }
 
+  @override
   Future<SharedFolderCacheRecord?> findOwnerCacheByRootPath({
     required String ownerMacAddress,
     required String rootPath,
@@ -382,10 +367,12 @@ class SharedFolderCacheRepository {
     );
   }
 
+  @override
   Future<void> upsertCacheRecord(SharedFolderCacheRecord record) {
     return _upsertRecord(record);
   }
 
+  @override
   Future<void> deleteCacheRecord(String cacheId) async {
     final db = await _database.database;
     await db.delete(
@@ -517,6 +504,7 @@ class SharedFolderCacheRepository {
         .toList(growable: false);
   }
 
+  @override
   Future<Uint8List?> readOwnerThumbnailBytes({
     required String cacheId,
     required String thumbnailId,
@@ -527,6 +515,7 @@ class SharedFolderCacheRepository {
     );
   }
 
+  @override
   Future<String?> resolveReceiverThumbnailPath({
     required String ownerMacAddress,
     required String cacheId,
@@ -539,6 +528,7 @@ class SharedFolderCacheRepository {
     );
   }
 
+  @override
   Future<String> saveReceiverThumbnailBytes({
     required String ownerMacAddress,
     required String cacheId,
@@ -643,6 +633,7 @@ class SharedFolderCacheRepository {
     return removedCacheIds;
   }
 
+  @override
   Future<int> rebindOwnerCachesToMac({required String ownerMacAddress}) async {
     final ownerMac = _normalizeOrThrow(
       ownerMacAddress,

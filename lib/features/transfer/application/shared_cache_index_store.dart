@@ -5,9 +5,9 @@ import 'dart:math' as math;
 import 'package:path/path.dart' as p;
 
 import '../../../core/storage/app_database.dart';
-import '../data/shared_folder_cache_repository.dart';
 import '../data/thumbnail_cache_service.dart';
 import '../domain/shared_folder_cache.dart';
+import 'shared_cache_owner_contracts.dart';
 
 class SharedCacheIndexWriteResult {
   const SharedCacheIndexWriteResult({

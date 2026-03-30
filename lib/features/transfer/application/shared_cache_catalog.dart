@@ -6,8 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../discovery/data/device_alias_repository.dart';
-import '../data/shared_folder_cache_repository.dart';
+import '../data/shared_cache_record_store.dart';
 import '../domain/shared_folder_cache.dart';
+import 'shared_cache_owner_contracts.dart';
 import 'shared_cache_index_store.dart';
 
 class OwnerCacheCatalogLoadResult {
@@ -22,12 +23,12 @@ class OwnerCacheCatalogLoadResult {
 
 class SharedCacheCatalog extends ChangeNotifier {
   SharedCacheCatalog({
-    required SharedFolderCacheRepository sharedFolderCacheRepository,
+    required SharedCacheRecordStore sharedFolderCacheRepository,
     required SharedCacheIndexStore sharedCacheIndexStore,
   }) : _sharedFolderCacheRepository = sharedFolderCacheRepository,
        _sharedCacheIndexStore = sharedCacheIndexStore;
 
-  final SharedFolderCacheRepository _sharedFolderCacheRepository;
+  final SharedCacheRecordStore _sharedFolderCacheRepository;
   final SharedCacheIndexStore _sharedCacheIndexStore;
 
   List<SharedFolderCacheRecord> _ownerCaches =

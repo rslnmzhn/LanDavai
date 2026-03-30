@@ -7,7 +7,7 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
-import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/application/shared_cache_owner_contracts.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 
 class SharedCacheSummary {

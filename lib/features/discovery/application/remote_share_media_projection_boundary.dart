@@ -3,7 +3,7 @@ import 'dart:io';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/data/file_hash_service.dart';
-import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/data/shared_cache_thumbnail_store.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../data/device_alias_repository.dart';
 import '../data/lan_discovery_service.dart';
@@ -16,7 +16,7 @@ class RemoteShareMediaProjectionBoundary {
     required RemoteShareBrowser remoteShareBrowser,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
-    required SharedFolderCacheRepository sharedFolderCacheRepository,
+    required SharedCacheThumbnailStore sharedFolderCacheRepository,
     required FileHashService fileHashService,
     required LanDiscoveryService lanDiscoveryService,
   }) : _remoteShareBrowser = remoteShareBrowser,
@@ -31,7 +31,7 @@ class RemoteShareMediaProjectionBoundary {
   final RemoteShareBrowser _remoteShareBrowser;
   final SharedCacheCatalog _sharedCacheCatalog;
   final SharedCacheIndexStore _sharedCacheIndexStore;
-  final SharedFolderCacheRepository _sharedFolderCacheRepository;
+  final SharedCacheThumbnailStore _sharedFolderCacheRepository;
   final FileHashService _fileHashService;
   final LanDiscoveryService _lanDiscoveryService;
 

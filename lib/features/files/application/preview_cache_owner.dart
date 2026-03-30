@@ -16,7 +16,7 @@ import 'package:video_thumbnail/video_thumbnail.dart' as video_thumbnail;
 
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/data/file_hash_service.dart';
-import '../../transfer/data/shared_folder_cache_repository.dart';
+import '../../transfer/data/shared_cache_thumbnail_store.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 
@@ -38,7 +38,7 @@ class PreparedPreviewFile {
 
 class PreviewCacheOwner {
   PreviewCacheOwner({
-    required SharedFolderCacheRepository sharedFolderCacheRepository,
+    required SharedCacheThumbnailStore sharedFolderCacheRepository,
     required SharedCacheIndexStore sharedCacheIndexStore,
     required FileHashService fileHashService,
     Future<Directory> Function()? mediaPreviewDirectoryProvider,
@@ -91,7 +91,7 @@ class PreviewCacheOwner {
     '.xml',
   };
 
-  final SharedFolderCacheRepository _sharedFolderCacheRepository;
+  final SharedCacheThumbnailStore _sharedFolderCacheRepository;
   final SharedCacheIndexStore _sharedCacheIndexStore;
   final FileHashService _fileHashService;
   final Future<Directory> Function() _mediaPreviewDirectoryProvider;

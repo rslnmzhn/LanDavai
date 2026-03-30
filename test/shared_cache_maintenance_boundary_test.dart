@@ -5,6 +5,7 @@ import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/features/discovery/application/shared_cache_maintenance_boundary.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
+import 'package:landa/features/transfer/application/shared_cache_owner_contracts.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
 import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
 import 'package:path/path.dart' as p;

@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:video_thumbnail/video_thumbnail.dart';
 
 import '../../../core/storage/app_database.dart';
+import 'shared_cache_thumbnail_store.dart';
 
 class ThumbnailDescriptor {
   const ThumbnailDescriptor({
@@ -33,7 +34,7 @@ class ThumbnailRequestItem {
   final String thumbnailId;
 }
 
-class ThumbnailCacheService {
+class ThumbnailCacheService implements SharedCacheThumbnailStore {
   ThumbnailCacheService({required AppDatabase database}) : _database = database;
 
   static const int _thumbnailMaxExtent = 180;
@@ -141,6 +142,7 @@ class ThumbnailCacheService {
     return ThumbnailDescriptor(thumbnailId: thumbnailId, filePath: target.path);
   }
 
+  @override
   Future<Uint8List?> readOwnerThumbnailBytes({
     required String cacheId,
     required String thumbnailId,
@@ -155,6 +157,7 @@ class ThumbnailCacheService {
     return target.readAsBytes();
   }
 
+  @override
   Future<String?> resolveReceiverThumbnailPath({
     required String ownerMacAddress,
     required String cacheId,
@@ -171,6 +174,7 @@ class ThumbnailCacheService {
     return null;
   }
 
+  @override
   Future<String> saveReceiverThumbnailBytes({
     required String ownerMacAddress,
     required String cacheId,
