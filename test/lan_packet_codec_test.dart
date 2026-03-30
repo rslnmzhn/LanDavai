@@ -170,6 +170,49 @@ void main() {
     expect(fitted.every((entry) => entry.files.length <= 80), isTrue);
     expect(totalFiles, 240);
   });
+
+  test(
+    'keeps public decode rejection semantics for malformed envelopes and empty transfer payloads',
+    () {
+      final emptyTransferMessage = LanPacketCodec.encodeEnvelopeForTest(
+        prefix: LanPacketCodec.transferRequestPrefix,
+        payload: <String, Object?>{
+          'instanceId': 'instance-1',
+          'requestId': 'request-1',
+          'senderName': 'Alice',
+          'senderMacAddress': 'aa:bb:cc:dd:ee:ff',
+          'sharedCacheId': 'cache-1',
+          'sharedLabel': 'Docs',
+          'items': const <Object?>[],
+          'createdAtMs': 1234,
+        },
+      );
+
+      expect(
+        codec.decodeIncomingPacket('LANDA_TRANSFER_REQUEST_V1|not-base64'),
+        isNull,
+      );
+      expect(codec.decodeIncomingPacket(emptyTransferMessage), isNull);
+    },
+  );
+
+  test('keeps thumbnail decode rejection when artifact bytes decode empty', () {
+    final emptyThumbnailMessage = LanPacketCodec.encodeEnvelopeForTest(
+      prefix: LanPacketCodec.thumbnailPacketPrefix,
+      payload: <String, Object?>{
+        'instanceId': 'instance-1',
+        'requestId': 'thumb-1',
+        'ownerMacAddress': 'aa:bb:cc:dd:ee:ff',
+        'cacheId': 'cache-1',
+        'relativePath': 'image.png',
+        'thumbnailId': 'thumb-1',
+        'bytesBase64': '',
+        'createdAtMs': 1234,
+      },
+    );
+
+    expect(codec.decodeIncomingPacket(emptyThumbnailMessage), isNull);
+  });
 }
 
 String _expectedDeviceType() {

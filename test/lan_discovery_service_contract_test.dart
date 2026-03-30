@@ -62,6 +62,23 @@ void main() {
   });
 
   test(
+    'keeps discovery fallback parsing when the payload segment is not base64url json',
+    () {
+      final parsed = codec.decodeDiscoveryPacket(
+        'LANDA_HERE_V1|instance-2|Legacy payload name',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.prefix, LanPacketCodec.responsePrefix);
+      expect(parsed.instanceId, 'instance-2');
+      expect(parsed.deviceName, 'Legacy payload name');
+      expect(parsed.peerId, isNull);
+      expect(parsed.operatingSystem, isNull);
+      expect(parsed.deviceType, isNull);
+    },
+  );
+
+  test(
     'keeps base64url json envelope semantics for transfer, share, and clipboard packets',
     () {
       final prefixes = LanPacketCodec.protocolPrefixes;
