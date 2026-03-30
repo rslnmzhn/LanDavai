@@ -33,6 +33,7 @@ import 'package:landa/features/transfer/application/transfer_session_coordinator
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
+import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/data/video_link_share_service.dart';
 
@@ -114,17 +115,22 @@ class TestDiscoveryControllerHarness {
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     );
+    final thumbnailCacheService = ThumbnailCacheService(database: database);
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: database,
+      thumbnailCacheService: thumbnailCacheService,
     );
-    final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
+    final sharedCacheIndexStore = SharedCacheIndexStore(
+      database: database,
+      thumbnailCacheService: thumbnailCacheService,
+    );
     final sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
     final fileHashService = FileHashService();
     final previewCacheOwner = PreviewCacheOwner(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheThumbnailStore: thumbnailCacheService,
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
     );
@@ -157,7 +163,7 @@ class TestDiscoveryControllerHarness {
           remoteShareBrowser: remoteShareBrowser,
           sharedCacheCatalog: sharedCacheCatalog,
           sharedCacheIndexStore: sharedCacheIndexStore,
-          sharedFolderCacheRepository: sharedFolderCacheRepository,
+          sharedCacheThumbnailStore: thumbnailCacheService,
           fileHashService: fileHashService,
           lanDiscoveryService: lanDiscoveryService,
         );

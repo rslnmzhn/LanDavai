@@ -8,6 +8,7 @@ import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
+import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 
 import 'test_support/test_app_database.dart';
 
@@ -16,6 +17,7 @@ void main() {
 
   late TestAppDatabaseHarness harness;
   late SharedFolderCacheRepository sharedFolderCacheRepository;
+  late ThumbnailCacheService thumbnailCacheService;
   late SharedCacheIndexStore sharedCacheIndexStore;
   late SharedCacheCatalog sharedCacheCatalog;
   late PreviewCacheOwner previewCacheOwner;
@@ -24,16 +26,21 @@ void main() {
     harness = await TestAppDatabaseHarness.create(
       prefix: 'landa_preview_cache_owner_',
     );
+    thumbnailCacheService = ThumbnailCacheService(database: harness.database);
     sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
     );
-    sharedCacheIndexStore = SharedCacheIndexStore(database: harness.database);
+    sharedCacheIndexStore = SharedCacheIndexStore(
+      database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
+    );
     sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
     previewCacheOwner = PreviewCacheOwner(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheThumbnailStore: thumbnailCacheService,
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: FileHashService(),
     );

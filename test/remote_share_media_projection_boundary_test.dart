@@ -12,6 +12,7 @@ import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
+import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
 import 'package:path/path.dart' as p;
 
@@ -20,6 +21,7 @@ import 'test_support/test_app_database.dart';
 void main() {
   late TestAppDatabaseHarness harness;
   late SharedFolderCacheRepository sharedFolderCacheRepository;
+  late ThumbnailCacheService thumbnailCacheService;
   late SharedCacheIndexStore sharedCacheIndexStore;
   late SharedCacheCatalog sharedCacheCatalog;
   late RemoteShareBrowser remoteShareBrowser;
@@ -30,10 +32,15 @@ void main() {
     harness = await TestAppDatabaseHarness.create(
       prefix: 'landa_remote_share_media_projection_boundary_',
     );
+    thumbnailCacheService = ThumbnailCacheService(database: harness.database);
     sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
     );
-    sharedCacheIndexStore = SharedCacheIndexStore(database: harness.database);
+    sharedCacheIndexStore = SharedCacheIndexStore(
+      database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
+    );
     sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -46,7 +53,7 @@ void main() {
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheThumbnailStore: thumbnailCacheService,
       fileHashService: FileHashService(),
       lanDiscoveryService: lanDiscoveryService,
     );
@@ -65,13 +72,12 @@ void main() {
         browser: remoteShareBrowser,
         receiverMacAddress: 'aa:bb:cc:dd:ee:ff',
       );
-      final savedPath = await sharedFolderCacheRepository
-          .saveReceiverThumbnailBytes(
-            ownerMacAddress: '11:22:33:44:55:66',
-            cacheId: 'remote-cache-1',
-            thumbnailId: 'thumb-1',
-            bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
-          );
+      final savedPath = await thumbnailCacheService.saveReceiverThumbnailBytes(
+        ownerMacAddress: '11:22:33:44:55:66',
+        cacheId: 'remote-cache-1',
+        thumbnailId: 'thumb-1',
+        bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
 
       await boundary.syncRemoteThumbnails(
         event: _remoteCatalogEvent(),

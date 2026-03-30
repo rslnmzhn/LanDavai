@@ -16,13 +16,13 @@ class RemoteShareMediaProjectionBoundary {
     required RemoteShareBrowser remoteShareBrowser,
     required SharedCacheCatalog sharedCacheCatalog,
     required SharedCacheIndexStore sharedCacheIndexStore,
-    required SharedCacheThumbnailStore sharedFolderCacheRepository,
+    required SharedCacheThumbnailStore sharedCacheThumbnailStore,
     required FileHashService fileHashService,
     required LanDiscoveryService lanDiscoveryService,
   }) : _remoteShareBrowser = remoteShareBrowser,
        _sharedCacheCatalog = sharedCacheCatalog,
        _sharedCacheIndexStore = sharedCacheIndexStore,
-       _sharedFolderCacheRepository = sharedFolderCacheRepository,
+       _sharedCacheThumbnailStore = sharedCacheThumbnailStore,
        _fileHashService = fileHashService,
        _lanDiscoveryService = lanDiscoveryService;
 
@@ -31,7 +31,7 @@ class RemoteShareMediaProjectionBoundary {
   final RemoteShareBrowser _remoteShareBrowser;
   final SharedCacheCatalog _sharedCacheCatalog;
   final SharedCacheIndexStore _sharedCacheIndexStore;
-  final SharedCacheThumbnailStore _sharedFolderCacheRepository;
+  final SharedCacheThumbnailStore _sharedCacheThumbnailStore;
   final FileHashService _fileHashService;
   final LanDiscoveryService _lanDiscoveryService;
 
@@ -63,7 +63,7 @@ class RemoteShareMediaProjectionBoundary {
           continue;
         }
 
-        final localPath = await _sharedFolderCacheRepository
+        final localPath = await _sharedCacheThumbnailStore
             .resolveReceiverThumbnailPath(
               ownerMacAddress: ownerMac,
               cacheId: entry.cacheId,
@@ -153,7 +153,7 @@ class RemoteShareMediaProjectionBoundary {
         continue;
       }
 
-      final bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
+      final bytes = await _sharedCacheThumbnailStore.readOwnerThumbnailBytes(
         cacheId: item.cacheId,
         thumbnailId: item.thumbnailId,
       );
@@ -183,7 +183,7 @@ class RemoteShareMediaProjectionBoundary {
     if (ownerMac == null) {
       return;
     }
-    final savedPath = await _sharedFolderCacheRepository
+    final savedPath = await _sharedCacheThumbnailStore
         .saveReceiverThumbnailBytes(
           ownerMacAddress: ownerMac,
           cacheId: event.cacheId,

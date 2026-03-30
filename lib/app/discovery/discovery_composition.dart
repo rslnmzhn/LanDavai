@@ -35,6 +35,7 @@ import '../../features/transfer/application/transfer_session_coordinator.dart';
 import '../../features/transfer/data/file_hash_service.dart';
 import '../../features/transfer/data/file_transfer_service.dart';
 import '../../features/transfer/data/shared_folder_cache_repository.dart';
+import '../../features/transfer/data/thumbnail_cache_service.dart';
 import '../../features/transfer/data/transfer_storage_service.dart';
 import '../../features/transfer/data/video_link_share_service.dart';
 
@@ -147,17 +148,22 @@ class DiscoveryCompositionFactory {
       deviceRegistry: deviceRegistry,
       deviceAliasRepository: deviceAliasRepository,
     );
+    final thumbnailCacheService = ThumbnailCacheService(database: database);
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: database,
+      thumbnailCacheService: thumbnailCacheService,
     );
-    final sharedCacheIndexStore = SharedCacheIndexStore(database: database);
+    final sharedCacheIndexStore = SharedCacheIndexStore(
+      database: database,
+      thumbnailCacheService: thumbnailCacheService,
+    );
     final sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
     final fileHashService = FileHashService();
     final previewCacheOwner = PreviewCacheOwner(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheThumbnailStore: thumbnailCacheService,
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
     );
@@ -189,7 +195,7 @@ class DiscoveryCompositionFactory {
           remoteShareBrowser: remoteShareBrowser,
           sharedCacheCatalog: sharedCacheCatalog,
           sharedCacheIndexStore: sharedCacheIndexStore,
-          sharedFolderCacheRepository: sharedFolderCacheRepository,
+          sharedCacheThumbnailStore: thumbnailCacheService,
           fileHashService: fileHashService,
           lanDiscoveryService: lanDiscoveryService,
         );

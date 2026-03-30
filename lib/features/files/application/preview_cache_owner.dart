@@ -38,12 +38,12 @@ class PreparedPreviewFile {
 
 class PreviewCacheOwner {
   PreviewCacheOwner({
-    required SharedCacheThumbnailStore sharedFolderCacheRepository,
+    required SharedCacheThumbnailStore sharedCacheThumbnailStore,
     required SharedCacheIndexStore sharedCacheIndexStore,
     required FileHashService fileHashService,
     Future<Directory> Function()? mediaPreviewDirectoryProvider,
     Future<Directory> Function()? previewArtifactDirectoryProvider,
-  }) : _sharedFolderCacheRepository = sharedFolderCacheRepository,
+  }) : _sharedCacheThumbnailStore = sharedCacheThumbnailStore,
        _sharedCacheIndexStore = sharedCacheIndexStore,
        _fileHashService = fileHashService,
        _mediaPreviewDirectoryProvider =
@@ -91,7 +91,7 @@ class PreviewCacheOwner {
     '.xml',
   };
 
-  final SharedCacheThumbnailStore _sharedFolderCacheRepository;
+  final SharedCacheThumbnailStore _sharedCacheThumbnailStore;
   final SharedCacheIndexStore _sharedCacheIndexStore;
   final FileHashService _fileHashService;
   final Future<Directory> Function() _mediaPreviewDirectoryProvider;
@@ -389,7 +389,7 @@ class PreviewCacheOwner {
         Uint8List? bytes;
         final thumbnailId = entry.thumbnailId;
         if (thumbnailId != null && thumbnailId.trim().isNotEmpty) {
-          bytes = await _sharedFolderCacheRepository.readOwnerThumbnailBytes(
+          bytes = await _sharedCacheThumbnailStore.readOwnerThumbnailBytes(
             cacheId: cache.cacheId,
             thumbnailId: thumbnailId,
           );

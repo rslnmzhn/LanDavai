@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -12,11 +11,9 @@ import '../application/shared_cache_owner_contracts.dart';
 import '../../discovery/data/device_alias_repository.dart';
 import '../domain/shared_folder_cache.dart';
 import 'shared_cache_record_store.dart';
-import 'shared_cache_thumbnail_store.dart';
 import 'thumbnail_cache_service.dart';
 
-class SharedFolderCacheRepository
-    implements SharedCacheRecordStore, SharedCacheThumbnailStore {
+class SharedFolderCacheRepository implements SharedCacheRecordStore {
   SharedFolderCacheRepository({
     required AppDatabase database,
     ThumbnailCacheService? thumbnailCacheService,
@@ -502,45 +499,6 @@ class SharedFolderCacheRepository
         .whereType<Map<String, dynamic>>()
         .map(SharedFolderIndexEntry.fromCompactJson)
         .toList(growable: false);
-  }
-
-  @override
-  Future<Uint8List?> readOwnerThumbnailBytes({
-    required String cacheId,
-    required String thumbnailId,
-  }) {
-    return _thumbnailCacheService.readOwnerThumbnailBytes(
-      cacheId: cacheId,
-      thumbnailId: thumbnailId,
-    );
-  }
-
-  @override
-  Future<String?> resolveReceiverThumbnailPath({
-    required String ownerMacAddress,
-    required String cacheId,
-    required String thumbnailId,
-  }) {
-    return _thumbnailCacheService.resolveReceiverThumbnailPath(
-      ownerMacAddress: ownerMacAddress,
-      cacheId: cacheId,
-      thumbnailId: thumbnailId,
-    );
-  }
-
-  @override
-  Future<String> saveReceiverThumbnailBytes({
-    required String ownerMacAddress,
-    required String cacheId,
-    required String thumbnailId,
-    required Uint8List bytes,
-  }) {
-    return _thumbnailCacheService.saveReceiverThumbnailBytes(
-      ownerMacAddress: ownerMacAddress,
-      cacheId: cacheId,
-      thumbnailId: thumbnailId,
-      bytes: bytes,
-    );
   }
 
   Future<void> deleteCache(String cacheId) async {

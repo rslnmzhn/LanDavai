@@ -28,6 +28,7 @@ import 'package:landa/features/transfer/application/shared_cache_index_store.dar
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
+import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_app_database.dart';
@@ -43,11 +44,16 @@ void main() {
       prefix: 'landa_discovery_remote_share_browser_',
     );
     lanDiscoveryService = CapturingLanDiscoveryService();
+    final thumbnailCacheService = ThumbnailCacheService(
+      database: harness.database,
+    );
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheIndexStore = SharedCacheIndexStore(
       database: harness.database,
+      thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheCatalog = SharedCacheCatalog(
       sharedFolderCacheRepository: sharedFolderCacheRepository,
@@ -63,6 +69,7 @@ void main() {
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheThumbnailStore: thumbnailCacheService,
     );
   });
 
@@ -262,6 +269,7 @@ DiscoveryController _buildController({
   required SharedCacheCatalog sharedCacheCatalog,
   required SharedCacheIndexStore sharedCacheIndexStore,
   required SharedFolderCacheRepository sharedFolderCacheRepository,
+  required ThumbnailCacheService sharedCacheThumbnailStore,
 }) {
   final deviceAliasRepository = DeviceAliasRepository(database: database);
   final deviceRegistry = DeviceRegistry(
@@ -270,7 +278,7 @@ DiscoveryController _buildController({
   final fileHashService = FileHashService();
   final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
   final previewCacheOwner = PreviewCacheOwner(
-    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    sharedCacheThumbnailStore: sharedCacheThumbnailStore,
     sharedCacheIndexStore: sharedCacheIndexStore,
     fileHashService: fileHashService,
   );
@@ -278,7 +286,7 @@ DiscoveryController _buildController({
     remoteShareBrowser: remoteShareBrowser,
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
-    sharedFolderCacheRepository: sharedFolderCacheRepository,
+    sharedCacheThumbnailStore: sharedCacheThumbnailStore,
     fileHashService: fileHashService,
     lanDiscoveryService: lanDiscoveryService,
   );
