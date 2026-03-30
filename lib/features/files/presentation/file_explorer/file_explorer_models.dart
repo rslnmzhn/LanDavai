@@ -1,6 +1,6 @@
-part of '../file_explorer_page.dart';
+import 'dart:io';
 
-const Set<String> _supportedImageExtensions = <String>{
+const Set<String> explorerImageExtensions = <String>{
   '.jpg',
   '.jpeg',
   '.png',
@@ -13,7 +13,7 @@ const Set<String> _supportedImageExtensions = <String>{
   '.tiff',
 };
 
-const Set<String> _supportedVideoExtensions = <String>{
+const Set<String> explorerVideoExtensions = <String>{
   '.mp4',
   '.mov',
   '.mkv',
@@ -25,7 +25,7 @@ const Set<String> _supportedVideoExtensions = <String>{
   '.mpg',
 };
 
-const Set<String> _supportedAudioExtensions = <String>{
+const Set<String> explorerAudioExtensions = <String>{
   '.mp3',
   '.m4a',
   '.aac',
@@ -36,7 +36,7 @@ const Set<String> _supportedAudioExtensions = <String>{
   '.wma',
 };
 
-const Set<String> _supportedTextExtensions = <String>{
+const Set<String> explorerTextExtensions = <String>{
   '.txt',
   '.md',
   '.log',
@@ -47,10 +47,10 @@ const Set<String> _supportedTextExtensions = <String>{
   '.xml',
 };
 
-bool get _useMediaKitForPlayback =>
+bool get useMediaKitForPlayback =>
     Platform.isWindows || Platform.isLinux || Platform.isMacOS;
 
-enum _ExplorerMenuAction {
+enum ExplorerMenuAction {
   sortNameAsc,
   sortNameDesc,
   sortModifiedNewest,

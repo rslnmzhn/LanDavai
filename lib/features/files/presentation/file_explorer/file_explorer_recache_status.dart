@@ -1,10 +1,16 @@
-part of '../file_explorer_page.dart';
+import 'package:flutter/material.dart';
 
-class _SharedRecacheStatusCard extends StatelessWidget {
-  const _SharedRecacheStatusCard({
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_radius.dart';
+import '../../../../app/theme/app_spacing.dart';
+import '../../../discovery/application/shared_cache_maintenance_boundary.dart';
+
+class SharedRecacheStatusCard extends StatelessWidget {
+  const SharedRecacheStatusCard({
     required this.progress,
     required this.details,
     required this.formatEta,
+    super.key,
   });
 
   final double? progress;

@@ -1,13 +1,26 @@
-part of '../file_explorer_page.dart';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
-class _ExplorerPathHeader extends StatelessWidget {
-  const _ExplorerPathHeader({
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_radius.dart';
+import '../../../../app/theme/app_spacing.dart';
+import '../../application/files_feature_state_owner.dart';
+import '../../application/preview_cache_owner.dart';
+import 'file_explorer_models.dart';
+
+class ExplorerPathHeader extends StatelessWidget {
+  const ExplorerPathHeader({
     required this.rootLabel,
     required this.relativePath,
     required this.canGoUp,
     required this.onGoUp,
     required this.canSelectRoot,
     required this.onSelectRoot,
+    super.key,
   });
 
   final String rootLabel;
@@ -48,12 +61,13 @@ class _ExplorerPathHeader extends StatelessWidget {
   }
 }
 
-class _ExplorerEntityTile extends StatelessWidget {
-  const _ExplorerEntityTile({
+class ExplorerEntityTile extends StatelessWidget {
+  const ExplorerEntityTile({
     required this.entry,
     required this.previewCacheOwner,
     required this.onTap,
     this.onDelete,
+    super.key,
   });
 
   final FilesFeatureEntry entry;
@@ -68,7 +82,7 @@ class _ExplorerEntityTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       tileColor: AppColors.surface,
-      leading: _ExplorerEntityLeading(
+      leading: ExplorerEntityLeading(
         isDirectory: entry.isDirectory,
         filePath: entry.filePath,
         previewCacheOwner: previewCacheOwner,
@@ -93,12 +107,13 @@ class _ExplorerEntityTile extends StatelessWidget {
   }
 }
 
-class _ExplorerEntityLeading extends StatelessWidget {
-  const _ExplorerEntityLeading({
+class ExplorerEntityLeading extends StatelessWidget {
+  const ExplorerEntityLeading({
     required this.isDirectory,
     required this.filePath,
     required this.previewCacheOwner,
     this.size = 44,
+    super.key,
   });
 
   final bool isDirectory;
@@ -149,7 +164,7 @@ class _ExplorerFilePreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ext = p.extension(filePath).toLowerCase();
-    if (_supportedImageExtensions.contains(ext)) {
+    if (explorerImageExtensions.contains(ext)) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Image.file(
@@ -161,14 +176,14 @@ class _ExplorerFilePreview extends StatelessWidget {
         ),
       );
     }
-    if (_supportedVideoExtensions.contains(ext)) {
+    if (explorerVideoExtensions.contains(ext)) {
       return _ExplorerVideoPreview(
         filePath: filePath,
         previewCacheOwner: previewCacheOwner,
         size: size,
       );
     }
-    if (_supportedAudioExtensions.contains(ext)) {
+    if (explorerAudioExtensions.contains(ext)) {
       return _ExplorerAudioPreview(
         filePath: filePath,
         previewCacheOwner: previewCacheOwner,

@@ -6,7 +6,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../files/application/preview_cache_owner.dart';
-import '../../files/presentation/file_explorer_page.dart';
+import '../../files/presentation/file_explorer/local_file_viewer.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../application/remote_share_browser.dart';
 

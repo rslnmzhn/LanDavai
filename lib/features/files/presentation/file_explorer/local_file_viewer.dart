@@ -1,4 +1,22 @@
-part of '../file_explorer_page.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:media_kit/media_kit.dart';
+import 'package:media_kit_video/media_kit_video.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:video_player/video_player.dart';
+
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_radius.dart';
+import '../../../../app/theme/app_spacing.dart';
+import '../../application/preview_cache_owner.dart';
+import 'file_explorer_models.dart';
 
 class LocalFileViewerPage extends StatelessWidget {
   const LocalFileViewerPage({
@@ -20,7 +38,7 @@ class LocalFileViewerPage extends StatelessWidget {
       case _LocalFileKind.image:
         body = _ImageFileViewer(filePath: filePath);
       case _LocalFileKind.video:
-        body = _useMediaKitForPlayback
+        body = useMediaKitForPlayback
             ? _MediaKitVideoFileViewer(
                 filePath: filePath,
                 previewCacheOwner: previewCacheOwner,
@@ -30,7 +48,7 @@ class LocalFileViewerPage extends StatelessWidget {
                 previewCacheOwner: previewCacheOwner,
               );
       case _LocalFileKind.audio:
-        body = _useMediaKitForPlayback
+        body = useMediaKitForPlayback
             ? _MediaKitAudioFileViewer(
                 filePath: filePath,
                 previewCacheOwner: previewCacheOwner,
@@ -55,16 +73,16 @@ class LocalFileViewerPage extends StatelessWidget {
 
   _LocalFileKind _resolveFileKind(String path) {
     final ext = p.extension(path).toLowerCase();
-    if (_supportedImageExtensions.contains(ext)) {
+    if (explorerImageExtensions.contains(ext)) {
       return _LocalFileKind.image;
     }
-    if (_supportedVideoExtensions.contains(ext)) {
+    if (explorerVideoExtensions.contains(ext)) {
       return _LocalFileKind.video;
     }
-    if (_supportedAudioExtensions.contains(ext)) {
+    if (explorerAudioExtensions.contains(ext)) {
       return _LocalFileKind.audio;
     }
-    if (_supportedTextExtensions.contains(ext)) {
+    if (explorerTextExtensions.contains(ext)) {
       return _LocalFileKind.text;
     }
     if (ext == '.pdf') {
@@ -73,6 +91,8 @@ class LocalFileViewerPage extends StatelessWidget {
     return _LocalFileKind.other;
   }
 }
+
+enum _LocalFileKind { image, video, audio, text, pdf, other }
 
 class _ImageFileViewer extends StatelessWidget {
   const _ImageFileViewer({required this.filePath});

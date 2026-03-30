@@ -1,33 +1,24 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../discovery/application/shared_cache_maintenance_boundary.dart';
-import '../application/file_explorer_contract.dart';
-import '../application/files_feature_state_owner.dart';
-import '../application/preview_cache_owner.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
-
-part 'file_explorer/file_explorer_models.dart';
-part 'file_explorer/file_explorer_recache_status.dart';
-part 'file_explorer/local_file_viewer.dart';
-part 'file_explorer/file_explorer_widgets.dart';
-part 'file_explorer/file_explorer_tail_widgets.dart';
+import '../application/file_explorer_contract.dart';
+import '../application/files_feature_state_owner.dart';
+import '../application/preview_cache_owner.dart';
+import 'file_explorer/file_explorer_models.dart';
+import 'file_explorer/file_explorer_recache_status.dart';
+import 'file_explorer/file_explorer_tail_widgets.dart';
+import 'file_explorer/file_explorer_widgets.dart';
+import 'file_explorer/local_file_viewer.dart';
 
 class FileExplorerPage extends StatefulWidget {
   const FileExplorerPage({
@@ -212,7 +203,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _ExplorerPathHeader(
+                  ExplorerPathHeader(
                     rootLabel: selectedRoot?.label ?? 'Files',
                     relativePath: owner.relativePathLabel(),
                     canGoUp: owner.canGoUp,
@@ -223,7 +214,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                   const SizedBox(height: AppSpacing.xs),
                   Row(
                     children: [
-                      _DisplayModeToggle(
+                      DisplayModeToggle(
                         isGrid: state.viewMode == FilesFeatureViewMode.grid,
                         onToggle: owner.toggleViewMode,
                       ),
@@ -252,74 +243,74 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                         ),
                       ),
                       const SizedBox(width: AppSpacing.xs),
-                      PopupMenuButton<_ExplorerMenuAction>(
+                      PopupMenuButton<ExplorerMenuAction>(
                         tooltip: 'Sort',
                         onSelected: _handleMenuAction,
                         itemBuilder: (context) {
                           var menuTileSize = state.gridTileExtent;
                           return [
-                            const PopupMenuItem<_ExplorerMenuAction>(
+                            const PopupMenuItem<ExplorerMenuAction>(
                               enabled: false,
                               child: Text('Sort'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortNameAsc,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortNameAsc,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.nameAsc,
                               child: const Text('A-Z'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortNameDesc,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortNameDesc,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.nameDesc,
                               child: const Text('Z-A'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortModifiedNewest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortModifiedNewest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.modifiedNewest,
                               child: const Text('Modified: newest'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortModifiedOldest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortModifiedOldest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.modifiedOldest,
                               child: const Text('Modified: oldest'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortChangedNewest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortChangedNewest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.changedNewest,
                               child: const Text('Created/changed: newest'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortChangedOldest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortChangedOldest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.changedOldest,
                               child: const Text('Created/changed: oldest'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortSizeLargest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortSizeLargest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.sizeLargest,
                               child: const Text('Size: largest'),
                             ),
-                            CheckedPopupMenuItem<_ExplorerMenuAction>(
-                              value: _ExplorerMenuAction.sortSizeSmallest,
+                            CheckedPopupMenuItem<ExplorerMenuAction>(
+                              value: ExplorerMenuAction.sortSizeSmallest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.sizeSmallest,
                               child: const Text('Size: smallest'),
                             ),
                             const PopupMenuDivider(),
-                            PopupMenuItem<_ExplorerMenuAction>(
+                            PopupMenuItem<ExplorerMenuAction>(
                               enabled: false,
                               height: 86,
                               child: StatefulBuilder(
@@ -372,7 +363,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   if (canRecacheSelectedRoot && _isSharedRecacheRunning) ...[
-                    _SharedRecacheStatusCard(
+                    SharedRecacheStatusCard(
                       progress: _sharedRecacheProgressValue,
                       details: _sharedRecacheDetailsValue,
                       formatEta: _formatEta,
@@ -387,7 +378,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                     ),
                   if (state.errorMessage != null) ...[
                     const SizedBox(height: AppSpacing.sm),
-                    _ExplorerErrorBanner(
+                    ExplorerErrorBanner(
                       message: state.errorMessage!,
                       onRetry: owner.refreshCurrentRoot,
                     ),
@@ -403,7 +394,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                                 const SizedBox(height: AppSpacing.xs),
                             itemBuilder: (_, index) {
                               final entry = visibleEntries[index];
-                              return _ExplorerEntityTile(
+                              return ExplorerEntityTile(
                                 entry: entry,
                                 previewCacheOwner: widget.previewCacheOwner,
                                 onTap: () => _openEntry(entry),
@@ -426,7 +417,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                                 ),
                             itemBuilder: (_, index) {
                               final entry = visibleEntries[index];
-                              return _ExplorerEntityGridTile(
+                              return ExplorerEntityGridTile(
                                 entry: entry,
                                 tileExtent: state.gridTileExtent,
                                 previewCacheOwner: widget.previewCacheOwner,
@@ -546,27 +537,27 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
   }
 
-  void _handleMenuAction(_ExplorerMenuAction action) {
+  void _handleMenuAction(ExplorerMenuAction action) {
     _requiredOwner.setSortOption(_sortOptionFromMenuAction(action));
   }
 
-  FilesFeatureSortOption _sortOptionFromMenuAction(_ExplorerMenuAction action) {
+  FilesFeatureSortOption _sortOptionFromMenuAction(ExplorerMenuAction action) {
     switch (action) {
-      case _ExplorerMenuAction.sortNameAsc:
+      case ExplorerMenuAction.sortNameAsc:
         return FilesFeatureSortOption.nameAsc;
-      case _ExplorerMenuAction.sortNameDesc:
+      case ExplorerMenuAction.sortNameDesc:
         return FilesFeatureSortOption.nameDesc;
-      case _ExplorerMenuAction.sortModifiedNewest:
+      case ExplorerMenuAction.sortModifiedNewest:
         return FilesFeatureSortOption.modifiedNewest;
-      case _ExplorerMenuAction.sortModifiedOldest:
+      case ExplorerMenuAction.sortModifiedOldest:
         return FilesFeatureSortOption.modifiedOldest;
-      case _ExplorerMenuAction.sortChangedNewest:
+      case ExplorerMenuAction.sortChangedNewest:
         return FilesFeatureSortOption.changedNewest;
-      case _ExplorerMenuAction.sortChangedOldest:
+      case ExplorerMenuAction.sortChangedOldest:
         return FilesFeatureSortOption.changedOldest;
-      case _ExplorerMenuAction.sortSizeLargest:
+      case ExplorerMenuAction.sortSizeLargest:
         return FilesFeatureSortOption.sizeLargest;
-      case _ExplorerMenuAction.sortSizeSmallest:
+      case ExplorerMenuAction.sortSizeSmallest:
         return FilesFeatureSortOption.sizeSmallest;
     }
   }
