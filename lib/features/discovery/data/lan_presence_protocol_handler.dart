@@ -1,4 +1,5 @@
-import 'lan_packet_codec.dart';
+import 'lan_packet_codec_common.dart';
+import 'lan_packet_codec_models.dart';
 import 'lan_protocol_events.dart';
 
 class PresenceHandlingResult {
@@ -19,10 +20,10 @@ class LanPresenceProtocolHandler {
     required String senderIp,
     required DateTime observedAt,
   }) {
-    if (packet.prefix == LanPacketCodec.discoverPrefix) {
+    if (packet.prefix == lanDiscoverPrefix) {
       return const PresenceHandlingResult(shouldRespondToDiscover: true);
     }
-    if (packet.prefix != LanPacketCodec.responsePrefix) {
+    if (packet.prefix != lanResponsePrefix) {
       return const PresenceHandlingResult();
     }
     return PresenceHandlingResult(

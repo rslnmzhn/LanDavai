@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-import 'lan_packet_codec.dart';
+import 'lan_packet_codec_models.dart';
 
 // Shared decoded-packet event surface for protocol handlers and service callbacks.
 class AppPresenceEvent {

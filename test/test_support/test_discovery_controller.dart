@@ -297,6 +297,50 @@ class TrackingDiscoveryController extends DiscoveryController {
   int disposeCalls = 0;
   bool wasDisposed = false;
   Future<void>? lastLoadRemoteShareOptionsFuture;
+  List<DiscoveredDevice>? _testDevices;
+  String? _testSelectedDeviceIp;
+
+  void setTestDevices(List<DiscoveredDevice> devices) {
+    _testDevices = List<DiscoveredDevice>.unmodifiable(devices);
+    if (_testSelectedDeviceIp != null &&
+        devices.every((device) => device.ip != _testSelectedDeviceIp)) {
+      _testSelectedDeviceIp = null;
+    }
+    notifyListeners();
+  }
+
+  @override
+  List<DiscoveredDevice> get devices {
+    final testDevices = _testDevices;
+    if (testDevices == null) {
+      return super.devices;
+    }
+    return testDevices;
+  }
+
+  @override
+  DiscoveredDevice? get selectedDevice {
+    final testDevices = _testDevices;
+    final selectedIp = _testSelectedDeviceIp;
+    if (testDevices == null || selectedIp == null) {
+      return super.selectedDevice;
+    }
+    for (final device in testDevices) {
+      if (device.ip == selectedIp) {
+        return device;
+      }
+    }
+    return null;
+  }
+
+  @override
+  int get appDetectedCount {
+    final testDevices = _testDevices;
+    if (testDevices == null) {
+      return super.appDetectedCount;
+    }
+    return testDevices.where((device) => device.isAppDetected).length;
+  }
 
   @override
   Future<void> start() async {
@@ -309,6 +353,16 @@ class TrackingDiscoveryController extends DiscoveryController {
     final future = super.loadRemoteShareOptions();
     lastLoadRemoteShareOptionsFuture = future;
     return future;
+  }
+
+  @override
+  void selectDeviceByIp(String ip) {
+    if (_testDevices == null) {
+      super.selectDeviceByIp(ip);
+      return;
+    }
+    _testSelectedDeviceIp = _testSelectedDeviceIp == ip ? null : ip;
+    notifyListeners();
   }
 
   @override

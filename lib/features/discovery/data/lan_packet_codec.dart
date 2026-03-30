@@ -10,6 +10,7 @@ import 'lan_transfer_packet_codec.dart';
 
 export 'lan_packet_codec_models.dart';
 
+// Thin compatibility facade over family-specific protocol codecs.
 class LanPacketCodec {
   static const String discoverPrefix = lanDiscoverPrefix;
   static const String responsePrefix = lanResponsePrefix;

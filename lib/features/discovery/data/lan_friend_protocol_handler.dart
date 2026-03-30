@@ -1,4 +1,4 @@
-import 'lan_packet_codec.dart';
+import 'lan_packet_codec_models.dart';
 import 'lan_protocol_events.dart';
 
 class LanFriendProtocolHandler {

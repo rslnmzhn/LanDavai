@@ -8,7 +8,9 @@ import 'dart:typed_data';
 import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_friend_protocol_handler.dart';
-import 'lan_packet_codec.dart';
+import 'lan_packet_codec_common.dart';
+import 'lan_packet_codec_models.dart';
+import 'lan_packet_codec.dart' show LanPacketCodec;
 import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
 import 'lan_share_protocol_handler.dart';
@@ -166,7 +168,7 @@ class LanDiscoveryService {
     required List<TransferAnnouncementItem> items,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.transferRequestPrefix,
+      prefix: lanTransferRequestPrefix,
       packet: _packetCodec.encodeTransferRequest(
         instanceId: _instanceId,
         requestId: requestId,
@@ -190,7 +192,7 @@ class LanDiscoveryService {
     List<String>? acceptedFileNames,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.transferDecisionPrefix,
+      prefix: lanTransferDecisionPrefix,
       packet: _packetCodec.encodeTransferDecision(
         instanceId: _instanceId,
         requestId: requestId,
@@ -211,7 +213,7 @@ class LanDiscoveryService {
     required String requesterMacAddress,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.friendRequestPrefix,
+      prefix: lanFriendRequestPrefix,
       packet: _packetCodec.encodeFriendRequest(
         instanceId: _instanceId,
         requestId: requestId,
@@ -231,7 +233,7 @@ class LanDiscoveryService {
     required bool accepted,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.friendResponsePrefix,
+      prefix: lanFriendResponsePrefix,
       packet: _packetCodec.encodeFriendResponse(
         instanceId: _instanceId,
         requestId: requestId,
@@ -250,7 +252,7 @@ class LanDiscoveryService {
     required String requesterName,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.shareQueryPrefix,
+      prefix: lanShareQueryPrefix,
       packet: _packetCodec.encodeShareQuery(
         instanceId: _instanceId,
         requestId: requestId,
@@ -286,7 +288,7 @@ class LanDiscoveryService {
       );
     }
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.shareCatalogPrefix,
+      prefix: lanShareCatalogPrefix,
       packet: _packetCodec.encodeShareCatalog(
         instanceId: _instanceId,
         requestId: requestId,
@@ -310,7 +312,7 @@ class LanDiscoveryService {
     bool previewMode = false,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.downloadRequestPrefix,
+      prefix: lanDownloadRequestPrefix,
       packet: _packetCodec.encodeDownloadRequest(
         instanceId: _instanceId,
         requestId: requestId,
@@ -335,7 +337,7 @@ class LanDiscoveryService {
       return;
     }
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.thumbnailSyncRequestPrefix,
+      prefix: lanThumbnailSyncRequestPrefix,
       packet: _packetCodec.encodeThumbnailSyncRequest(
         instanceId: _instanceId,
         requestId: requestId,
@@ -360,7 +362,7 @@ class LanDiscoveryService {
       return;
     }
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.thumbnailPacketPrefix,
+      prefix: lanThumbnailPacketPrefix,
       packet: _packetCodec.encodeThumbnailPacket(
         instanceId: _instanceId,
         requestId: requestId,
@@ -383,7 +385,7 @@ class LanDiscoveryService {
     required int maxEntries,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.clipboardQueryPrefix,
+      prefix: lanClipboardQueryPrefix,
       packet: _packetCodec.encodeClipboardQuery(
         instanceId: _instanceId,
         requestId: requestId,
@@ -404,7 +406,7 @@ class LanDiscoveryService {
     required List<ClipboardCatalogItem> entries,
   }) async {
     await _sendOutgoingPacket(
-      prefix: LanPacketCodec.clipboardCatalogPrefix,
+      prefix: lanClipboardCatalogPrefix,
       packet: _packetCodec.encodeClipboardCatalog(
         instanceId: _instanceId,
         requestId: requestId,
