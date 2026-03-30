@@ -49,14 +49,13 @@ void main() {
     );
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: harness.database,
-      thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheIndexStore = SharedCacheIndexStore(
       database: harness.database,
       thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheCatalog = SharedCacheCatalog(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheRecordStore: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
     remoteShareBrowser = TrackingRemoteShareBrowser(

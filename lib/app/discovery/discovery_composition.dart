@@ -151,14 +151,13 @@ class DiscoveryCompositionFactory {
     final thumbnailCacheService = ThumbnailCacheService(database: database);
     final sharedFolderCacheRepository = SharedFolderCacheRepository(
       database: database,
-      thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheIndexStore = SharedCacheIndexStore(
       database: database,
       thumbnailCacheService: thumbnailCacheService,
     );
     final sharedCacheCatalog = SharedCacheCatalog(
-      sharedFolderCacheRepository: sharedFolderCacheRepository,
+      sharedCacheRecordStore: sharedFolderCacheRepository,
       sharedCacheIndexStore: sharedCacheIndexStore,
     );
     final fileHashService = FileHashService();

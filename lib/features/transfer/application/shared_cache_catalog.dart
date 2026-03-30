@@ -23,12 +23,12 @@ class OwnerCacheCatalogLoadResult {
 
 class SharedCacheCatalog extends ChangeNotifier {
   SharedCacheCatalog({
-    required SharedCacheRecordStore sharedFolderCacheRepository,
+    required SharedCacheRecordStore sharedCacheRecordStore,
     required SharedCacheIndexStore sharedCacheIndexStore,
-  }) : _sharedFolderCacheRepository = sharedFolderCacheRepository,
+  }) : _sharedCacheRecordStore = sharedCacheRecordStore,
        _sharedCacheIndexStore = sharedCacheIndexStore;
 
-  final SharedCacheRecordStore _sharedFolderCacheRepository;
+  final SharedCacheRecordStore _sharedCacheRecordStore;
   final SharedCacheIndexStore _sharedCacheIndexStore;
 
   List<SharedFolderCacheRecord> _ownerCaches =
@@ -44,11 +44,11 @@ class SharedCacheCatalog extends ChangeNotifier {
   }) async {
     var reboundCount = 0;
     if (rebindOwnerCachesToMac) {
-      reboundCount = await _sharedFolderCacheRepository.rebindOwnerCachesToMac(
+      reboundCount = await _sharedCacheRecordStore.rebindOwnerCachesToMac(
         ownerMacAddress: ownerMacAddress,
       );
     }
-    final caches = await _sharedFolderCacheRepository.listCaches(
+    final caches = await _sharedCacheRecordStore.listCaches(
       role: SharedFolderCacheRole.owner,
       ownerMacAddress: ownerMacAddress,
     );
@@ -73,11 +73,10 @@ class SharedCacheCatalog extends ChangeNotifier {
     );
     final normalizedRoot = await _sharedCacheIndexStore
         .normalizeExistingDirectoryPath(folderPath);
-    final existing = await _sharedFolderCacheRepository
-        .findOwnerCacheByRootPath(
-          ownerMacAddress: ownerMac,
-          rootPath: normalizedRoot,
-        );
+    final existing = await _sharedCacheRecordStore.findOwnerCacheByRootPath(
+      ownerMacAddress: ownerMac,
+      rootPath: normalizedRoot,
+    );
     final resolvedDisplayName = _resolveDisplayName(
       providedName: displayName ?? existing?.displayName,
       fallbackPath: normalizedRoot,
@@ -130,7 +129,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       updatedAtMs: draftRecord.updatedAtMs,
     );
 
-    await _sharedFolderCacheRepository.upsertCacheRecord(record);
+    await _sharedCacheRecordStore.upsertCacheRecord(record);
     _upsertLoadedOwnerCache(record);
     return OwnerFolderCacheUpsertResult(
       record: record,
@@ -207,7 +206,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       updatedAtMs: now,
     );
 
-    await _sharedFolderCacheRepository.upsertCacheRecord(record);
+    await _sharedCacheRecordStore.upsertCacheRecord(record);
     _upsertLoadedOwnerCache(record);
     return record;
   }
@@ -240,7 +239,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       totalBytes: indexResult.totalBytes,
       updatedAtMs: updatedAtMs,
     );
-    await _sharedFolderCacheRepository.upsertCacheRecord(updated);
+    await _sharedCacheRecordStore.upsertCacheRecord(updated);
     _upsertLoadedOwnerCache(updated);
     return updated;
   }
@@ -287,7 +286,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       totalBytes: indexResult.totalBytes,
       updatedAtMs: updatedAtMs,
     );
-    await _sharedFolderCacheRepository.upsertCacheRecord(updated);
+    await _sharedCacheRecordStore.upsertCacheRecord(updated);
     _upsertLoadedOwnerCache(updated);
     return updated;
   }
@@ -356,7 +355,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       updatedAtMs: now,
     );
 
-    await _sharedFolderCacheRepository.upsertCacheRecord(record);
+    await _sharedCacheRecordStore.upsertCacheRecord(record);
     return record;
   }
 
@@ -371,7 +370,7 @@ class SharedCacheCatalog extends ChangeNotifier {
     final normalizedOwnerMac = ownerMacAddress == null
         ? null
         : _normalizeOrThrow(ownerMacAddress, field: 'ownerMacAddress');
-    return _sharedFolderCacheRepository.listCaches(
+    return _sharedCacheRecordStore.listCaches(
       role: SharedFolderCacheRole.receiver,
       ownerMacAddress: normalizedOwnerMac,
       peerMacAddress: receiverMac,
@@ -379,11 +378,11 @@ class SharedCacheCatalog extends ChangeNotifier {
   }
 
   Future<void> deleteCache(String cacheId) async {
-    final record = await _sharedFolderCacheRepository.findCacheById(cacheId);
+    final record = await _sharedCacheRecordStore.findCacheById(cacheId);
     if (record != null) {
       await _sharedCacheIndexStore.deleteIndexArtifacts(record);
     }
-    await _sharedFolderCacheRepository.deleteCacheRecord(cacheId);
+    await _sharedCacheRecordStore.deleteCacheRecord(cacheId);
     final next = _ownerCaches
         .where((cache) => cache.cacheId != cacheId)
         .toList(growable: false);
@@ -397,7 +396,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       ownerMacAddress,
       field: 'ownerMacAddress',
     );
-    final ownerCaches = await _sharedFolderCacheRepository.listCaches(
+    final ownerCaches = await _sharedCacheRecordStore.listCaches(
       role: SharedFolderCacheRole.owner,
       ownerMacAddress: ownerMac,
     );
@@ -451,7 +450,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       receiverMacAddress,
       field: 'receiverMacAddress',
     );
-    final receiverCaches = await _sharedFolderCacheRepository.listCaches(
+    final receiverCaches = await _sharedCacheRecordStore.listCaches(
       role: SharedFolderCacheRole.receiver,
       ownerMacAddress: ownerMac,
       peerMacAddress: receiverMac,

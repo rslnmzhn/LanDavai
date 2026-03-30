@@ -27,7 +27,7 @@ void main() {
       repository = SharedFolderCacheRepository(database: harness.database);
       indexStore = SharedCacheIndexStore(database: harness.database);
       catalog = SharedCacheCatalog(
-        sharedFolderCacheRepository: repository,
+        sharedCacheRecordStore: repository,
         sharedCacheIndexStore: indexStore,
       );
       fixtureDirectory = Directory(
@@ -83,7 +83,7 @@ void main() {
       'removeCacheById resolves owner cache lookup and deletion through SharedCacheCatalog',
       () async {
         final recordingCatalog = RecordingSharedCacheCatalog(
-          sharedFolderCacheRepository: repository,
+          sharedCacheRecordStore: repository,
           sharedCacheIndexStore: indexStore,
           ownerCaches: <SharedFolderCacheRecord>[
             _ownerCacheRecord(cacheId: 'cache-1', displayName: 'Shared docs'),
@@ -111,7 +111,7 @@ void main() {
       'recacheOwner routes maintenance progress and cache refresh through SharedCacheCatalog',
       () async {
         final recordingCatalog = RecordingSharedCacheCatalog(
-          sharedFolderCacheRepository: repository,
+          sharedCacheRecordStore: repository,
           sharedCacheIndexStore: indexStore,
           ownerCaches: <SharedFolderCacheRecord>[
             _ownerCacheRecord(
@@ -148,7 +148,7 @@ void main() {
 
 class RecordingSharedCacheCatalog extends SharedCacheCatalog {
   RecordingSharedCacheCatalog({
-    required super.sharedFolderCacheRepository,
+    required super.sharedCacheRecordStore,
     required super.sharedCacheIndexStore,
     required List<SharedFolderCacheRecord> ownerCaches,
   }) : _ownerCachesSnapshot = List<SharedFolderCacheRecord>.from(ownerCaches);

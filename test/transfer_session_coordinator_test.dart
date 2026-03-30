@@ -62,14 +62,13 @@ void main() {
       thumbnailCacheService = ThumbnailCacheService(database: harness.database);
       sharedFolderCacheRepository = SharedFolderCacheRepository(
         database: harness.database,
-        thumbnailCacheService: thumbnailCacheService,
       );
       sharedCacheIndexStore = SharedCacheIndexStore(
         database: harness.database,
         thumbnailCacheService: thumbnailCacheService,
       );
       sharedCacheCatalog = SharedCacheCatalog(
-        sharedFolderCacheRepository: sharedFolderCacheRepository,
+        sharedCacheRecordStore: sharedFolderCacheRepository,
         sharedCacheIndexStore: sharedCacheIndexStore,
       );
       fileHashService = FileHashService();
@@ -241,14 +240,13 @@ void main() {
       final thumbnailCacheService = ThumbnailCacheService(database: database);
       final sharedFolderCacheRepository = SharedFolderCacheRepository(
         database: database,
-        thumbnailCacheService: thumbnailCacheService,
       );
       final sharedCacheIndexStore = SharedCacheIndexStore(
         database: database,
         thumbnailCacheService: thumbnailCacheService,
       );
       final sharedCacheCatalog = SharedCacheCatalog(
-        sharedFolderCacheRepository: sharedFolderCacheRepository,
+        sharedCacheRecordStore: sharedFolderCacheRepository,
         sharedCacheIndexStore: sharedCacheIndexStore,
       );
       final fileHashService = FileHashService();

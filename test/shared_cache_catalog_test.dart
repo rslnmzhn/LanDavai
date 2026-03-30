@@ -21,7 +21,7 @@ void main() {
     repository = SharedFolderCacheRepository(database: harness.database);
     indexStore = SharedCacheIndexStore(database: harness.database);
     catalog = SharedCacheCatalog(
-      sharedFolderCacheRepository: repository,
+      sharedCacheRecordStore: repository,
       sharedCacheIndexStore: indexStore,
     );
     fixtureDirectory = Directory(

@@ -20,7 +20,7 @@ void main() {
       prefix: 'landa_remote_share_browser_',
     );
     sharedCacheCatalog = RecordingSharedCacheCatalog(
-      sharedFolderCacheRepository: SharedFolderCacheRepository(
+      sharedCacheRecordStore: SharedFolderCacheRepository(
         database: harness.database,
       ),
       sharedCacheIndexStore: SharedCacheIndexStore(database: harness.database),
@@ -282,7 +282,7 @@ void main() {
 
 class RecordingSharedCacheCatalog extends SharedCacheCatalog {
   RecordingSharedCacheCatalog({
-    required super.sharedFolderCacheRepository,
+    required super.sharedCacheRecordStore,
     required super.sharedCacheIndexStore,
     required Map<String, List<SharedFolderCacheRecord>>
     receiverCachesByOwnerMac,
