@@ -1,6 +1,7 @@
 # Completed Refactor Status
 
-Этот файл фиксирует, какие части плана из `docs/*.md` уже выполнены по текущему состоянию репозитория.
+Этот файл фиксирует, какие части плана из `docs/*.md` уже выполнены по текущему
+состоянию репозитория.
 
 Источники:
 
@@ -9,88 +10,76 @@
 - `docs/refactor_workpacks/18_deletion_wave_map.md`
 - текущее состояние `lib/` и `test/`
 
-## 1. Уже завершенный baseline из master plan
-
-Из `docs/refactor_master_plan.md`, раздел `Current Baseline`, уже считаются выполненными и не должны переоткрываться как незакрытые seams:
+## 1. Пост-рефактор baseline (не открывать заново)
 
 - `DiscoveryReadModel` owns the discovery-facing read projection
+- `LocalPeerIdentityStore` owns local peer identity persistence/creation
 - `SharedCacheCatalog` owns shared-cache metadata truth
 - `SharedCacheIndexStore` owns shared-cache index truth
+- `SharedCacheMaintenanceBoundary` owns recache/remove/progress
 - `RemoteShareBrowser` owns remote share browse/session truth
-- `FilesFeatureStateOwner` owns explorer navigation/view truth
-- `PreviewCacheOwner` owns preview lifecycle and cache truth
+- `RemoteShareMediaProjectionBoundary` owns remote-share thumbnail/media projection
+- `FilesFeatureStateOwner` owns explorer/navigation/view truth
+- `PreviewCacheOwner` owns preview lifecycle/cache truth
 - `TransferSessionCoordinator` owns live transfer/session truth
+- `VideoLinkSessionBoundary` owns video-link session commands + projection
 - `DownloadHistoryBoundary` owns download history truth
 - `ClipboardHistoryStore` owns local clipboard history truth
 - `RemoteClipboardProjectionStore` owns remote clipboard projection truth
 
-## 2. Завершенные workpack-файлы
+## 2. Завершенные workpack-файлы (01–09)
 
-На текущий момент выполнены следующие workpack’и из `docs/refactor_workpacks/`:
+Выполнены и подтверждены кодом:
 
 - `01_local_peer_identity_owner_extraction.md`
-  - локальная peer identity больше не принадлежит `FriendRepository`
+  - `LocalPeerIdentityStore` owns `local_peer_id`
+  - `FriendRepository` no longer owns local identity
 - `02_discovery_boundary_factory_extraction.md`
-  - сборка discovery graph вынесена из widget lifecycle в app-layer composition
+  - composition lives in `lib/app/discovery/discovery_composition.dart`
 - `03_discovery_page_surface_split.md`
-  - гигантский `DiscoveryPage` уже разрезан на отдельные presentation surfaces
+  - `DiscoveryPage` split into dedicated presentation surfaces
 - `04_shared_cache_maintenance_contract_cutover.md`
-  - удален bridge/backchannel shared-cache maintenance seam
+  - `SharedCacheMaintenanceBoundary` is in use
+  - bridge/callback bundle removed
 - `05_files_part_graph_removal.md`
-  - files presentation больше не использует `part / part of`
+  - no `part / part of` under files presentation
 - `06_remote_share_media_projection_cleanup.md`
-  - controller-side thumbnail/media IO выведен в явную boundary
-- `08_transfer_video_link_separation.md`
-  - video-link flow отделен от transfer shell concerns
-
-## 3. Что именно уже удалено или минимизировано по deletion wave map
-
-Из `docs/refactor_workpacks/18_deletion_wave_map.md` уже выполнены такие пункты:
-
-- `FriendRepository.loadOrCreateLocalPeerId()` как business owner `local_peer_id`
-- `DiscoveryPageEntry._DiscoveryBoundary` и page-local graph assembly
-- `SharedCacheCatalogBridge`
-- `DiscoveryPage -> FileExplorerPage.launch(...)` recache/remove/progress callback bundle
-- files `part / part of` cluster under `file_explorer_page.dart`
-- controller-side thumbnail IO through `SharedFolderCacheRepository`
-- manual `RemoteShareBrowser` notification nudges from controller glue
-- mixed transfer/watch-link routing between discovery shells and `VideoLinkShareService`
-- monolithic `DiscoveryPage` section and modal bodies materially reduced
-
-## 4. Какие волны уже фактически закрыты
-
-- Wave A: завершена
-  - `01`, `04`, `08`
-- Wave B: завершена
-  - `06`, `02`, `05`
-- Wave C: выполнена частично
-  - завершен `03`
-  - еще остаются `07` и `09`
-- Wave D: еще не выполнена
-  - `10`
-
-## 5. Что еще остается невыполненным из текущего плана
-
-По `docs/refactor_master_plan.md` и `docs/refactor_workpacks/00_index.md` еще остаются открытыми:
-
+  - thumbnail/media IO via `RemoteShareMediaProjectionBoundary`
+  - controller IO bypass removed
 - `07_shared_folder_cache_repository_split.md`
+  - `SharedFolderCacheRepository` reduced to thin `SharedCacheRecordStore`
+  - thumbnail IO via `SharedCacheThumbnailStore`
+- `08_transfer_video_link_separation.md`
+  - `VideoLinkSessionBoundary` separated
+  - controller/page no longer own video-link session
 - `09_protocol_codec_family_decomposition.md`
-- `10_architecture_guard_and_regression_hardening.md`
+  - protocol family codecs split into dedicated files
+  - DTOs in `lan_packet_codec_models.dart`
+  - common helpers in `lan_packet_codec_common.dart`
+  - `LanPacketCodec` is a thin facade
 
-## 6. Короткая сводка по состоянию плана
+## 3. Workpack 10 status
 
-Уже закрыты:
+`10_architecture_guard_and_regression_hardening.md` is still open/partial.
 
-- owner cleanup для local peer identity
-- shared-cache maintenance cutover
-- remote-share media projection cleanup
-- transfer/video-link separation
-- discovery composition factory extraction
-- files presentation `part` graph removal
-- discovery page surface split
+Completed within 10:
 
-Еще не закрыты:
+- PR1 inventory freeze (documented)
+- PR2 architecture guard tests exist:
+  - `test/architecture_guard_test.dart`
+- PR3A stable entry-flow coverage exists in:
+  - `test/smoke_test.dart`
+- Additional UI proof for shared-cache recache/remove:
+  - `test/blocked_entry_flow_regression_test.dart`
 
-- repository split (`07`)
-- protocol codec decomposition (`09`)
-- architecture guards / regression hardening (`10`)
+Remaining weak-flow gaps (still uncovered by UI tests):
+
+- discovery -> files launch
+- files/viewer entry survivability
+- remote-share preview/viewer launch
+- history populated/open-folder action survivability
+
+## 4. Deletion wave status
+
+Waves A–C are complete (01–09). Wave D (workpack 10) is open until the
+remaining weak-flow coverage is added.

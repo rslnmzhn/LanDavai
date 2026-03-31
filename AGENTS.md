@@ -25,26 +25,38 @@ Goal: keep Landa behavior, visuals, and data model consistent.
 ## Architecture Baseline (Post-Refactor)
 Canonical state ownership is now split across explicit owner boundaries.
 
-Current owner map:
-- `DiscoveryController`: discovery shell state, device actions, friend flows, settings commands, video-link shell, and protocol entry wiring only
+Current owner/boundary map:
+- `DiscoveryController`: discovery shell state, device actions, friend flows, settings commands, and protocol entry wiring only
 - `DiscoveryReadModel`: consumer-facing read projection over discovery shell plus supporting stores
+- `LocalPeerIdentityStore`: local peer identity persistence and generation
 - `SharedCacheCatalog`: shared-cache metadata truth
 - `SharedCacheIndexStore`: shared-cache index truth
+- `SharedCacheMaintenanceBoundary`: shared-cache recache/remove/progress boundary
 - `RemoteShareBrowser`: remote share browse session truth
+- `RemoteShareMediaProjectionBoundary`: remote-share thumbnail/media projection boundary
 - `FilesFeatureStateOwner`: explorer/navigation/filter/sort/view state
 - `PreviewCacheOwner`: preview cache truth, preview artifact lifecycle, and preview cleanup policy
 - `TransferSessionCoordinator`: live transfer/session truth
+- `VideoLinkSessionBoundary`: video-link session command and projection boundary
 - `DownloadHistoryBoundary`: persisted download history truth
 - `ClipboardHistoryStore`: local clipboard history truth
 - `RemoteClipboardProjectionStore`: remote clipboard projection/loading truth
+- Infra ports (thin collaborators):
+  - `SharedCacheRecordStore`
+  - `SharedCacheThumbnailStore`
 
 Rules:
-- Do not move any extracted truth back into `DiscoveryController`, `DiscoveryPage`, widgets, repositories, or new facades/helpers.
-- `DiscoveryController` may stay a thin command/protocol shell where public entry still needs it, but it must not regain canonical ownership for extracted seams.
-- `VideoLinkShareService.activeSession` is still separate from `TransferSessionCoordinator`; do not silently merge those seams.
-- `SharedCacheCatalogBridge` is temporary read-side residue, not a canonical owner. Do not expand it into a permanent architecture layer.
-- The `DiscoveryPage -> FileExplorerPage.launch(...)` recache/remove/progress callback bundle is known cleanup debt, not an approved pattern for new work.
-- Remaining `part / part of` under files presentation is tolerated only for leaf viewer/widget implementation. Do not place feature-wide state or ownership there.
+- Do not move any extracted truth back into `DiscoveryController`, `DiscoveryPage`,
+  widgets, repositories, or new facades/helpers.
+- `DiscoveryController` may stay a thin command/protocol shell where public entry
+  still needs it, but it must not regain canonical ownership for extracted seams.
+- `VideoLinkShareService.activeSession` remains a separate seam from
+  `TransferSessionCoordinator`; do not silently merge those seams.
+- `SharedCacheCatalogBridge` is deleted and forbidden by guard tests.
+- The discovery/files callback bundle is deleted and forbidden by guard tests.
+- `part / part of` is forbidden under `lib/` and enforced by guard tests.
+- Protocol family logic must remain in dedicated codec files; `LanPacketCodec`
+  stays a thin facade, and `lan_packet_codec_common.dart` must stay common-only.
 
 ## Source Layout Contract
 Use this structure unless there is a strong architectural reason to deviate:
@@ -54,6 +66,8 @@ lib/
   app/
     app.dart
     router.dart
+    discovery/
+      discovery_composition.dart
     theme/
       app_theme.dart
       app_colors.dart
@@ -67,11 +81,36 @@ lib/
     widgets/
   features/
     clipboard/
+      application/
+      data/
+      domain/
     discovery/
+      application/
+      data/
+      domain/
+      presentation/
     files/
-    transfer/
+      application/
+      presentation/
     history/
+      application/
+      data/
+      domain/
     settings/
+      application/
+      data/
+      domain/
+    transfer/
+      application/
+      data/
+      domain/
+test/
+  architecture_guard_test.dart
+  smoke_test.dart
+  blocked_entry_flow_regression_test.dart
+  *_owner_test.dart
+  *_boundary_test.dart
+  *_store_test.dart
 ```
 
 Rules:
@@ -198,7 +237,8 @@ Goals:
 - Add tests for storage logic and protocol framing when touched.
 - Add dependencies only with direct product need.
 - Preserve backward compatibility for persisted data when feasible.
-- Prefer direct owner-backed contracts over compatibility shells when the owner already exists.
+- Prefer direct owner-backed contracts over compatibility shells when the owner
+  already exists.
 - Do not normalize temporary migration residue into new code.
 
 ## Agent Response Contract
@@ -230,6 +270,23 @@ Optional lock:
 - Theme/token contract respected.
 - UX states handled for loading/success/error.
 - Changes summarized with file list and verification notes.
-- If Windows `flutter test` needs the stale `build/native_assets/windows/sqlite3.dll` rename workaround, call it out explicitly as an environment issue, not as an app architecture defect.
+- If Windows `flutter test` needs the stale
+  `build/native_assets/windows/sqlite3.dll` rename workaround, call it out
+  explicitly as an environment issue, not as an app architecture defect.
 
+## Anti-drift Guarantees
 
+The following must not regress:
+
+- No return of `SharedCacheCatalogBridge`
+- No callback-based discovery/files coupling
+- No `part / part of` under `lib/`
+- No controller ownership of:
+  - local peer identity
+  - video-link sessions
+  - thumbnail IO
+- No broadening of:
+  - `SharedFolderCacheRepository`
+  - `LanPacketCodec`
+  - `lan_packet_codec_common.dart`
+- No reintroduction of local peer identity inside `FriendRepository`
