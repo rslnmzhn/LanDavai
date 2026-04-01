@@ -60,26 +60,22 @@
 
 ## 3. Workpack 10 status
 
-`10_architecture_guard_and_regression_hardening.md` is still open/partial.
+`10_architecture_guard_and_regression_hardening.md` is completed.
 
-Completed within 10:
+Completion proof:
 
 - PR1 inventory freeze (documented)
 - PR2 architecture guard tests exist:
   - `test/architecture_guard_test.dart`
-- PR3A stable entry-flow coverage exists in:
+- PR3 stable entry-flow coverage exists in:
   - `test/smoke_test.dart`
-- Additional UI proof for shared-cache recache/remove:
+- UI proof for shared-cache recache/remove:
   - `test/blocked_entry_flow_regression_test.dart`
-
-Remaining weak-flow gaps (still uncovered by UI tests):
-
-- discovery -> files launch
-- files/viewer entry survivability
-- remote-share preview/viewer launch
-- history populated/open-folder action survivability
+- UI proof for the remaining weak flows:
+  - `test/files_entry_flow_regression_test.dart`
+  - `test/remote_share_viewer_flow_regression_test.dart`
+  - `test/history_entry_flow_regression_test.dart`
 
 ## 4. Deletion wave status
 
-Waves A–C are complete (01–09). Wave D (workpack 10) is open until the
-remaining weak-flow coverage is added.
+Waves A–D are complete (01–10).

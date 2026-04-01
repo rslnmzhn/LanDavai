@@ -41,7 +41,16 @@ class TestAppDatabaseHarness {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(_pathProviderChannel, null);
     if (await rootDirectory.exists()) {
-      await rootDirectory.delete(recursive: true);
+      try {
+        await rootDirectory.delete(recursive: true);
+      } catch (_) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        try {
+          await rootDirectory.delete(recursive: true);
+        } catch (_) {
+          // Best-effort cleanup only for test temp directories.
+        }
+      }
     }
   }
 }

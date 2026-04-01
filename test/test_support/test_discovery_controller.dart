@@ -54,6 +54,7 @@ class TestDiscoveryControllerHarness {
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
     required this.previewCacheOwner,
+    required this.pathOpener,
   });
 
   final TestAppDatabaseHarness databaseHarness;
@@ -69,6 +70,7 @@ class TestDiscoveryControllerHarness {
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
+  final PathOpener pathOpener;
 
   DiscoveryCompositionResult createEntryComposition({
     required DesktopWindowService desktopWindowService,
@@ -94,7 +96,9 @@ class TestDiscoveryControllerHarness {
     );
   }
 
-  static Future<TestDiscoveryControllerHarness> create() async {
+  static Future<TestDiscoveryControllerHarness> create({
+    PathOpener? pathOpener,
+  }) async {
     final databaseHarness = await TestAppDatabaseHarness.create(
       prefix: 'landa_discovery_ui_',
     );
@@ -190,6 +194,7 @@ class TestDiscoveryControllerHarness {
                 cacheId: cacheId,
               ),
     );
+    final resolvedPathOpener = pathOpener ?? PathOpener();
     controller = TrackingDiscoveryController(
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(allowTcpFallback: false),
@@ -213,7 +218,7 @@ class TestDiscoveryControllerHarness {
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
       previewCacheOwner: previewCacheOwner,
-      pathOpener: PathOpener(),
+      pathOpener: resolvedPathOpener,
       transferSessionCoordinator: transferSessionCoordinator,
     );
     final videoLinkSessionBoundary = VideoLinkSessionBoundary(
@@ -250,6 +255,7 @@ class TestDiscoveryControllerHarness {
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       previewCacheOwner: previewCacheOwner,
+      pathOpener: resolvedPathOpener,
     );
   }
 
@@ -435,5 +441,16 @@ class TrackingDesktopWindowService extends DesktopWindowService {
   Future<void> setMinimizeToTrayEnabled(bool enabled) async {
     setMinimizeCalls += 1;
     lastEnabled = enabled;
+  }
+}
+
+class RecordingPathOpener extends PathOpener {
+  int openCalls = 0;
+  String? lastPath;
+
+  @override
+  Future<void> openContainingFolder(String path) async {
+    openCalls += 1;
+    lastPath = path;
   }
 }

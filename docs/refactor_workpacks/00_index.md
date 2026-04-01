@@ -25,7 +25,7 @@ Read order:
 | `07` | Shared-folder-cache repository split | completed | infra repository | `04`, `06` | `GATE-02`, `GATE-04`, `GATE-08` | god-repository surface |
 | `08` | Transfer and video-link separation | completed | mixed transfer/watch-link shell | none | `GATE-05`, `GATE-08` | transfer/video-link overlap |
 | `09` | Protocol codec family decomposition | completed | protocol codec split | `08` | `GATE-06`, `GATE-08` | protocol god-module |
-| `10` | Architecture guard and regression hardening | open | guardrails + weak UI flows | `01`, `03`, `04`, `05`, `06`, `07`, `08`, `09` | `GATE-07`, `GATE-08` | drift without proof |
+| `10` | Architecture guard and regression hardening | completed | guardrails + weak UI flows | `01`, `03`, `04`, `05`, `06`, `07`, `08`, `09` | `GATE-07`, `GATE-08` | drift without proof |
 | `18` | Deletion wave map | baseline | deletion coordination | all workpacks | all relevant proofs | legacy residue |
 | `19` | Test gates matrix | baseline | gate coordination | none | none | unsafe sequencing |
 
@@ -51,5 +51,4 @@ Read order:
 - Wave C: `07`, `03`, `09`
 - Wave D: `10`
 
-Waves A–C are complete. Wave D remains open until workpack 10’s remaining UI
-coverage gaps are closed.
+Waves A–D are complete.

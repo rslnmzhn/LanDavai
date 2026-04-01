@@ -7,7 +7,7 @@ explicit UI regression coverage for weak entry flows.
 
 ## Status
 
-Open (partial).
+Completed.
 
 ## Target State
 
@@ -21,8 +21,6 @@ Open (partial).
 
 ## Progress (Current Baseline)
 
-Completed:
-
 - PR1 inventory freeze (documented)
 - PR2 architecture guard suite exists:
   - `test/architecture_guard_test.dart`
@@ -32,14 +30,16 @@ Completed:
 - shared-cache recache/remove UI entry proof:
   - `test/blocked_entry_flow_regression_test.dart`
 
-Still missing UI coverage:
+Previously remaining (now resolved):
 
-- discovery -> files launch
-- files/viewer entry survivability
-- remote-share preview/viewer launch
-- history populated/open-folder action survivability
+- discovery -> files launch: coverage gap + harness gap
+- files/viewer entry survivability: coverage gap + harness gap
+- remote-share preview/viewer launch: coverage gap + harness gap
+- history populated/open-folder action survivability: coverage gap
 
-## Completion Proof (Target)
+## Completion Proof
 
-- all remaining weak flows above have explicit widget/smoke coverage
-- guard suite and full regression remain green
+- All four UI flows above are covered by behavior-level widget tests.
+- GATE-07 passes (`test/architecture_guard_test.dart`).
+- GATE-08 passes (`flutter analyze`, `flutter test`).
+- No production architecture changes were required.

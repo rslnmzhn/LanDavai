@@ -69,15 +69,8 @@ Forbidden regressions:
 
 ## 4. What Remains Risky
 
-Workpack 10 remains open because a small set of weak entry flows still lacks
-behavior-level UI coverage. See `docs/refactor_workpacks/10_architecture_guard_and_regression_hardening.md`.
-
-Remaining weak-flow gaps:
-
-- discovery -> files launch
-- files/viewer entry survivability
-- remote-share preview/viewer launch
-- history populated/open-folder action survivability
+No outstanding architectural or regression risks remain. Future changes must
+follow AGENTS.md guardrails.
 
 ## 5. Completion Standard (Baseline)
 
