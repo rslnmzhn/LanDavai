@@ -3,26 +3,18 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
-import 'package:flutter/services.dart';
-
-class AppPresenceEvent {
-  AppPresenceEvent({
-    required this.ip,
-    required this.deviceName,
-    required this.observedAt,
-    this.peerId,
-    this.operatingSystem,
-    this.deviceType,
-  });
-
-  final String ip;
-  final String deviceName;
-  final DateTime observedAt;
-  final String? peerId;
-  final String? operatingSystem;
-  final String? deviceType;
-}
+import 'discovery_transport_adapter.dart';
+import 'lan_clipboard_protocol_handler.dart';
+import 'lan_friend_protocol_handler.dart';
+import 'lan_packet_codec_common.dart';
+import 'lan_packet_codec_models.dart';
+import 'lan_packet_codec.dart' show LanPacketCodec;
+import 'lan_presence_protocol_handler.dart';
+import 'lan_protocol_events.dart';
+import 'lan_share_protocol_handler.dart';
+import 'lan_transfer_protocol_handler.dart';
 
 class InternetPeerEndpoint {
   const InternetPeerEndpoint({
@@ -36,467 +28,44 @@ class InternetPeerEndpoint {
   final int port;
 }
 
-class TransferAnnouncementItem {
-  TransferAnnouncementItem({
-    required this.fileName,
-    required this.sizeBytes,
-    required this.sha256,
-  });
-
-  final String fileName;
-  final int sizeBytes;
-  final String sha256;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'fileName': fileName,
-      'sizeBytes': sizeBytes,
-      'sha256': sha256,
-    };
-  }
-
-  static TransferAnnouncementItem? fromJson(Map<String, dynamic> json) {
-    final fileName = json['fileName'] as String?;
-    final sizeRaw = json['sizeBytes'];
-    final sha256 = json['sha256'] as String?;
-    if (fileName == null || sizeRaw is! num || sha256 == null) {
-      return null;
-    }
-
-    return TransferAnnouncementItem(
-      fileName: fileName,
-      sizeBytes: sizeRaw.toInt(),
-      sha256: sha256,
-    );
-  }
-}
-
-class TransferRequestEvent {
-  TransferRequestEvent({
-    required this.requestId,
-    required this.senderIp,
-    required this.senderName,
-    required this.senderMacAddress,
-    required this.sharedCacheId,
-    required this.sharedLabel,
-    required this.items,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String senderIp;
-  final String senderName;
-  final String senderMacAddress;
-  final String sharedCacheId;
-  final String sharedLabel;
-  final List<TransferAnnouncementItem> items;
-  final DateTime observedAt;
-}
-
-class TransferDecisionEvent {
-  TransferDecisionEvent({
-    required this.requestId,
-    required this.approved,
-    required this.receiverName,
-    required this.receiverIp,
-    required this.transferPort,
-    required this.observedAt,
-    this.acceptedFileNames,
-  });
-
-  final String requestId;
-  final bool approved;
-  final String receiverName;
-  final String receiverIp;
-  final int? transferPort;
-  final DateTime observedAt;
-  final List<String>? acceptedFileNames;
-}
-
-class FriendRequestEvent {
-  const FriendRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final DateTime observedAt;
-}
-
-class FriendResponseEvent {
-  const FriendResponseEvent({
-    required this.requestId,
-    required this.responderIp,
-    required this.responderName,
-    required this.responderMacAddress,
-    required this.accepted,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String responderIp;
-  final String responderName;
-  final String responderMacAddress;
-  final bool accepted;
-  final DateTime observedAt;
-}
-
-class ShareQueryEvent {
-  ShareQueryEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final DateTime observedAt;
-}
-
-class SharedCatalogFileItem {
-  SharedCatalogFileItem({
-    required this.relativePath,
-    required this.sizeBytes,
-    this.thumbnailId,
-  });
-
-  final String relativePath;
-  final int sizeBytes;
-  final String? thumbnailId;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'relativePath': relativePath,
-      'sizeBytes': sizeBytes,
-      'thumbnailId': thumbnailId,
-    };
-  }
-
-  static SharedCatalogFileItem? fromJson(Map<String, dynamic> json) {
-    final relativePath = json['relativePath'] as String?;
-    final sizeRaw = json['sizeBytes'];
-    if (relativePath == null || sizeRaw is! num) {
-      return null;
-    }
-    return SharedCatalogFileItem(
-      relativePath: relativePath,
-      sizeBytes: sizeRaw.toInt(),
-      thumbnailId: json['thumbnailId'] as String?,
-    );
-  }
-}
-
-class SharedCatalogEntryItem {
-  SharedCatalogEntryItem({
-    required this.cacheId,
-    required this.displayName,
-    required this.itemCount,
-    required this.totalBytes,
-    required this.files,
-  });
-
-  final String cacheId;
-  final String displayName;
-  final int itemCount;
-  final int totalBytes;
-  final List<SharedCatalogFileItem> files;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'cacheId': cacheId,
-      'displayName': displayName,
-      'itemCount': itemCount,
-      'totalBytes': totalBytes,
-      'files': files.map((file) => file.toJson()).toList(growable: false),
-    };
-  }
-
-  static SharedCatalogEntryItem? fromJson(Map<String, dynamic> json) {
-    final cacheId = json['cacheId'] as String?;
-    final displayName = json['displayName'] as String?;
-    final itemCountRaw = json['itemCount'];
-    final totalBytesRaw = json['totalBytes'];
-    final filesRaw = json['files'];
-    if (cacheId == null ||
-        displayName == null ||
-        itemCountRaw is! num ||
-        totalBytesRaw is! num ||
-        filesRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final files = <SharedCatalogFileItem>[];
-    for (final file in filesRaw) {
-      if (file is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = SharedCatalogFileItem.fromJson(file);
-      if (parsed != null) {
-        files.add(parsed);
-      }
-    }
-    return SharedCatalogEntryItem(
-      cacheId: cacheId,
-      displayName: displayName,
-      itemCount: itemCountRaw.toInt(),
-      totalBytes: totalBytesRaw.toInt(),
-      files: files,
-    );
-  }
-}
-
-class ShareCatalogEvent {
-  ShareCatalogEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-    required this.removedCacheIds,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<SharedCatalogEntryItem> entries;
-  final List<String> removedCacheIds;
-  final DateTime observedAt;
-}
-
-class DownloadRequestEvent {
-  DownloadRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.cacheId,
-    required this.selectedRelativePaths,
-    required this.previewMode,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final String cacheId;
-  final List<String> selectedRelativePaths;
-  final bool previewMode;
-
-  final DateTime observedAt;
-}
-
-class ClipboardCatalogItem {
-  const ClipboardCatalogItem({
-    required this.id,
-    required this.entryType,
-    required this.createdAtMs,
-    this.textValue,
-    this.imagePreviewBase64,
-  });
-
-  final String id;
-  final String entryType;
-  final int createdAtMs;
-  final String? textValue;
-  final String? imagePreviewBase64;
-
-  Map<String, Object?> toJson() {
-    return <String, Object?>{
-      'id': id,
-      'entryType': entryType,
-      'createdAtMs': createdAtMs,
-      'textValue': textValue,
-      'imagePreviewBase64': imagePreviewBase64,
-    };
-  }
-
-  static ClipboardCatalogItem? fromJson(Map<String, dynamic> json) {
-    final id = json['id'] as String?;
-    final entryType = json['entryType'] as String?;
-    final createdAtRaw = json['createdAtMs'];
-    if (id == null || entryType == null || createdAtRaw is! num) {
-      return null;
-    }
-    return ClipboardCatalogItem(
-      id: id,
-      entryType: entryType,
-      createdAtMs: createdAtRaw.toInt(),
-      textValue: json['textValue'] as String?,
-      imagePreviewBase64: json['imagePreviewBase64'] as String?,
-    );
-  }
-}
-
-class ClipboardQueryEvent {
-  const ClipboardQueryEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.maxEntries,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final String requesterMacAddress;
-  final int maxEntries;
-  final DateTime observedAt;
-}
-
-class ClipboardCatalogEvent {
-  const ClipboardCatalogEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<ClipboardCatalogItem> entries;
-  final DateTime observedAt;
-}
-
-class ThumbnailSyncItem {
-  const ThumbnailSyncItem({
-    required this.cacheId,
-    required this.relativePath,
-    required this.thumbnailId,
-  });
-
-  final String cacheId;
-  final String relativePath;
-  final String thumbnailId;
-
-  Map<String, Object> toJson() {
-    return <String, Object>{
-      'cacheId': cacheId,
-      'relativePath': relativePath,
-      'thumbnailId': thumbnailId,
-    };
-  }
-
-  static ThumbnailSyncItem? fromJson(Map<String, dynamic> json) {
-    final cacheId = json['cacheId'] as String?;
-    final relativePath = json['relativePath'] as String?;
-    final thumbnailId = json['thumbnailId'] as String?;
-    if (cacheId == null || relativePath == null || thumbnailId == null) {
-      return null;
-    }
-    return ThumbnailSyncItem(
-      cacheId: cacheId,
-      relativePath: relativePath,
-      thumbnailId: thumbnailId,
-    );
-  }
-}
-
-class ThumbnailSyncRequestEvent {
-  const ThumbnailSyncRequestEvent({
-    required this.requestId,
-    required this.requesterIp,
-    required this.requesterName,
-    required this.items,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String requesterIp;
-  final String requesterName;
-  final List<ThumbnailSyncItem> items;
-  final DateTime observedAt;
-}
-
-class ThumbnailPacketEvent {
-  const ThumbnailPacketEvent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerMacAddress,
-    required this.cacheId,
-    required this.relativePath,
-    required this.thumbnailId,
-    required this.bytes,
-    required this.observedAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String ownerMacAddress;
-  final String cacheId;
-  final String relativePath;
-  final String thumbnailId;
-  final Uint8List bytes;
-  final DateTime observedAt;
-}
-
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
-  static const int _maxUdpPacketBytes = 60 * 1024;
-  static const int _maxShareCatalogEntriesPerPacket = 64;
-  static const int _maxShareCatalogFilesPerPacket = 240;
-  static const int _maxShareCatalogFilesPerEntry = 80;
-  static const String _discoverPrefix = 'LANDA_DISCOVER_V1';
-  static const String _responsePrefix = 'LANDA_HERE_V1';
-  static const String _transferRequestPrefix = 'LANDA_TRANSFER_REQUEST_V1';
-  static const String _transferDecisionPrefix = 'LANDA_TRANSFER_DECISION_V1';
-  static const String _friendRequestPrefix = 'LANDA_FRIEND_REQUEST_V1';
-  static const String _friendResponsePrefix = 'LANDA_FRIEND_RESPONSE_V1';
-  static const String _shareQueryPrefix = 'LANDA_SHARE_QUERY_V1';
-  static const String _shareCatalogPrefix = 'LANDA_SHARE_CATALOG_V1';
-  static const String _downloadRequestPrefix = 'LANDA_DOWNLOAD_REQUEST_V1';
-  static const String _thumbnailSyncRequestPrefix =
-      'LANDA_THUMBNAIL_SYNC_REQUEST_V1';
-  static const String _thumbnailPacketPrefix = 'LANDA_THUMBNAIL_PACKET_V1';
-  static const String _clipboardQueryPrefix = 'LANDA_CLIPBOARD_QUERY_V1';
-  static const String _clipboardCatalogPrefix = 'LANDA_CLIPBOARD_CATALOG_V1';
-  static const MethodChannel _androidNetworkChannel = MethodChannel(
-    'landa/network',
-  );
 
-  RawDatagramSocket? _socket;
+  LanDiscoveryService({
+    DiscoveryTransportAdapter? transportAdapter,
+    LanPacketCodec? packetCodec,
+    LanPresenceProtocolHandler? presenceProtocolHandler,
+    LanTransferProtocolHandler? transferProtocolHandler,
+    LanFriendProtocolHandler? friendProtocolHandler,
+    LanShareProtocolHandler? shareProtocolHandler,
+    LanClipboardProtocolHandler? clipboardProtocolHandler,
+  }) : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter(),
+       _packetCodec = packetCodec ?? LanPacketCodec(),
+       _presenceProtocolHandler =
+           presenceProtocolHandler ?? const LanPresenceProtocolHandler(),
+       _transferProtocolHandler =
+           transferProtocolHandler ?? const LanTransferProtocolHandler(),
+       _friendProtocolHandler =
+           friendProtocolHandler ?? const LanFriendProtocolHandler(),
+       _shareProtocolHandler =
+           shareProtocolHandler ?? const LanShareProtocolHandler(),
+       _clipboardProtocolHandler =
+           clipboardProtocolHandler ?? const LanClipboardProtocolHandler();
+
+  final DiscoveryTransportAdapter _transportAdapter;
+  final LanPacketCodec _packetCodec;
+  final LanPresenceProtocolHandler _presenceProtocolHandler;
+  final LanTransferProtocolHandler _transferProtocolHandler;
+  final LanFriendProtocolHandler _friendProtocolHandler;
+  final LanShareProtocolHandler _shareProtocolHandler;
+  final LanClipboardProtocolHandler _clipboardProtocolHandler;
   Timer? _beaconTimer;
-  Set<String> _localIps = <String>{};
   bool _started = false;
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
-  final String _operatingSystem = Platform.operatingSystem;
-  late final String _deviceType = _resolveLocalDeviceType();
   String _localPeerId = '';
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
-  static const List<String> _virtualInterfaceHints = <String>[
-    'loopback',
-    'docker',
-    'vmware',
-    'virtual',
-    'vethernet',
-    'hyper-v',
-    'vbox',
-    'wsl',
-    'tailscale',
-    'zerotier',
-    'hamachi',
-    'tun',
-    'tap',
-    'bridge',
-  ];
 
   Future<void> start({
     required String deviceName,
@@ -522,330 +91,31 @@ class LanDiscoveryService {
     _started = true;
     _localPeerId = localPeerId.trim();
 
-    _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
-    _log('Starting UDP discovery on $discoveryPort. localIps=$_localIps');
-    await _acquireAndroidMulticastLock();
-
-    // anyIPv4 is more reliable for receiving broadcast discovery packets
-    // on Android devices; subnet filtering is applied in code.
-    _socket = await RawDatagramSocket.bind(
-      InternetAddress.anyIPv4,
-      discoveryPort,
-      reuseAddress: true,
-      reusePort: false,
-    );
-    _socket?.broadcastEnabled = true;
-
-    _socket?.listen((event) {
-      if (event != RawSocketEvent.read) {
-        return;
-      }
-
-      Datagram? datagram = _socket?.receive();
-      while (datagram != null) {
-        final senderIp = datagram.address.address;
-        if (!_isUsablePacketSenderIp(senderIp)) {
-          _log('Ignoring packet from invalid sender IP: $senderIp');
-          datagram = _socket?.receive();
-          continue;
-        }
-        if (_localIps.contains(senderIp)) {
-          datagram = _socket?.receive();
-          continue;
-        }
-        final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
-        final isSenderInLocalSubnet = _localIps.any(
-          (localIp) => _isSame24Subnet(senderIp, localIp),
-        );
-        if (_localIps.isNotEmpty &&
-            !isSenderInLocalSubnet &&
-            !isAllowedInternetSender) {
-          _log('Ignoring packet from foreign subnet: $senderIp');
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final message = utf8.decode(datagram.data, allowMalformed: true);
-        final discoveryPacket = _parseDiscoveryPacket(message);
-        if (discoveryPacket != null) {
-          if (discoveryPacket.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-
-          if (discoveryPacket.prefix == _discoverPrefix) {
-            _log('Discover request from $senderIp');
-            final responsePayload = _encodeDiscoveryPayload(deviceName);
-            final response = '$_responsePrefix|$_instanceId|$responsePayload';
-            _safeSocketSend(
-              bytes: utf8.encode(response),
-              address: datagram.address,
-              port: datagram.port,
-              context: 'discover-response',
-            );
-            _log('Discover response sent to $senderIp');
-          } else if (discoveryPacket.prefix == _responsePrefix) {
-            _log(
-              'Discover response received from '
-              '$senderIp (${discoveryPacket.deviceName})',
-            );
-            onAppDetected(
-              AppPresenceEvent(
-                ip: senderIp,
-                deviceName: discoveryPacket.deviceName,
-                operatingSystem: discoveryPacket.operatingSystem,
-                deviceType: discoveryPacket.deviceType,
-                peerId: discoveryPacket.peerId,
-                observedAt: DateTime.now(),
-              ),
-            );
-          }
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final transferRequest = _parseTransferRequestPacket(message);
-        if (transferRequest != null) {
-          if (transferRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Transfer request received from $senderIp '
-            '(requestId=${transferRequest.requestId})',
-          );
-          onTransferRequest?.call(
-            TransferRequestEvent(
-              requestId: transferRequest.requestId,
-              senderIp: senderIp,
-              senderName: transferRequest.senderName,
-              senderMacAddress: transferRequest.senderMacAddress,
-              sharedCacheId: transferRequest.sharedCacheId,
-              sharedLabel: transferRequest.sharedLabel,
-              items: transferRequest.items,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final transferDecision = _parseTransferDecisionPacket(message);
-        if (transferDecision != null) {
-          if (transferDecision.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Transfer decision received from $senderIp '
-            '(requestId=${transferDecision.requestId}, approved=${transferDecision.approved})',
-          );
-          onTransferDecision?.call(
-            TransferDecisionEvent(
-              requestId: transferDecision.requestId,
-              approved: transferDecision.approved,
-              receiverName: transferDecision.receiverName,
-              receiverIp: senderIp,
-              transferPort: transferDecision.transferPort,
-              observedAt: DateTime.now(),
-              acceptedFileNames: transferDecision.acceptedFileNames,
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final friendRequest = _parseFriendRequestPacket(message);
-        if (friendRequest != null) {
-          if (friendRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Friend request received from $senderIp '
-            '(requestId=${friendRequest.requestId})',
-          );
-          onFriendRequest?.call(
-            FriendRequestEvent(
-              requestId: friendRequest.requestId,
-              requesterIp: senderIp,
-              requesterName: friendRequest.requesterName,
-              requesterMacAddress: friendRequest.requesterMacAddress,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final friendResponse = _parseFriendResponsePacket(message);
-        if (friendResponse != null) {
-          if (friendResponse.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          _log(
-            'Friend response received from $senderIp '
-            '(requestId=${friendResponse.requestId}, accepted=${friendResponse.accepted})',
-          );
-          onFriendResponse?.call(
-            FriendResponseEvent(
-              requestId: friendResponse.requestId,
-              responderIp: senderIp,
-              responderName: friendResponse.responderName,
-              responderMacAddress: friendResponse.responderMacAddress,
-              accepted: friendResponse.accepted,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final shareQuery = _parseShareQueryPacket(message);
-        if (shareQuery != null) {
-          if (shareQuery.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onShareQuery?.call(
-            ShareQueryEvent(
-              requestId: shareQuery.requestId,
-              requesterIp: senderIp,
-              requesterName: shareQuery.requesterName,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final shareCatalog = _parseShareCatalogPacket(message);
-        if (shareCatalog != null) {
-          if (shareCatalog.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onShareCatalog?.call(
-            ShareCatalogEvent(
-              requestId: shareCatalog.requestId,
-              ownerIp: senderIp,
-              ownerName: shareCatalog.ownerName,
-              ownerMacAddress: shareCatalog.ownerMacAddress,
-              entries: shareCatalog.entries,
-              removedCacheIds: shareCatalog.removedCacheIds,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final downloadRequest = _parseDownloadRequestPacket(message);
-        if (downloadRequest != null) {
-          if (downloadRequest.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onDownloadRequest?.call(
-            DownloadRequestEvent(
-              requestId: downloadRequest.requestId,
-              requesterIp: senderIp,
-              requesterName: downloadRequest.requesterName,
-              requesterMacAddress: downloadRequest.requesterMacAddress,
-              cacheId: downloadRequest.cacheId,
-              selectedRelativePaths: downloadRequest.selectedRelativePaths,
-              previewMode: downloadRequest.previewMode,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final thumbnailSync = _parseThumbnailSyncRequestPacket(message);
-        if (thumbnailSync != null) {
-          if (thumbnailSync.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onThumbnailSyncRequest?.call(
-            ThumbnailSyncRequestEvent(
-              requestId: thumbnailSync.requestId,
-              requesterIp: senderIp,
-              requesterName: thumbnailSync.requesterName,
-              items: thumbnailSync.items,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final thumbnailPacket = _parseThumbnailPacket(message);
-        if (thumbnailPacket != null) {
-          if (thumbnailPacket.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onThumbnailPacket?.call(
-            ThumbnailPacketEvent(
-              requestId: thumbnailPacket.requestId,
-              ownerIp: senderIp,
-              ownerMacAddress: thumbnailPacket.ownerMacAddress,
-              cacheId: thumbnailPacket.cacheId,
-              relativePath: thumbnailPacket.relativePath,
-              thumbnailId: thumbnailPacket.thumbnailId,
-              bytes: thumbnailPacket.bytes,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final clipboardQuery = _parseClipboardQueryPacket(message);
-        if (clipboardQuery != null) {
-          if (clipboardQuery.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onClipboardQuery?.call(
-            ClipboardQueryEvent(
-              requestId: clipboardQuery.requestId,
-              requesterIp: senderIp,
-              requesterName: clipboardQuery.requesterName,
-              requesterMacAddress: clipboardQuery.requesterMacAddress,
-              maxEntries: clipboardQuery.maxEntries,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-
-        final clipboardCatalog = _parseClipboardCatalogPacket(message);
-        if (clipboardCatalog != null) {
-          if (clipboardCatalog.instanceId == _instanceId) {
-            datagram = _socket?.receive();
-            continue;
-          }
-          onClipboardCatalog?.call(
-            ClipboardCatalogEvent(
-              requestId: clipboardCatalog.requestId,
-              ownerIp: senderIp,
-              ownerName: clipboardCatalog.ownerName,
-              ownerMacAddress: clipboardCatalog.ownerMacAddress,
-              entries: clipboardCatalog.entries,
-              observedAt: DateTime.now(),
-            ),
-          );
-          datagram = _socket?.receive();
-          continue;
-        }
-        datagram = _socket?.receive();
-      }
-    });
+    try {
+      await _transportAdapter.start(
+        port: discoveryPort,
+        preferredSourceIp: preferredSourceIp,
+        onDatagram: (datagram) => _handleIncomingDatagram(
+          datagram: datagram,
+          deviceName: deviceName,
+          onAppDetected: onAppDetected,
+          onTransferRequest: onTransferRequest,
+          onTransferDecision: onTransferDecision,
+          onFriendRequest: onFriendRequest,
+          onFriendResponse: onFriendResponse,
+          onShareQuery: onShareQuery,
+          onShareCatalog: onShareCatalog,
+          onDownloadRequest: onDownloadRequest,
+          onThumbnailSyncRequest: onThumbnailSyncRequest,
+          onThumbnailPacket: onThumbnailPacket,
+          onClipboardQuery: onClipboardQuery,
+          onClipboardCatalog: onClipboardCatalog,
+        ),
+      );
+    } catch (_) {
+      _started = false;
+      rethrow;
+    }
 
     await _sendDiscoveryPing(deviceName);
     _beaconTimer = Timer.periodic(
@@ -884,10 +154,8 @@ class LanDiscoveryService {
     _log('Stopping UDP discovery');
     _beaconTimer?.cancel();
     _beaconTimer = null;
-    _socket?.close();
-    _socket = null;
+    await _transportAdapter.stop();
     _started = false;
-    await _releaseAndroidMulticastLock();
   }
 
   Future<void> sendTransferRequest({
@@ -899,19 +167,18 @@ class LanDiscoveryService {
     required String sharedLabel,
     required List<TransferAnnouncementItem> items,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'senderName': senderName,
-      'senderMacAddress': senderMacAddress,
-      'sharedCacheId': sharedCacheId,
-      'sharedLabel': sharedLabel,
-      'items': items.map((item) => item.toJson()).toList(),
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _transferRequestPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanTransferRequestPrefix,
+      packet: _packetCodec.encodeTransferRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        senderName: senderName,
+        senderMacAddress: senderMacAddress,
+        sharedCacheId: sharedCacheId,
+        sharedLabel: sharedLabel,
+        items: items,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -924,22 +191,17 @@ class LanDiscoveryService {
     int? transferPort,
     List<String>? acceptedFileNames,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'approved': approved,
-      'receiverName': receiverName,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    if (transferPort != null) {
-      payload['transferPort'] = transferPort;
-    }
-    if (acceptedFileNames != null) {
-      payload['acceptedFileNames'] = acceptedFileNames;
-    }
-    await _sendEncodedPacket(
-      prefix: _transferDecisionPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanTransferDecisionPrefix,
+      packet: _packetCodec.encodeTransferDecision(
+        instanceId: _instanceId,
+        requestId: requestId,
+        approved: approved,
+        receiverName: receiverName,
+        transferPort: transferPort,
+        acceptedFileNames: acceptedFileNames,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -950,16 +212,15 @@ class LanDiscoveryService {
     required String requesterName,
     required String requesterMacAddress,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'requesterName': requesterName,
-      'requesterMacAddress': requesterMacAddress,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _friendRequestPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanFriendRequestPrefix,
+      packet: _packetCodec.encodeFriendRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -971,17 +232,16 @@ class LanDiscoveryService {
     required String responderMacAddress,
     required bool accepted,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'responderName': responderName,
-      'responderMacAddress': responderMacAddress,
-      'accepted': accepted,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _friendResponsePrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanFriendResponsePrefix,
+      packet: _packetCodec.encodeFriendResponse(
+        instanceId: _instanceId,
+        requestId: requestId,
+        responderName: responderName,
+        responderMacAddress: responderMacAddress,
+        accepted: accepted,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -991,15 +251,14 @@ class LanDiscoveryService {
     required String requestId,
     required String requesterName,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'requesterName': requesterName,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _shareQueryPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanShareQueryPrefix,
+      packet: _packetCodec.encodeShareQuery(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1012,7 +271,7 @@ class LanDiscoveryService {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
-    final fittedEntries = _fitShareCatalogEntries(entries);
+    final fittedEntries = _packetCodec.fitShareCatalogEntries(entries);
     final originalFiles = entries.fold<int>(
       0,
       (sum, entry) => sum + entry.files.length,
@@ -1028,21 +287,17 @@ class LanDiscoveryService {
         'files=$fittedFiles/$originalFiles',
       );
     }
-
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'ownerName': ownerName,
-      'ownerMacAddress': ownerMacAddress,
-      'entries': fittedEntries
-          .map((entry) => entry.toJson())
-          .toList(growable: false),
-      'removedCacheIds': removedCacheIds,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _shareCatalogPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanShareCatalogPrefix,
+      packet: _packetCodec.encodeShareCatalog(
+        instanceId: _instanceId,
+        requestId: requestId,
+        ownerName: ownerName,
+        ownerMacAddress: ownerMacAddress,
+        entries: fittedEntries,
+        removedCacheIds: removedCacheIds,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1056,19 +311,18 @@ class LanDiscoveryService {
     List<String> selectedRelativePaths = const <String>[],
     bool previewMode = false,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'requesterName': requesterName,
-      'requesterMacAddress': requesterMacAddress,
-      'cacheId': cacheId,
-      'selectedRelativePaths': selectedRelativePaths,
-      'previewMode': previewMode,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _downloadRequestPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanDownloadRequestPrefix,
+      packet: _packetCodec.encodeDownloadRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        cacheId: cacheId,
+        selectedRelativePaths: selectedRelativePaths,
+        previewMode: previewMode,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1082,16 +336,15 @@ class LanDiscoveryService {
     if (items.isEmpty) {
       return;
     }
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'requesterName': requesterName,
-      'items': items.map((item) => item.toJson()).toList(growable: false),
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _thumbnailSyncRequestPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanThumbnailSyncRequestPrefix,
+      packet: _packetCodec.encodeThumbnailSyncRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        items: items,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1108,19 +361,18 @@ class LanDiscoveryService {
     if (bytes.isEmpty) {
       return;
     }
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'ownerMacAddress': ownerMacAddress,
-      'cacheId': cacheId,
-      'relativePath': relativePath,
-      'thumbnailId': thumbnailId,
-      'bytesBase64': base64Encode(bytes),
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _thumbnailPacketPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanThumbnailPacketPrefix,
+      packet: _packetCodec.encodeThumbnailPacket(
+        instanceId: _instanceId,
+        requestId: requestId,
+        ownerMacAddress: ownerMacAddress,
+        cacheId: cacheId,
+        relativePath: relativePath,
+        thumbnailId: thumbnailId,
+        bytes: bytes,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1132,17 +384,16 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required int maxEntries,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'requesterName': requesterName,
-      'requesterMacAddress': requesterMacAddress,
-      'maxEntries': maxEntries,
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _clipboardQueryPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanClipboardQueryPrefix,
+      packet: _packetCodec.encodeClipboardQuery(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        maxEntries: maxEntries,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
@@ -1154,102 +405,62 @@ class LanDiscoveryService {
     required String ownerMacAddress,
     required List<ClipboardCatalogItem> entries,
   }) async {
-    final payload = <String, Object?>{
-      'instanceId': _instanceId,
-      'requestId': requestId,
-      'ownerName': ownerName,
-      'ownerMacAddress': ownerMacAddress,
-      'entries': entries.map((entry) => entry.toJson()).toList(growable: false),
-      'createdAtMs': DateTime.now().millisecondsSinceEpoch,
-    };
-    await _sendEncodedPacket(
-      prefix: _clipboardCatalogPrefix,
-      payload: payload,
+    await _sendOutgoingPacket(
+      prefix: lanClipboardCatalogPrefix,
+      packet: _packetCodec.encodeClipboardCatalog(
+        instanceId: _instanceId,
+        requestId: requestId,
+        ownerName: ownerName,
+        ownerMacAddress: ownerMacAddress,
+        entries: entries,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
       targetIp: targetIp,
     );
   }
 
-  List<SharedCatalogEntryItem> _fitShareCatalogEntries(
-    List<SharedCatalogEntryItem> entries,
-  ) {
-    if (entries.isEmpty) {
-      return const <SharedCatalogEntryItem>[];
-    }
-
-    final limited = <SharedCatalogEntryItem>[];
-    var remainingFilesBudget = _maxShareCatalogFilesPerPacket;
-    final entryLimit = min(entries.length, _maxShareCatalogEntriesPerPacket);
-
-    for (var i = 0; i < entryLimit; i += 1) {
-      final entry = entries[i];
-      final perEntryBudget = min(
-        _maxShareCatalogFilesPerEntry,
-        max(0, remainingFilesBudget),
-      );
-      final keepFilesCount = min(entry.files.length, perEntryBudget);
-      final keptFiles = keepFilesCount == entry.files.length
-          ? entry.files
-          : entry.files.take(keepFilesCount).toList(growable: false);
-      remainingFilesBudget -= keepFilesCount;
-      limited.add(
-        SharedCatalogEntryItem(
-          cacheId: entry.cacheId,
-          displayName: entry.displayName,
-          itemCount: entry.itemCount,
-          totalBytes: entry.totalBytes,
-          files: keptFiles,
-        ),
-      );
-    }
-
-    return limited;
-  }
-
-  Future<void> _sendEncodedPacket({
+  Future<void> _sendOutgoingPacket({
     required String prefix,
-    required Map<String, Object?> payload,
+    required EncodedLanPacket? packet,
     required String targetIp,
   }) async {
+    if (packet == null) {
+      _log('Skipping $prefix packet: codec rejected payload.');
+      return;
+    }
     final targetAddress = _resolveUnicastTargetIp(targetIp);
     if (targetAddress == null) {
       _log('Skipping $prefix packet: invalid target IP "$targetIp".');
       return;
     }
-
-    final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
-    final message = '$prefix|$encodedPayload';
-    final messageBytes = utf8.encode(message);
-    if (messageBytes.length > _maxUdpPacketBytes) {
-      _log(
-        'Skipping $prefix packet: payload ${messageBytes.length}B exceeds '
-        'UDP safe limit ${_maxUdpPacketBytes}B.',
-      );
-      return;
-    }
-    _safeSocketSend(
-      bytes: messageBytes,
+    _transportAdapter.send(
+      bytes: packet.bytes,
       address: targetAddress,
       port: discoveryPort,
-      context: prefix,
+      context: packet.prefix,
     );
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
-    final payload = _encodeDiscoveryPayload(deviceName);
-    final request = '$_discoverPrefix|$_instanceId|$payload';
+    final request = _packetCodec.encodeDiscoveryRequest(
+      instanceId: _instanceId,
+      deviceName: deviceName,
+      localPeerId: _localPeerId,
+    );
     final bytes = utf8.encode(request);
+    final localIps = _transportAdapter.localIps;
 
     _log('Broadcasting discover packet');
-    _safeSocketSend(
+    _transportAdapter.send(
       bytes: bytes,
       address: InternetAddress('255.255.255.255'),
       port: discoveryPort,
       context: 'discover-broadcast',
     );
-    for (final localIp in _localIps) {
+    for (final localIp in localIps) {
       final broadcast = _toBroadcastAddress(localIp);
       if (broadcast != null) {
-        _safeSocketSend(
+        _transportAdapter.send(
           bytes: bytes,
           address: broadcast,
           port: discoveryPort,
@@ -1264,7 +475,7 @@ class LanDiscoveryService {
       if (address == null || address.type != InternetAddressType.IPv4) {
         continue;
       }
-      _safeSocketSend(
+      _transportAdapter.send(
         bytes: bytes,
         address: address,
         port: peer.port,
@@ -1299,655 +510,12 @@ class LanDiscoveryService {
     return parsed.address != '255.255.255.255';
   }
 
-  void _safeSocketSend({
-    required List<int> bytes,
-    required InternetAddress address,
-    required int port,
-    required String context,
-  }) {
-    final socket = _socket;
-    if (socket == null) {
-      return;
-    }
-    if (bytes.isEmpty) {
-      return;
-    }
-    if (address.type != InternetAddressType.IPv4) {
-      _log('Skipping UDP send ($context): non-IPv4 target ${address.address}.');
-      return;
-    }
-    if (address.address == '0.0.0.0') {
-      _log('Skipping UDP send ($context): invalid target 0.0.0.0.');
-      return;
-    }
-    try {
-      socket.send(bytes, address, port);
-    } on SocketException catch (error) {
-      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
-    } catch (error) {
-      _log('UDP send failed ($context) -> ${address.address}:$port: $error');
-    }
-  }
-
-  _DiscoveryPacket? _parseDiscoveryPacket(String message) {
-    final parts = message.split('|');
-    if (parts.isEmpty) {
-      return null;
-    }
-
-    final prefix = parts[0].trim();
-    if (prefix != _discoverPrefix && prefix != _responsePrefix) {
-      return null;
-    }
-
-    // Backward compatibility with old payload format: PREFIX|deviceName
-    if (parts.length == 2) {
-      final legacyName = parts[1].trim();
-      return _DiscoveryPacket(
-        prefix: prefix,
-        instanceId: 'legacy',
-        deviceName: legacyName.isEmpty ? 'Unknown device' : legacyName,
-      );
-    }
-
-    if (parts.length >= 3) {
-      final instanceId = parts[1].trim();
-      final rawPayload = parts.sublist(2).join('|').trim();
-      final decodedPayload = _tryDecodeDiscoveryPayload(rawPayload);
-      if (decodedPayload != null) {
-        return _DiscoveryPacket(
-          prefix: prefix,
-          instanceId: instanceId,
-          deviceName: decodedPayload.deviceName,
-          operatingSystem: decodedPayload.operatingSystem,
-          deviceType: decodedPayload.deviceType,
-          peerId: decodedPayload.peerId,
-        );
-      }
-
-      return _DiscoveryPacket(
-        prefix: prefix,
-        instanceId: instanceId,
-        deviceName: rawPayload.isEmpty ? 'Unknown device' : rawPayload,
-      );
-    }
-
-    return null;
-  }
-
-  String _encodeDiscoveryPayload(String deviceName) {
-    final payload = <String, Object>{
-      'name': deviceName,
-      'os': _operatingSystem,
-      'type': _deviceType,
-      'peerId': _localPeerId,
-    };
-    return base64UrlEncode(utf8.encode(jsonEncode(payload)));
-  }
-
-  _DiscoveryIdentity? _tryDecodeDiscoveryPayload(String encodedPayload) {
-    if (encodedPayload.isEmpty) {
-      return null;
-    }
-    try {
-      final bytes = base64Url.decode(encodedPayload);
-      final decoded = jsonDecode(utf8.decode(bytes));
-      if (decoded is! Map<String, dynamic>) {
-        return null;
-      }
-
-      final rawName = decoded['name'] as String?;
-      final rawOs = decoded['os'] as String?;
-      final rawType = decoded['type'] as String?;
-      final rawPeerId = decoded['peerId'] as String?;
-      return _DiscoveryIdentity(
-        deviceName: (rawName == null || rawName.trim().isEmpty)
-            ? 'Unknown device'
-            : rawName.trim(),
-        operatingSystem: _normalizeDiscoveryText(rawOs),
-        deviceType: _normalizeDiscoveryText(rawType),
-        peerId: _normalizeDiscoveryText(rawPeerId),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String? _normalizeDiscoveryText(String? value) {
-    if (value == null) {
-      return null;
-    }
-    final trimmed = value.trim();
-    if (trimmed.isEmpty) {
-      return null;
-    }
-    return trimmed;
-  }
-
-  String _resolveLocalDeviceType() {
-    if (Platform.isAndroid || Platform.isIOS) {
-      return 'phone';
-    }
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      return 'pc';
-    }
-    return 'unknown';
-  }
-
-  _TransferRequestPacket? _parseTransferRequestPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _transferRequestPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final requestId = decoded['requestId'] as String?;
-    final senderName = decoded['senderName'] as String?;
-    final senderMacAddress = decoded['senderMacAddress'] as String?;
-    final sharedCacheId = decoded['sharedCacheId'] as String?;
-    final sharedLabel = decoded['sharedLabel'] as String?;
-    final instanceId = decoded['instanceId'] as String?;
-    final itemsRaw = decoded['items'];
-    if (requestId == null ||
-        senderName == null ||
-        senderMacAddress == null ||
-        sharedCacheId == null ||
-        sharedLabel == null ||
-        instanceId == null ||
-        itemsRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final items = <TransferAnnouncementItem>[];
-    for (final item in itemsRaw) {
-      if (item is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = TransferAnnouncementItem.fromJson(item);
-      if (parsed != null) {
-        items.add(parsed);
-      }
-    }
-    if (items.isEmpty) {
-      return null;
-    }
-
-    return _TransferRequestPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      senderName: senderName,
-      senderMacAddress: senderMacAddress,
-      sharedCacheId: sharedCacheId,
-      sharedLabel: sharedLabel,
-      items: items,
-    );
-  }
-
-  _TransferDecisionPacket? _parseTransferDecisionPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _transferDecisionPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final requestId = decoded['requestId'] as String?;
-    final receiverName = decoded['receiverName'] as String?;
-    final approved = decoded['approved'] as bool?;
-    final instanceId = decoded['instanceId'] as String?;
-    final transferPortRaw = decoded['transferPort'];
-    int? transferPort;
-    if (transferPortRaw is num) {
-      transferPort = transferPortRaw.toInt();
-    }
-    List<String>? acceptedFileNames;
-    final acceptedRaw = decoded['acceptedFileNames'];
-    if (acceptedRaw is List<dynamic>) {
-      final parsed = acceptedRaw
-          .whereType<String>()
-          .map((name) => name.trim())
-          .where((name) => name.isNotEmpty)
-          .toList(growable: false);
-      acceptedFileNames = parsed;
-    }
-    if (requestId == null ||
-        receiverName == null ||
-        approved == null ||
-        instanceId == null) {
-      return null;
-    }
-
-    return _TransferDecisionPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      receiverName: receiverName,
-      approved: approved,
-      transferPort: transferPort,
-      acceptedFileNames: acceptedFileNames,
-    );
-  }
-
-  _FriendRequestPacket? _parseFriendRequestPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _friendRequestPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final requesterName = decoded['requesterName'] as String?;
-    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
-    if (instanceId == null ||
-        requestId == null ||
-        requesterName == null ||
-        requesterMacAddress == null) {
-      return null;
-    }
-
-    return _FriendRequestPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      requesterName: requesterName,
-      requesterMacAddress: requesterMacAddress,
-    );
-  }
-
-  _FriendResponsePacket? _parseFriendResponsePacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _friendResponsePrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final responderName = decoded['responderName'] as String?;
-    final responderMacAddress = decoded['responderMacAddress'] as String?;
-    final accepted = decoded['accepted'] as bool?;
-    if (instanceId == null ||
-        requestId == null ||
-        responderName == null ||
-        responderMacAddress == null ||
-        accepted == null) {
-      return null;
-    }
-
-    return _FriendResponsePacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      responderName: responderName,
-      responderMacAddress: responderMacAddress,
-      accepted: accepted,
-    );
-  }
-
-  _ShareQueryPacket? _parseShareQueryPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _shareQueryPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final requesterName = decoded['requesterName'] as String?;
-    if (instanceId == null || requestId == null || requesterName == null) {
-      return null;
-    }
-
-    return _ShareQueryPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      requesterName: requesterName,
-    );
-  }
-
-  _ShareCatalogPacket? _parseShareCatalogPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _shareCatalogPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final ownerName = decoded['ownerName'] as String?;
-    final ownerMacAddress = decoded['ownerMacAddress'] as String?;
-    final entriesRaw = decoded['entries'];
-    if (instanceId == null ||
-        requestId == null ||
-        ownerName == null ||
-        ownerMacAddress == null ||
-        entriesRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final entries = <SharedCatalogEntryItem>[];
-    for (final rawEntry in entriesRaw) {
-      if (rawEntry is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = SharedCatalogEntryItem.fromJson(rawEntry);
-      if (parsed != null) {
-        entries.add(parsed);
-      }
-    }
-
-    final removedRaw = decoded['removedCacheIds'];
-    final removedCacheIds = <String>[];
-    if (removedRaw is List<dynamic>) {
-      for (final raw in removedRaw) {
-        if (raw is! String) {
-          continue;
-        }
-        final normalized = raw.trim();
-        if (normalized.isEmpty) {
-          continue;
-        }
-        removedCacheIds.add(normalized);
-      }
-    }
-
-    return _ShareCatalogPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      ownerName: ownerName,
-      ownerMacAddress: ownerMacAddress,
-      entries: entries,
-      removedCacheIds: removedCacheIds,
-    );
-  }
-
-  _DownloadRequestPacket? _parseDownloadRequestPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _downloadRequestPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final requesterName = decoded['requesterName'] as String?;
-    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
-    final cacheId = decoded['cacheId'] as String?;
-    final selectedRelativePathsRaw = decoded['selectedRelativePaths'];
-    final previewMode = decoded['previewMode'] as bool? ?? false;
-    if (instanceId == null ||
-        requestId == null ||
-        requesterName == null ||
-        requesterMacAddress == null ||
-        cacheId == null) {
-      return null;
-    }
-
-    final selectedRelativePaths = <String>[];
-    if (selectedRelativePathsRaw is List<dynamic>) {
-      for (final raw in selectedRelativePathsRaw) {
-        if (raw is! String) {
-          continue;
-        }
-        final normalized = raw.trim();
-        if (normalized.isEmpty) {
-          continue;
-        }
-        selectedRelativePaths.add(normalized);
-      }
-    }
-
-    return _DownloadRequestPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      requesterName: requesterName,
-      requesterMacAddress: requesterMacAddress,
-      cacheId: cacheId,
-      selectedRelativePaths: selectedRelativePaths,
-      previewMode: previewMode,
-    );
-  }
-
-  _ThumbnailSyncRequestPacket? _parseThumbnailSyncRequestPacket(
-    String message,
-  ) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _thumbnailSyncRequestPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final requesterName = decoded['requesterName'] as String?;
-    final itemsRaw = decoded['items'];
-    if (instanceId == null ||
-        requestId == null ||
-        requesterName == null ||
-        itemsRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final items = <ThumbnailSyncItem>[];
-    for (final raw in itemsRaw) {
-      if (raw is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = ThumbnailSyncItem.fromJson(raw);
-      if (parsed != null) {
-        items.add(parsed);
-      }
-    }
-    if (items.isEmpty) {
-      return null;
-    }
-
-    return _ThumbnailSyncRequestPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      requesterName: requesterName,
-      items: items,
-    );
-  }
-
-  _ThumbnailPacket? _parseThumbnailPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _thumbnailPacketPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final ownerMacAddress = decoded['ownerMacAddress'] as String?;
-    final cacheId = decoded['cacheId'] as String?;
-    final relativePath = decoded['relativePath'] as String?;
-    final thumbnailId = decoded['thumbnailId'] as String?;
-    final bytesBase64 = decoded['bytesBase64'] as String?;
-    if (instanceId == null ||
-        requestId == null ||
-        ownerMacAddress == null ||
-        cacheId == null ||
-        relativePath == null ||
-        thumbnailId == null ||
-        bytesBase64 == null) {
-      return null;
-    }
-
-    try {
-      final bytes = base64Decode(bytesBase64);
-      if (bytes.isEmpty) {
-        return null;
-      }
-      return _ThumbnailPacket(
-        instanceId: instanceId,
-        requestId: requestId,
-        ownerMacAddress: ownerMacAddress,
-        cacheId: cacheId,
-        relativePath: relativePath,
-        thumbnailId: thumbnailId,
-        bytes: Uint8List.fromList(bytes),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-
-  _ClipboardQueryPacket? _parseClipboardQueryPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _clipboardQueryPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final requesterName = decoded['requesterName'] as String?;
-    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
-    final maxEntriesRaw = decoded['maxEntries'];
-    if (instanceId == null ||
-        requestId == null ||
-        requesterName == null ||
-        requesterMacAddress == null ||
-        maxEntriesRaw is! num) {
-      return null;
-    }
-
-    return _ClipboardQueryPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      requesterName: requesterName,
-      requesterMacAddress: requesterMacAddress,
-      maxEntries: maxEntriesRaw.toInt(),
-    );
-  }
-
-  _ClipboardCatalogPacket? _parseClipboardCatalogPacket(String message) {
-    final decoded = _decodeTransferEnvelope(
-      message: message,
-      expectedPrefix: _clipboardCatalogPrefix,
-    );
-    if (decoded == null) {
-      return null;
-    }
-
-    final instanceId = decoded['instanceId'] as String?;
-    final requestId = decoded['requestId'] as String?;
-    final ownerName = decoded['ownerName'] as String?;
-    final ownerMacAddress = decoded['ownerMacAddress'] as String?;
-    final entriesRaw = decoded['entries'];
-    if (instanceId == null ||
-        requestId == null ||
-        ownerName == null ||
-        ownerMacAddress == null ||
-        entriesRaw is! List<dynamic>) {
-      return null;
-    }
-
-    final entries = <ClipboardCatalogItem>[];
-    for (final rawEntry in entriesRaw) {
-      if (rawEntry is! Map<String, dynamic>) {
-        continue;
-      }
-      final parsed = ClipboardCatalogItem.fromJson(rawEntry);
-      if (parsed != null) {
-        entries.add(parsed);
-      }
-    }
-
-    return _ClipboardCatalogPacket(
-      instanceId: instanceId,
-      requestId: requestId,
-      ownerName: ownerName,
-      ownerMacAddress: ownerMacAddress,
-      entries: entries,
-    );
-  }
-
-  Map<String, dynamic>? _decodeTransferEnvelope({
-    required String message,
-    required String expectedPrefix,
-  }) {
-    final splitIndex = message.indexOf('|');
-    if (splitIndex <= 0 || splitIndex >= message.length - 1) {
-      return null;
-    }
-
-    final prefix = message.substring(0, splitIndex).trim();
-    if (prefix != expectedPrefix) {
-      return null;
-    }
-
-    final encodedPayload = message.substring(splitIndex + 1).trim();
-    try {
-      final bytes = base64Url.decode(encodedPayload);
-      final json = jsonDecode(utf8.decode(bytes));
-      if (json is Map<String, dynamic>) {
-        return json;
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
   InternetAddress? _toBroadcastAddress(String ip) {
     final parts = ip.split('.');
     if (parts.length != 4) {
       return null;
     }
     return InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255');
-  }
-
-  Future<Set<String>> _loadLocalIps({String? preferredSourceIp}) async {
-    final ips = <String>{};
-    final fallbackIps = <String>{};
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final interface in interfaces) {
-        final lowerName = interface.name.toLowerCase();
-        final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
-        for (final address in interface.addresses) {
-          if (isVirtual) {
-            fallbackIps.add(address.address);
-            continue;
-          }
-          ips.add(address.address);
-        }
-      }
-    } catch (error) {
-      _log('Failed to enumerate local interfaces for UDP discovery: $error');
-    }
-
-    final preferredIp = preferredSourceIp?.trim();
-    if (preferredIp != null && _isValidIpv4(preferredIp)) {
-      ips.add(preferredIp);
-      fallbackIps.add(preferredIp);
-      _log('Preferred source IP candidate for UDP discovery: $preferredIp');
-    }
-
-    return ips.isNotEmpty ? ips : fallbackIps;
   }
 
   bool _isValidIpv4(String ip) {
@@ -1984,243 +552,217 @@ class LanDiscoveryService {
     developer.log(message, name: 'LanDiscoveryService');
   }
 
-  Future<void> _acquireAndroidMulticastLock() async {
-    if (!Platform.isAndroid) {
+  void _handleIncomingDatagram({
+    required Datagram datagram,
+    required String deviceName,
+    required void Function(AppPresenceEvent event) onAppDetected,
+    void Function(TransferRequestEvent event)? onTransferRequest,
+    void Function(TransferDecisionEvent event)? onTransferDecision,
+    void Function(FriendRequestEvent event)? onFriendRequest,
+    void Function(FriendResponseEvent event)? onFriendResponse,
+    void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareCatalogEvent event)? onShareCatalog,
+    void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
+    void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
+    void Function(ClipboardQueryEvent event)? onClipboardQuery,
+    void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
+  }) {
+    final senderIp = datagram.address.address;
+    if (!_isUsablePacketSenderIp(senderIp)) {
+      _log('Ignoring packet from invalid sender IP: $senderIp');
       return;
     }
-    try {
-      await _androidNetworkChannel.invokeMethod<void>('acquireMulticastLock');
-      _log('Android multicast lock acquired');
-    } catch (error) {
-      _log('Failed to acquire Android multicast lock: $error');
-    }
-  }
 
-  Future<void> _releaseAndroidMulticastLock() async {
-    if (!Platform.isAndroid) {
+    final localIps = _transportAdapter.localIps;
+    if (localIps.contains(senderIp)) {
       return;
     }
-    try {
-      await _androidNetworkChannel.invokeMethod<void>('releaseMulticastLock');
-      _log('Android multicast lock released');
-    } catch (error) {
-      _log('Failed to release Android multicast lock: $error');
+
+    final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
+    final isSenderInLocalSubnet = localIps.any(
+      (localIp) => _isSame24Subnet(senderIp, localIp),
+    );
+    if (localIps.isNotEmpty &&
+        !isSenderInLocalSubnet &&
+        !isAllowedInternetSender) {
+      _log('Ignoring packet from foreign subnet: $senderIp');
+      return;
+    }
+
+    final message = utf8.decode(datagram.data, allowMalformed: true);
+    final packet = _packetCodec.decodeIncomingPacket(message);
+    if (packet == null || packet.instanceId == _instanceId) {
+      return;
+    }
+    final observedAt = DateTime.now();
+
+    if (packet is LanDiscoveryPresencePacket) {
+      final result = _presenceProtocolHandler.handlePresencePacket(
+        packet: packet,
+        senderIp: senderIp,
+        observedAt: observedAt,
+      );
+      if (result.shouldRespondToDiscover) {
+        _log('Discover request from $senderIp');
+        final response = _packetCodec.encodeDiscoveryResponse(
+          instanceId: _instanceId,
+          deviceName: deviceName,
+          localPeerId: _localPeerId,
+        );
+        _transportAdapter.send(
+          bytes: utf8.encode(response),
+          address: datagram.address,
+          port: datagram.port,
+          context: 'discover-response',
+        );
+        _log('Discover response sent to $senderIp');
+      }
+      final detectedEvent = result.detectedEvent;
+      if (detectedEvent != null) {
+        _log(
+          'Discover response received from '
+          '$senderIp (${detectedEvent.deviceName})',
+        );
+        onAppDetected(detectedEvent);
+      }
+      return;
+    }
+
+    if (packet is LanTransferRequestPacket) {
+      _log(
+        'Transfer request received from $senderIp '
+        '(requestId=${packet.requestId})',
+      );
+      onTransferRequest?.call(
+        _transferProtocolHandler.handleTransferRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanTransferDecisionPacket) {
+      _log(
+        'Transfer decision received from $senderIp '
+        '(requestId=${packet.requestId}, approved=${packet.approved})',
+      );
+      onTransferDecision?.call(
+        _transferProtocolHandler.handleTransferDecisionPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanFriendRequestPacket) {
+      _log(
+        'Friend request received from $senderIp '
+        '(requestId=${packet.requestId})',
+      );
+      onFriendRequest?.call(
+        _friendProtocolHandler.handleFriendRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanFriendResponsePacket) {
+      _log(
+        'Friend response received from $senderIp '
+        '(requestId=${packet.requestId}, accepted=${packet.accepted})',
+      );
+      onFriendResponse?.call(
+        _friendProtocolHandler.handleFriendResponsePacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanShareQueryPacket) {
+      onShareQuery?.call(
+        _shareProtocolHandler.handleShareQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanShareCatalogPacket) {
+      onShareCatalog?.call(
+        _shareProtocolHandler.handleShareCatalogPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanDownloadRequestPacket) {
+      onDownloadRequest?.call(
+        _shareProtocolHandler.handleDownloadRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanThumbnailSyncRequestPacket) {
+      onThumbnailSyncRequest?.call(
+        _shareProtocolHandler.handleThumbnailSyncRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanThumbnailPacket) {
+      onThumbnailPacket?.call(
+        _shareProtocolHandler.handleThumbnailPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanClipboardQueryPacket) {
+      onClipboardQuery?.call(
+        _clipboardProtocolHandler.handleClipboardQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanClipboardCatalogPacket) {
+      onClipboardCatalog?.call(
+        _clipboardProtocolHandler.handleClipboardCatalogPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
     }
   }
-}
-
-class _DiscoveryPacket {
-  const _DiscoveryPacket({
-    required this.prefix,
-    required this.instanceId,
-    required this.deviceName,
-    this.operatingSystem,
-    this.deviceType,
-    this.peerId,
-  });
-
-  final String prefix;
-  final String instanceId;
-  final String deviceName;
-  final String? operatingSystem;
-  final String? deviceType;
-  final String? peerId;
-}
-
-class _DiscoveryIdentity {
-  const _DiscoveryIdentity({
-    required this.deviceName,
-    this.operatingSystem,
-    this.deviceType,
-    this.peerId,
-  });
-
-  final String deviceName;
-  final String? operatingSystem;
-  final String? deviceType;
-  final String? peerId;
-}
-
-class _TransferRequestPacket {
-  const _TransferRequestPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.senderName,
-    required this.senderMacAddress,
-    required this.sharedCacheId,
-    required this.sharedLabel,
-    required this.items,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String senderName;
-  final String senderMacAddress;
-  final String sharedCacheId;
-  final String sharedLabel;
-  final List<TransferAnnouncementItem> items;
-}
-
-class _TransferDecisionPacket {
-  const _TransferDecisionPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.receiverName,
-    required this.approved,
-    required this.transferPort,
-    this.acceptedFileNames,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String receiverName;
-  final bool approved;
-  final int? transferPort;
-  final List<String>? acceptedFileNames;
-}
-
-class _FriendRequestPacket {
-  const _FriendRequestPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.requesterName,
-    required this.requesterMacAddress,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String requesterName;
-  final String requesterMacAddress;
-}
-
-class _FriendResponsePacket {
-  const _FriendResponsePacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.responderName,
-    required this.responderMacAddress,
-    required this.accepted,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String responderName;
-  final String responderMacAddress;
-  final bool accepted;
-}
-
-class _ShareQueryPacket {
-  const _ShareQueryPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.requesterName,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String requesterName;
-}
-
-class _ShareCatalogPacket {
-  const _ShareCatalogPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-    required this.removedCacheIds,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<SharedCatalogEntryItem> entries;
-  final List<String> removedCacheIds;
-}
-
-class _DownloadRequestPacket {
-  const _DownloadRequestPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.cacheId,
-    required this.selectedRelativePaths,
-    required this.previewMode,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String requesterName;
-  final String requesterMacAddress;
-  final String cacheId;
-  final List<String> selectedRelativePaths;
-  final bool previewMode;
-}
-
-class _ClipboardQueryPacket {
-  const _ClipboardQueryPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.requesterName,
-    required this.requesterMacAddress,
-    required this.maxEntries,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String requesterName;
-  final String requesterMacAddress;
-  final int maxEntries;
-}
-
-class _ClipboardCatalogPacket {
-  const _ClipboardCatalogPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.entries,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String ownerName;
-  final String ownerMacAddress;
-  final List<ClipboardCatalogItem> entries;
-}
-
-class _ThumbnailSyncRequestPacket {
-  const _ThumbnailSyncRequestPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.requesterName,
-    required this.items,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String requesterName;
-  final List<ThumbnailSyncItem> items;
-}
-
-class _ThumbnailPacket {
-  const _ThumbnailPacket({
-    required this.instanceId,
-    required this.requestId,
-    required this.ownerMacAddress,
-    required this.cacheId,
-    required this.relativePath,
-    required this.thumbnailId,
-    required this.bytes,
-  });
-
-  final String instanceId;
-  final String requestId;
-  final String ownerMacAddress;
-  final String cacheId;
-  final String relativePath;
-  final String thumbnailId;
-  final Uint8List bytes;
 }

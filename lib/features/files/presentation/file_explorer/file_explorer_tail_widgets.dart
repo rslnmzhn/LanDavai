@@ -1,15 +1,27 @@
-part of '../file_explorer_page.dart';
+import 'dart:math' as math;
 
-class _ExplorerEntityGridTile extends StatelessWidget {
-  const _ExplorerEntityGridTile({
+import 'package:flutter/material.dart';
+
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_radius.dart';
+import '../../../../app/theme/app_spacing.dart';
+import '../../application/files_feature_state_owner.dart';
+import '../../application/preview_cache_owner.dart';
+import 'file_explorer_widgets.dart';
+
+class ExplorerEntityGridTile extends StatelessWidget {
+  const ExplorerEntityGridTile({
     required this.entry,
     required this.tileExtent,
+    required this.previewCacheOwner,
     required this.onTap,
     this.onDelete,
+    super.key,
   });
 
-  final _ExplorerEntityRecord entry;
+  final FilesFeatureEntry entry;
   final double tileExtent;
+  final PreviewCacheOwner previewCacheOwner;
   final VoidCallback onTap;
   final Future<void> Function()? onDelete;
 
@@ -75,9 +87,10 @@ class _ExplorerEntityGridTile extends StatelessWidget {
                   children: [
                     Expanded(
                       child: Center(
-                        child: _ExplorerEntityLeading(
+                        child: ExplorerEntityLeading(
                           isDirectory: entry.isDirectory,
                           filePath: entry.filePath,
+                          previewCacheOwner: previewCacheOwner,
                           size: previewSize,
                         ),
                       ),
@@ -199,8 +212,12 @@ class _GridNameLabel extends StatelessWidget {
   }
 }
 
-class _DisplayModeToggle extends StatelessWidget {
-  const _DisplayModeToggle({required this.isGrid, required this.onToggle});
+class DisplayModeToggle extends StatelessWidget {
+  const DisplayModeToggle({
+    required this.isGrid,
+    required this.onToggle,
+    super.key,
+  });
 
   final bool isGrid;
   final VoidCallback onToggle;
@@ -224,8 +241,12 @@ class _DisplayModeToggle extends StatelessWidget {
   }
 }
 
-class _ExplorerErrorBanner extends StatelessWidget {
-  const _ExplorerErrorBanner({required this.message, required this.onRetry});
+class ExplorerErrorBanner extends StatelessWidget {
+  const ExplorerErrorBanner({
+    required this.message,
+    required this.onRetry,
+    super.key,
+  });
 
   final String message;
   final VoidCallback onRetry;
@@ -257,5 +278,3 @@ class _ExplorerErrorBanner extends StatelessWidget {
     );
   }
 }
-
-enum _LocalFileKind { image, video, audio, text, pdf, other }

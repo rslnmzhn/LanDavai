@@ -1,13 +1,26 @@
-part of '../file_explorer_page.dart';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:typed_data';
 
-class _ExplorerPathHeader extends StatelessWidget {
-  const _ExplorerPathHeader({
+import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
+
+import '../../../../app/theme/app_colors.dart';
+import '../../../../app/theme/app_radius.dart';
+import '../../../../app/theme/app_spacing.dart';
+import '../../application/files_feature_state_owner.dart';
+import '../../application/preview_cache_owner.dart';
+import 'file_explorer_models.dart';
+
+class ExplorerPathHeader extends StatelessWidget {
+  const ExplorerPathHeader({
     required this.rootLabel,
     required this.relativePath,
     required this.canGoUp,
     required this.onGoUp,
     required this.canSelectRoot,
     required this.onSelectRoot,
+    super.key,
   });
 
   final String rootLabel;
@@ -48,14 +61,17 @@ class _ExplorerPathHeader extends StatelessWidget {
   }
 }
 
-class _ExplorerEntityTile extends StatelessWidget {
-  const _ExplorerEntityTile({
+class ExplorerEntityTile extends StatelessWidget {
+  const ExplorerEntityTile({
     required this.entry,
+    required this.previewCacheOwner,
     required this.onTap,
     this.onDelete,
+    super.key,
   });
 
-  final _ExplorerEntityRecord entry;
+  final FilesFeatureEntry entry;
+  final PreviewCacheOwner previewCacheOwner;
   final VoidCallback onTap;
   final Future<void> Function()? onDelete;
 
@@ -66,9 +82,10 @@ class _ExplorerEntityTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.md),
       ),
       tileColor: AppColors.surface,
-      leading: _ExplorerEntityLeading(
+      leading: ExplorerEntityLeading(
         isDirectory: entry.isDirectory,
         filePath: entry.filePath,
+        previewCacheOwner: previewCacheOwner,
       ),
       title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       subtitle: Text(
@@ -90,15 +107,18 @@ class _ExplorerEntityTile extends StatelessWidget {
   }
 }
 
-class _ExplorerEntityLeading extends StatelessWidget {
-  const _ExplorerEntityLeading({
+class ExplorerEntityLeading extends StatelessWidget {
+  const ExplorerEntityLeading({
     required this.isDirectory,
     required this.filePath,
+    required this.previewCacheOwner,
     this.size = 44,
+    super.key,
   });
 
   final bool isDirectory;
   final String? filePath;
+  final PreviewCacheOwner previewCacheOwner;
   final double size;
 
   @override
@@ -116,22 +136,35 @@ class _ExplorerEntityLeading extends StatelessWidget {
     }
     final path = filePath;
     if (path == null || path.trim().isEmpty) {
-      return _ExplorerFilePreview(filePath: '', size: size);
+      return _ExplorerFilePreview(
+        filePath: '',
+        previewCacheOwner: previewCacheOwner,
+        size: size,
+      );
     }
-    return _ExplorerFilePreview(filePath: path, size: size);
+    return _ExplorerFilePreview(
+      filePath: path,
+      previewCacheOwner: previewCacheOwner,
+      size: size,
+    );
   }
 }
 
 class _ExplorerFilePreview extends StatelessWidget {
-  const _ExplorerFilePreview({required this.filePath, this.size = 44});
+  const _ExplorerFilePreview({
+    required this.filePath,
+    required this.previewCacheOwner,
+    this.size = 44,
+  });
 
   final String filePath;
+  final PreviewCacheOwner previewCacheOwner;
   final double size;
 
   @override
   Widget build(BuildContext context) {
     final ext = p.extension(filePath).toLowerCase();
-    if (_supportedImageExtensions.contains(ext)) {
+    if (explorerImageExtensions.contains(ext)) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: Image.file(
@@ -143,11 +176,19 @@ class _ExplorerFilePreview extends StatelessWidget {
         ),
       );
     }
-    if (_supportedVideoExtensions.contains(ext)) {
-      return _ExplorerVideoPreview(filePath: filePath, size: size);
+    if (explorerVideoExtensions.contains(ext)) {
+      return _ExplorerVideoPreview(
+        filePath: filePath,
+        previewCacheOwner: previewCacheOwner,
+        size: size,
+      );
     }
-    if (_supportedAudioExtensions.contains(ext)) {
-      return _ExplorerAudioPreview(filePath: filePath, size: size);
+    if (explorerAudioExtensions.contains(ext)) {
+      return _ExplorerAudioPreview(
+        filePath: filePath,
+        previewCacheOwner: previewCacheOwner,
+        size: size,
+      );
     }
     return _fallbackIcon(Icons.insert_drive_file_rounded);
   }
@@ -166,9 +207,14 @@ class _ExplorerFilePreview extends StatelessWidget {
 }
 
 class _ExplorerVideoPreview extends StatefulWidget {
-  const _ExplorerVideoPreview({required this.filePath, this.size = 44});
+  const _ExplorerVideoPreview({
+    required this.filePath,
+    required this.previewCacheOwner,
+    this.size = 44,
+  });
 
   final String filePath;
+  final PreviewCacheOwner previewCacheOwner;
   final double size;
 
   @override
@@ -185,7 +231,7 @@ class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
   }
 
   Future<Uint8List?> _loadThumbnail() async {
-    return _MediaPreviewCache.loadVideoPreview(
+    return widget.previewCacheOwner.loadVideoPreview(
       filePath: widget.filePath,
       maxExtent: math.max(180, (widget.size * 2).round()),
       quality: 72,
@@ -239,9 +285,14 @@ class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
 }
 
 class _ExplorerAudioPreview extends StatefulWidget {
-  const _ExplorerAudioPreview({required this.filePath, this.size = 44});
+  const _ExplorerAudioPreview({
+    required this.filePath,
+    required this.previewCacheOwner,
+    this.size = 44,
+  });
 
   final String filePath;
+  final PreviewCacheOwner previewCacheOwner;
   final double size;
 
   @override
@@ -254,7 +305,7 @@ class _ExplorerAudioPreviewState extends State<_ExplorerAudioPreview> {
   @override
   void initState() {
     super.initState();
-    _coverFuture = _MediaPreviewCache.loadAudioCover(
+    _coverFuture = widget.previewCacheOwner.loadAudioCover(
       filePath: widget.filePath,
       maxExtent: math.max(180, (widget.size * 2).round()),
       quality: 78,

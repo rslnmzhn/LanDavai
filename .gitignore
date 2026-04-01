@@ -1,6 +1,8 @@
 # Miscellaneous
 *.class
 *.log
+test_*.out
+test_*.err
 *.pyc
 *.swp
 .DS_Store
