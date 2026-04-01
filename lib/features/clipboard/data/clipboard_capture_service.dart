@@ -55,6 +55,37 @@ class ClipboardCaptureService {
     );
   }
 
+  Future<bool> writeTextToClipboard(String text) async {
+    final clipboard = SystemClipboard.instance;
+    if (clipboard == null) {
+      return false;
+    }
+
+    final item = DataWriterItem();
+    item.add(Formats.plainText(text));
+    await clipboard.write(<DataWriterItem>[item]);
+    return true;
+  }
+
+  Future<bool> writeImageBytesToClipboard(
+    Uint8List imageBytes, {
+    String suggestedName = 'clipboard-image.png',
+  }) async {
+    if (imageBytes.isEmpty) {
+      return false;
+    }
+
+    final clipboard = SystemClipboard.instance;
+    if (clipboard == null) {
+      return false;
+    }
+
+    final item = DataWriterItem(suggestedName: suggestedName);
+    item.add(Formats.png(imageBytes));
+    await clipboard.write(<DataWriterItem>[item]);
+    return true;
+  }
+
   Future<Uint8List?> _tryReadPngBytes(ClipboardReader reader) async {
     if (!reader.canProvide(Formats.png)) {
       return null;
