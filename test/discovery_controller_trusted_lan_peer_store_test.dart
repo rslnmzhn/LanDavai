@@ -29,6 +29,7 @@ import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_app_database.dart';
+import 'test_support/stub_discovery_network_interface_catalog.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
@@ -149,6 +150,7 @@ DiscoveryController _buildController({
     sharedCacheIndexStore: sharedCacheIndexStore,
     fileHashService: fileHashService,
   );
+  final discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore();
   final remoteShareBrowser = RemoteShareBrowser(
     sharedCacheCatalog: sharedCacheCatalog,
   );
@@ -169,6 +171,7 @@ DiscoveryController _buildController({
     ),
     trustedLanPeerStore: trustedLanPeerStore,
     localPeerIdentityStore: localPeerIdentityStore,
+    discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -230,7 +233,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
 
   @override
   Future<Map<String, String?>> scanActiveHosts({
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     return result;
   }

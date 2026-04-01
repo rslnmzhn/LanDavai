@@ -5,6 +5,8 @@ import '../../settings/domain/app_settings.dart';
 import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';
 import 'discovery_controller.dart';
+import 'discovery_network_scope.dart';
+import 'discovery_network_scope_store.dart';
 import 'device_registry.dart';
 import 'internet_peer_endpoint_store.dart';
 import 'trusted_lan_peer_store.dart';
@@ -15,16 +17,19 @@ class DiscoveryReadModel extends ChangeNotifier {
     required DeviceRegistry deviceRegistry,
     required InternetPeerEndpointStore internetPeerEndpointStore,
     required TrustedLanPeerStore trustedLanPeerStore,
+    required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
     required SettingsStore settingsStore,
   }) : _legacyController = legacyController,
        _deviceRegistry = deviceRegistry,
        _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
+       _discoveryNetworkScopeStore = discoveryNetworkScopeStore,
        _settingsStore = settingsStore {
     _legacyController.addListener(_handleDependencyChanged);
     _deviceRegistry.addListener(_handleDependencyChanged);
     _internetPeerEndpointStore.addListener(_handleDependencyChanged);
     _trustedLanPeerStore.addListener(_handleDependencyChanged);
+    _discoveryNetworkScopeStore.addListener(_handleDependencyChanged);
     _settingsStore.addListener(_handleDependencyChanged);
   }
 
@@ -32,6 +37,7 @@ class DiscoveryReadModel extends ChangeNotifier {
   final DeviceRegistry _deviceRegistry;
   final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
+  final DiscoveryNetworkScopeStore _discoveryNetworkScopeStore;
   final SettingsStore _settingsStore;
 
   AppSettings get settings => _settingsStore.settings;
@@ -44,13 +50,30 @@ class DiscoveryReadModel extends ChangeNotifier {
 
   bool get isAppInForeground => _legacyController.isAppInForeground;
 
+  List<DiscoveryNetworkRange> get availableNetworkRanges =>
+      List<DiscoveryNetworkRange>.unmodifiable(
+        _discoveryNetworkScopeStore.ranges,
+      );
+
+  String get selectedNetworkScopeId =>
+      _discoveryNetworkScopeStore.selectedScopeId;
+
+  DiscoveryNetworkRange? get selectedNetworkRange =>
+      _discoveryNetworkScopeStore.selectedRange;
+
   List<DiscoveredDevice> get devices => _legacyController.devices
+      .where(
+        (device) => _discoveryNetworkScopeStore.matchesSelectedScope(device.ip),
+      )
       .map(_canonicalizeDevice)
       .toList(growable: false);
 
   DiscoveredDevice? get selectedDevice {
     final selectedIp = _legacyController.selectedDevice?.ip;
     if (selectedIp == null) {
+      return null;
+    }
+    if (!_discoveryNetworkScopeStore.matchesSelectedScope(selectedIp)) {
       return null;
     }
     for (final device in devices) {
@@ -94,6 +117,7 @@ class DiscoveryReadModel extends ChangeNotifier {
     _deviceRegistry.removeListener(_handleDependencyChanged);
     _internetPeerEndpointStore.removeListener(_handleDependencyChanged);
     _trustedLanPeerStore.removeListener(_handleDependencyChanged);
+    _discoveryNetworkScopeStore.removeListener(_handleDependencyChanged);
     _settingsStore.removeListener(_handleDependencyChanged);
     super.dispose();
   }

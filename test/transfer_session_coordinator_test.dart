@@ -39,6 +39,7 @@ import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 
 import 'test_support/test_app_database.dart';
+import 'test_support/stub_discovery_network_interface_catalog.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -298,6 +299,7 @@ void main() {
             fileHashService: fileHashService,
             lanDiscoveryService: lanDiscoveryService,
           );
+      final discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore();
       controller = DiscoveryController(
         lanDiscoveryService: lanDiscoveryService,
         networkHostScanner: StubNetworkHostScanner(const <String, String?>{}),
@@ -307,6 +309,7 @@ void main() {
         ),
         trustedLanPeerStore: trustedLanPeerStore,
         localPeerIdentityStore: localPeerIdentityStore,
+        discoveryNetworkScopeStore: discoveryNetworkScopeStore,
         settingsStore: settingsStore,
         appNotificationService: AppNotificationService.instance,
         transferHistoryRepository: transferHistoryRepository,
@@ -425,6 +428,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   Future<void> start({
     required String deviceName,
     required String localPeerId,
+    required Set<String> localSourceIps,
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -437,7 +441,6 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
-    String? preferredSourceIp,
   }) async {
     this.onTransferRequest = onTransferRequest;
     this.onTransferDecision = onTransferDecision;
@@ -567,7 +570,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
 
   @override
   Future<Map<String, String?>> scanActiveHosts({
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     return result;
   }

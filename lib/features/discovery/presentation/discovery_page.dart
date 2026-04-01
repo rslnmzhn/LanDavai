@@ -211,6 +211,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           transferSessionCoordinator: _transferSessionCoordinator,
           onRefresh: _controller.refresh,
           onSelectDeviceByIp: _controller.selectDeviceByIp,
+          onSelectNetworkScope: (scopeId) {
+            unawaited(_controller.selectNetworkScope(scopeId));
+          },
           onOpenDeviceActionsMenu: _openDeviceActionsMenu,
         );
 

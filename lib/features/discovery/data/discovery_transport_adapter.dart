@@ -11,7 +11,7 @@ abstract class DiscoveryTransportAdapter {
   Future<void> start({
     required int port,
     required void Function(Datagram datagram) onDatagram,
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   });
 
   Future<void> stop();
@@ -28,22 +28,6 @@ class UdpDiscoveryTransportAdapter implements DiscoveryTransportAdapter {
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
-  static const List<String> _virtualInterfaceHints = <String>[
-    'loopback',
-    'docker',
-    'vmware',
-    'virtual',
-    'vethernet',
-    'hyper-v',
-    'vbox',
-    'wsl',
-    'tailscale',
-    'zerotier',
-    'hamachi',
-    'tun',
-    'tap',
-    'bridge',
-  ];
 
   RawDatagramSocket? _socket;
   Set<String> _localIps = <String>{};
@@ -62,7 +46,7 @@ class UdpDiscoveryTransportAdapter implements DiscoveryTransportAdapter {
   Future<void> start({
     required int port,
     required void Function(Datagram datagram) onDatagram,
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     if (_started) {
       _log('start() ignored: transport already running');
@@ -70,7 +54,7 @@ class UdpDiscoveryTransportAdapter implements DiscoveryTransportAdapter {
     }
 
     _started = true;
-    _localIps = await _loadLocalIps(preferredSourceIp: preferredSourceIp);
+    _localIps = localSourceIps.where(_isValidIpv4).toSet();
     _log('Starting UDP transport on $port. localIps=$_localIps');
     await _acquireAndroidMulticastLock();
 
@@ -146,40 +130,6 @@ class UdpDiscoveryTransportAdapter implements DiscoveryTransportAdapter {
     } catch (error) {
       _log('UDP send failed ($context) -> ${address.address}:$port: $error');
     }
-  }
-
-  Future<Set<String>> _loadLocalIps({String? preferredSourceIp}) async {
-    final ips = <String>{};
-    final fallbackIps = <String>{};
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLoopback: false,
-        includeLinkLocal: false,
-      );
-      for (final interface in interfaces) {
-        final lowerName = interface.name.toLowerCase();
-        final isVirtual = _virtualInterfaceHints.any(lowerName.contains);
-        for (final address in interface.addresses) {
-          if (isVirtual) {
-            fallbackIps.add(address.address);
-            continue;
-          }
-          ips.add(address.address);
-        }
-      }
-    } catch (error) {
-      _log('Failed to enumerate local interfaces for UDP discovery: $error');
-    }
-
-    final preferredIp = preferredSourceIp?.trim();
-    if (preferredIp != null && _isValidIpv4(preferredIp)) {
-      ips.add(preferredIp);
-      fallbackIps.add(preferredIp);
-      _log('Preferred source IP candidate for UDP discovery: $preferredIp');
-    }
-
-    return ips.isNotEmpty ? ips : fallbackIps;
   }
 
   bool _isValidIpv4(String ip) {

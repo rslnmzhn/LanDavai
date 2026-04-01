@@ -7,6 +7,7 @@ import 'package:landa/features/clipboard/application/remote_clipboard_projection
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
+import 'package:landa/features/discovery/application/discovery_network_scope_store.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
@@ -38,12 +39,15 @@ import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/data/video_link_share_service.dart';
 
 import 'test_app_database.dart';
+import 'stub_discovery_network_interface_catalog.dart';
 
 class TestDiscoveryControllerHarness {
   TestDiscoveryControllerHarness._({
     required this.databaseHarness,
     required this.controller,
     required this.readModel,
+    required this.discoveryNetworkInterfaceCatalog,
+    required this.discoveryNetworkScopeStore,
     required this.remoteShareBrowser,
     required this.sharedCacheMaintenanceBoundary,
     required this.videoLinkSessionBoundary,
@@ -60,6 +64,8 @@ class TestDiscoveryControllerHarness {
   final TestAppDatabaseHarness databaseHarness;
   final TrackingDiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final StubDiscoveryNetworkInterfaceCatalog discoveryNetworkInterfaceCatalog;
+  final DiscoveryNetworkScopeStore discoveryNetworkScopeStore;
   final TrackingRemoteShareBrowser remoteShareBrowser;
   final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final VideoLinkSessionBoundary videoLinkSessionBoundary;
@@ -106,6 +112,11 @@ class TestDiscoveryControllerHarness {
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
     final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
+    final discoveryNetworkInterfaceCatalog =
+        StubDiscoveryNetworkInterfaceCatalog();
+    final discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
+      interfaceCatalog: discoveryNetworkInterfaceCatalog,
+    );
     final settingsStore = SettingsStore(
       appSettingsRepository: AppSettingsRepository(database: database),
     );
@@ -202,6 +213,7 @@ class TestDiscoveryControllerHarness {
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
       localPeerIdentityStore: localPeerIdentityStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
@@ -231,6 +243,7 @@ class TestDiscoveryControllerHarness {
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
     );
     final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
@@ -245,6 +258,8 @@ class TestDiscoveryControllerHarness {
       databaseHarness: databaseHarness,
       controller: controller,
       readModel: readModel,
+      discoveryNetworkInterfaceCatalog: discoveryNetworkInterfaceCatalog,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       remoteShareBrowser: remoteShareBrowser,
       sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
       videoLinkSessionBoundary: videoLinkSessionBoundary,
@@ -261,6 +276,7 @@ class TestDiscoveryControllerHarness {
 
   Future<void> dispose() async {
     readModel.dispose();
+    discoveryNetworkScopeStore.dispose();
     videoLinkSessionBoundary.dispose();
     if (!controller.wasDisposed) {
       controller.dispose();
@@ -279,6 +295,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.internetPeerEndpointStore,
     required super.trustedLanPeerStore,
     required super.localPeerIdentityStore,
+    required super.discoveryNetworkScopeStore,
     required super.settingsStore,
     required super.appNotificationService,
     required super.transferHistoryRepository,

@@ -160,3 +160,4 @@ class SharedFolderCacheRepository implements SharedCacheRecordStore {
     return normalized;
   }
 }
+ 

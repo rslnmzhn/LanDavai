@@ -32,6 +32,7 @@ void main() {
     await service.start(
       deviceName: 'Local workstation',
       localPeerId: 'local-peer',
+      localSourceIps: const <String>{'192.168.1.10'},
       onAppDetected: (event) {
         detectedEvent = event;
       },
@@ -55,6 +56,7 @@ void main() {
       await service.start(
         deviceName: 'Local workstation',
         localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
         onAppDetected: (_) {},
       );
       transportAdapter.clearSentPackets();
@@ -141,9 +143,12 @@ class FakeTransportAdapter implements DiscoveryTransportAdapter {
   Future<void> start({
     required int port,
     required void Function(Datagram datagram) onDatagram,
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     _started = true;
+    _localIps
+      ..clear()
+      ..addAll(localSourceIps);
     _onDatagram = onDatagram;
   }
 

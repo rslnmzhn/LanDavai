@@ -11,6 +11,7 @@ import '../../features/clipboard/application/remote_clipboard_projection_store.d
 import '../../features/clipboard/data/clipboard_capture_service.dart';
 import '../../features/clipboard/data/clipboard_history_repository.dart';
 import '../../features/discovery/application/discovery_controller.dart';
+import '../../features/discovery/application/discovery_network_scope_store.dart';
 import '../../features/discovery/application/discovery_read_model.dart';
 import '../../features/discovery/application/device_registry.dart';
 import '../../features/discovery/application/internet_peer_endpoint_store.dart';
@@ -21,6 +22,7 @@ import '../../features/discovery/application/shared_cache_maintenance_boundary.d
 import '../../features/discovery/application/trusted_lan_peer_store.dart';
 import '../../features/discovery/application/video_link_session_boundary.dart';
 import '../../features/discovery/data/device_alias_repository.dart';
+import '../../features/discovery/data/discovery_network_interface_catalog.dart';
 import '../../features/discovery/data/friend_repository.dart';
 import '../../features/discovery/data/lan_discovery_service.dart';
 import '../../features/discovery/data/network_host_scanner.dart';
@@ -134,6 +136,9 @@ class DiscoveryCompositionFactory {
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
     final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
+    final discoveryNetworkScopeStore = DiscoveryNetworkScopeStore(
+      interfaceCatalog: SystemDiscoveryNetworkInterfaceCatalog(),
+    );
     final settingsRepository = AppSettingsRepository(database: database);
     final settingsStore = SettingsStore(
       appSettingsRepository: settingsRepository,
@@ -227,6 +232,7 @@ class DiscoveryCompositionFactory {
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
       localPeerIdentityStore: localPeerIdentityStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
@@ -260,6 +266,7 @@ class DiscoveryCompositionFactory {
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
     );
     final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
@@ -291,6 +298,7 @@ class DiscoveryCompositionFactory {
       disposeGraphOnDispose: true,
       disposeGraph: () {
         readModel.dispose();
+        discoveryNetworkScopeStore.dispose();
         remoteShareBrowser.dispose();
         previewCacheOwner.dispose();
         videoLinkSessionBoundary.dispose();

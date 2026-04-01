@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:landa/app/discovery_page_entry.dart';
+import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
@@ -65,6 +66,64 @@ void main() {
       await _pumpForUi(tester);
 
       expect(harness.controller.disposeCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'DiscoveryPage network scope selector filters visible devices on the main surface',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      harness.discoveryNetworkInterfaceCatalog.replaceInterfaces(
+        const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'Office LAN',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.10', '192.168.1.11'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Tailscale',
+            index: 2,
+            ipv4Addresses: <String>['100.90.1.10'],
+          ),
+        ],
+      );
+      await harness.discoveryNetworkScopeStore.refresh();
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.1.77',
+          deviceName: 'Office laptop',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+        DiscoveredDevice(
+          ip: '100.90.1.77',
+          deviceName: 'Tailscale peer',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
+
+      await _pumpDiscoveryPage(tester, harness: harness);
+
+      expect(find.text('Все'), findsOneWidget);
+      expect(find.text('Office LAN'), findsOneWidget);
+      expect(find.text('Tailscale'), findsOneWidget);
+      expect(find.text('Office laptop'), findsOneWidget);
+      expect(find.text('Tailscale peer'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Tailscale'));
+      await _pumpForUi(tester);
+
+      expect(find.text('Office laptop'), findsNothing);
+      expect(find.text('Tailscale peer'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Все'));
+      await _pumpForUi(tester);
+
+      expect(find.text('Office laptop'), findsOneWidget);
+      expect(find.text('Tailscale peer'), findsOneWidget);
     },
   );
 
