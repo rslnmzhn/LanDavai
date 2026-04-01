@@ -7,6 +7,7 @@ import '../../../app/theme/app_spacing.dart';
 import '../application/clipboard_history_store.dart';
 import '../application/remote_clipboard_projection_store.dart';
 import '../domain/clipboard_entry.dart';
+import 'clipboard_preview_dialog.dart';
 import 'clipboard_sheet_list.dart';
 import 'clipboard_sheet_preview.dart';
 import '../../discovery/application/discovery_controller.dart';
@@ -68,6 +69,76 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(errorMessage ?? 'Copied to clipboard')),
+    );
+  }
+
+  Future<void> _previewLocalEntry(ClipboardHistoryEntry entry) async {
+    if (entry.type == ClipboardEntryType.text) {
+      final text = entry.textValue;
+      if (text == null || text.isEmpty) {
+        return;
+      }
+      await showClipboardTextPreviewDialog(
+        context: context,
+        title: 'Clipboard text',
+        text: text,
+      );
+      return;
+    }
+
+    final imageProvider = buildClipboardFullImageProviderFromPath(
+      entry.imagePath,
+    );
+    if (imageProvider == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard image is unavailable.')),
+      );
+      return;
+    }
+
+    await showClipboardImagePreviewDialog(
+      context: context,
+      title: 'Clipboard image',
+      imageProvider: imageProvider,
+    );
+  }
+
+  Future<void> _previewRemoteEntry(RemoteClipboardEntry entry) async {
+    if (entry.type == ClipboardEntryType.text) {
+      final text = entry.textValue;
+      if (text == null || text.isEmpty) {
+        return;
+      }
+      await showClipboardTextPreviewDialog(
+        context: context,
+        title: 'Remote clipboard text',
+        text: text,
+        note:
+            'Shown as received from the remote clipboard catalog. It may be shortened.',
+      );
+      return;
+    }
+
+    final bytes = entry.imageBytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Remote image preview is unavailable.')),
+      );
+      return;
+    }
+
+    await showClipboardImagePreviewDialog(
+      context: context,
+      title: 'Remote clipboard image preview',
+      imageProvider: MemoryImage(bytes),
+      note:
+          'Preview quality only. Original remote clipboard image is not available.',
     );
   }
 
@@ -170,6 +241,8 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                               ),
                             );
                           },
+                    onPreviewLocalEntry: _previewLocalEntry,
+                    onPreviewRemoteEntry: _previewRemoteEntry,
                     onCopyLocalEntry: _copyLocalEntry,
                     onCopyRemoteText: _copyRemoteText,
                     onDeleteLocalEntry: _confirmAndDeleteLocalEntry,

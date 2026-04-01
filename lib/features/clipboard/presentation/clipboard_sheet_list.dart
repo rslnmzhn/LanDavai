@@ -5,6 +5,83 @@ import '../../discovery/domain/discovered_device.dart';
 import '../domain/clipboard_entry.dart';
 import 'clipboard_sheet_preview.dart';
 
+class ClipboardHistoryPreviewRow extends StatelessWidget {
+  const ClipboardHistoryPreviewRow({
+    required this.leading,
+    required this.metadata,
+    required this.preview,
+    required this.actions,
+    this.onTap,
+    super.key,
+  });
+
+  final Widget leading;
+  final String metadata;
+  final Widget preview;
+  final List<Widget> actions;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final previewContent = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(width: 56, height: 56, child: Center(child: leading)),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(metadata, style: Theme.of(context).textTheme.bodyMedium),
+                const SizedBox(height: 2),
+                preview,
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+
+    final content = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: onTap == null
+              ? previewContent
+              : Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: onTap,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.xs,
+                        vertical: AppSpacing.xs,
+                      ),
+                      child: previewContent,
+                    ),
+                  ),
+                ),
+        ),
+        if (actions.isNotEmpty) ...[
+          const SizedBox(width: AppSpacing.xs),
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.xs),
+            child: Row(mainAxisSize: MainAxisSize.min, children: actions),
+          ),
+        ],
+      ],
+    );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+      child: content,
+    );
+  }
+}
+
 class ClipboardSheetList extends StatelessWidget {
   const ClipboardSheetList({
     required this.localEntries,
@@ -14,6 +91,8 @@ class ClipboardSheetList extends StatelessWidget {
     required this.isRemoteLoading,
     required this.onRemoteDeviceChanged,
     required this.onLoadRemoteEntries,
+    required this.onPreviewLocalEntry,
+    required this.onPreviewRemoteEntry,
     required this.onCopyLocalEntry,
     required this.onCopyRemoteText,
     required this.onDeleteLocalEntry,
@@ -27,6 +106,8 @@ class ClipboardSheetList extends StatelessWidget {
   final bool isRemoteLoading;
   final ValueChanged<String?> onRemoteDeviceChanged;
   final VoidCallback? onLoadRemoteEntries;
+  final Future<void> Function(ClipboardHistoryEntry entry) onPreviewLocalEntry;
+  final Future<void> Function(RemoteClipboardEntry entry) onPreviewRemoteEntry;
   final Future<void> Function(ClipboardHistoryEntry entry) onCopyLocalEntry;
   final Future<void> Function(String value) onCopyRemoteText;
   final Future<void> Function(ClipboardHistoryEntry entry) onDeleteLocalEntry;
@@ -61,6 +142,7 @@ class ClipboardSheetList extends StatelessWidget {
           return _LocalEntryTile(
             key: ValueKey<String>('clipboard-local-entry-${entry.source.id}'),
             entry: entry,
+            onPreviewEntry: onPreviewLocalEntry,
             onCopyEntry: onCopyLocalEntry,
             onDeleteEntry: onDeleteLocalEntry,
           );
@@ -152,6 +234,7 @@ class ClipboardSheetList extends StatelessWidget {
     return _RemoteEntryTile(
       key: ValueKey<String>('clipboard-remote-entry-${entry.source.id}'),
       entry: entry,
+      onPreviewEntry: onPreviewRemoteEntry,
       onCopyText: onCopyRemoteText,
     );
   }
@@ -190,12 +273,14 @@ class _SectionMessage extends StatelessWidget {
 class _LocalEntryTile extends StatelessWidget {
   const _LocalEntryTile({
     required this.entry,
+    required this.onPreviewEntry,
     required this.onCopyEntry,
     required this.onDeleteEntry,
     super.key,
   });
 
   final LocalClipboardListEntryPreview entry;
+  final Future<void> Function(ClipboardHistoryEntry entry) onPreviewEntry;
   final Future<void> Function(ClipboardHistoryEntry entry) onCopyEntry;
   final Future<void> Function(ClipboardHistoryEntry entry) onDeleteEntry;
 
@@ -204,45 +289,20 @@ class _LocalEntryTile extends StatelessWidget {
     final source = entry.source;
     if (source.type == ClipboardEntryType.text) {
       final text = source.textValue ?? '';
-      return ListTile(
-        dense: true,
+      return ClipboardHistoryPreviewRow(
         leading: const Icon(Icons.text_fields_rounded),
-        title: Text(
+        metadata: entry.createdLabel,
+        preview: Text(
           entry.previewText ?? '',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(entry.createdLabel),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Copy text',
-              icon: const Icon(Icons.copy_rounded),
-              onPressed: text.isEmpty ? null : () => onCopyEntry(source),
-            ),
-            IconButton(
-              tooltip: 'Delete',
-              icon: const Icon(Icons.delete_outline_rounded),
-              onPressed: () => onDeleteEntry(source),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return ListTile(
-      dense: true,
-      leading: _ClipboardThumbnail(provider: entry.imageProvider),
-      title: const Text('Image from clipboard'),
-      subtitle: Text(entry.createdLabel),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+        onTap: () => onPreviewEntry(source),
+        actions: <Widget>[
           IconButton(
-            tooltip: 'Copy image',
+            tooltip: 'Copy text',
             icon: const Icon(Icons.copy_rounded),
-            onPressed: () => onCopyEntry(source),
+            onPressed: text.isEmpty ? null : () => onCopyEntry(source),
           ),
           IconButton(
             tooltip: 'Delete',
@@ -250,7 +310,29 @@ class _LocalEntryTile extends StatelessWidget {
             onPressed: () => onDeleteEntry(source),
           ),
         ],
+      );
+    }
+
+    return ClipboardHistoryPreviewRow(
+      leading: _ClipboardThumbnail(provider: entry.imageProvider),
+      metadata: entry.createdLabel,
+      preview: Text(
+        'Tap to preview image',
+        style: Theme.of(context).textTheme.bodySmall,
       ),
+      onTap: () => onPreviewEntry(source),
+      actions: <Widget>[
+        IconButton(
+          tooltip: 'Copy image',
+          icon: const Icon(Icons.copy_rounded),
+          onPressed: () => onCopyEntry(source),
+        ),
+        IconButton(
+          tooltip: 'Delete',
+          icon: const Icon(Icons.delete_outline_rounded),
+          onPressed: () => onDeleteEntry(source),
+        ),
+      ],
     );
   }
 }
@@ -258,11 +340,13 @@ class _LocalEntryTile extends StatelessWidget {
 class _RemoteEntryTile extends StatelessWidget {
   const _RemoteEntryTile({
     required this.entry,
+    required this.onPreviewEntry,
     required this.onCopyText,
     super.key,
   });
 
   final RemoteClipboardListEntryPreview entry;
+  final Future<void> Function(RemoteClipboardEntry entry) onPreviewEntry;
   final Future<void> Function(String value) onCopyText;
 
   @override
@@ -270,28 +354,34 @@ class _RemoteEntryTile extends StatelessWidget {
     final source = entry.source;
     if (source.type == ClipboardEntryType.text) {
       final text = source.textValue ?? '';
-      return ListTile(
-        dense: true,
+      return ClipboardHistoryPreviewRow(
         leading: const Icon(Icons.text_fields_rounded),
-        title: Text(
+        metadata: entry.createdLabel,
+        preview: Text(
           entry.previewText ?? '',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
         ),
-        subtitle: Text(entry.createdLabel),
-        trailing: IconButton(
-          tooltip: 'Copy text',
-          icon: const Icon(Icons.copy_rounded),
-          onPressed: text.isEmpty ? null : () => onCopyText(text),
-        ),
+        onTap: () => onPreviewEntry(source),
+        actions: <Widget>[
+          IconButton(
+            tooltip: 'Copy text',
+            icon: const Icon(Icons.copy_rounded),
+            onPressed: text.isEmpty ? null : () => onCopyText(text),
+          ),
+        ],
       );
     }
 
-    return ListTile(
-      dense: true,
+    return ClipboardHistoryPreviewRow(
       leading: _ClipboardThumbnail(provider: entry.imageProvider),
-      title: const Text('Image from remote clipboard'),
-      subtitle: Text(entry.createdLabel),
+      metadata: entry.createdLabel,
+      preview: Text(
+        'Preview only',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      onTap: () => onPreviewEntry(source),
+      actions: const <Widget>[],
     );
   }
 }
