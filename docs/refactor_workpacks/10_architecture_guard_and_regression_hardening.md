@@ -19,17 +19,6 @@ Completed.
 - `GATE-07`
 - `GATE-08`
 
-## Progress (Current Baseline)
-
-- PR1 inventory freeze (documented)
-- PR2 architecture guard suite exists:
-  - `test/architecture_guard_test.dart`
-- PR3A stable entry-flow coverage exists:
-  - settings/clipboard/history-empty/device-actions/video-link side menu in
-    `test/smoke_test.dart`
-- shared-cache recache/remove UI entry proof:
-  - `test/blocked_entry_flow_regression_test.dart`
-
 Previously remaining (now resolved):
 
 - discovery -> files launch: coverage gap + harness gap

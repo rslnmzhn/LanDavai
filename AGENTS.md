@@ -84,6 +84,7 @@ lib/
       application/
       data/
       domain/
+      presentation/
     discovery/
       application/
       data/
@@ -100,6 +101,7 @@ lib/
       application/
       data/
       domain/
+      presentation/
     transfer/
       application/
       data/
@@ -108,6 +110,7 @@ test/
   architecture_guard_test.dart
   smoke_test.dart
   blocked_entry_flow_regression_test.dart
+  *_flow_regression_test.dart
   *_owner_test.dart
   *_boundary_test.dart
   *_store_test.dart

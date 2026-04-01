@@ -77,5 +77,5 @@ follow AGENTS.md guardrails.
 This refactor baseline is considered stable when:
 
 - architecture guard tests fail fast on prohibited residue
-- explicit UI regression proof covers the remaining weak entry flows above
+- explicit UI regression proof covers the baseline weak entry flows
 - `flutter analyze` and `flutter test` stay green
