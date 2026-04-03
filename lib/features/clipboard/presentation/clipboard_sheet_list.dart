@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_spacing.dart';
-import '../../discovery/domain/discovered_device.dart';
 import '../domain/clipboard_entry.dart';
 import 'clipboard_sheet_preview.dart';
 
@@ -84,13 +83,11 @@ class ClipboardHistoryPreviewRow extends StatelessWidget {
 
 class ClipboardSheetList extends StatelessWidget {
   const ClipboardSheetList({
+    required this.isLocalScope,
     required this.localEntries,
-    required this.remoteDevices,
-    required this.selectedRemoteIp,
     required this.remoteEntries,
     required this.isRemoteLoading,
-    required this.onRemoteDeviceChanged,
-    required this.onLoadRemoteEntries,
+    required this.emptyMessage,
     required this.onPreviewLocalEntry,
     required this.onPreviewRemoteEntry,
     required this.onCopyLocalEntry,
@@ -99,46 +96,51 @@ class ClipboardSheetList extends StatelessWidget {
     super.key,
   });
 
+  final bool isLocalScope;
   final List<LocalClipboardListEntryPreview> localEntries;
-  final List<DiscoveredDevice> remoteDevices;
-  final String? selectedRemoteIp;
   final List<RemoteClipboardListEntryPreview> remoteEntries;
   final bool isRemoteLoading;
-  final ValueChanged<String?> onRemoteDeviceChanged;
-  final VoidCallback? onLoadRemoteEntries;
+  final String emptyMessage;
   final Future<void> Function(ClipboardHistoryEntry entry) onPreviewLocalEntry;
   final Future<void> Function(RemoteClipboardEntry entry) onPreviewRemoteEntry;
   final Future<void> Function(ClipboardHistoryEntry entry) onCopyLocalEntry;
   final Future<void> Function(String value) onCopyRemoteText;
   final Future<void> Function(ClipboardHistoryEntry entry) onDeleteLocalEntry;
 
-  bool get _hasRemoteDevices => remoteDevices.isNotEmpty;
-
   @override
   Widget build(BuildContext context) {
-    final localContentCount = localEntries.isEmpty ? 1 : localEntries.length;
-    final remoteSectionCount = _remoteSectionCount();
-    final totalRowCount = 1 + localContentCount + 1 + remoteSectionCount;
+    final visibleEntryCount = isLocalScope
+        ? localEntries.length
+        : remoteEntries.length;
+    final hasEntries = visibleEntryCount > 0;
+    final totalRowCount =
+        (!isLocalScope && isRemoteLoading ? 1 : 0) +
+        (hasEntries ? visibleEntryCount : 1);
 
     return ListView.builder(
       key: const Key('clipboard-sheet-list'),
       padding: EdgeInsets.zero,
       itemCount: totalRowCount,
       itemBuilder: (context, index) {
-        var cursor = 0;
-
-        if (index == cursor) {
-          return const _SectionHeader(title: 'This device');
+        if (!isLocalScope && isRemoteLoading && index == 0) {
+          return const Padding(
+            padding: EdgeInsets.only(bottom: AppSpacing.sm),
+            child: LinearProgressIndicator(minHeight: 2),
+          );
         }
-        cursor += 1;
 
-        if (index < cursor + localContentCount) {
-          if (localEntries.isEmpty) {
-            return const _SectionMessage(
-              message: 'History is empty. Copy text or image to start.',
-            );
-          }
-          final entry = localEntries[index - cursor];
+        final contentIndex = !isLocalScope && isRemoteLoading
+            ? index - 1
+            : index;
+        if (!hasEntries) {
+          return _SectionMessage(
+            message: emptyMessage,
+            topPadding: AppSpacing.sm,
+          );
+        }
+
+        if (isLocalScope) {
+          final entry = localEntries[contentIndex];
           return _LocalEntryTile(
             key: ValueKey<String>('clipboard-local-entry-${entry.source.id}'),
             entry: entry,
@@ -147,110 +149,15 @@ class ClipboardSheetList extends StatelessWidget {
             onDeleteEntry: onDeleteLocalEntry,
           );
         }
-        cursor += localContentCount;
 
-        if (index == cursor) {
-          return const _SectionHeader(
-            title: 'Remote device',
-            topPadding: AppSpacing.md,
-          );
-        }
-        cursor += 1;
-
-        return _buildRemoteSectionRow(context, index - cursor);
-      },
-    );
-  }
-
-  int _remoteSectionCount() {
-    if (!_hasRemoteDevices) {
-      return 1;
-    }
-    final remoteContentCount = remoteEntries.isEmpty ? 1 : remoteEntries.length;
-    return 1 + (isRemoteLoading ? 1 : 0) + remoteContentCount;
-  }
-
-  Widget _buildRemoteSectionRow(BuildContext context, int remoteIndex) {
-    if (!_hasRemoteDevices) {
-      return const _SectionMessage(
-        message: 'Add the device to Friends to view clipboard.',
-      );
-    }
-
-    if (remoteIndex == 0) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-        child: Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                key: ValueKey<String?>(selectedRemoteIp),
-                initialValue: selectedRemoteIp,
-                items: remoteDevices
-                    .map(
-                      (device) => DropdownMenuItem<String>(
-                        value: device.ip,
-                        child: Text(device.displayName),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: onRemoteDeviceChanged,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: OutlineInputBorder(),
-                  labelText: 'Friend device',
-                ),
-              ),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            FilledButton(
-              onPressed: onLoadRemoteEntries,
-              child: const Text('Load'),
-            ),
-          ],
-        ),
-      );
-    }
-
-    var contentIndex = remoteIndex - 1;
-    if (isRemoteLoading) {
-      if (contentIndex == 0) {
-        return const Padding(
-          padding: EdgeInsets.only(bottom: AppSpacing.sm),
-          child: LinearProgressIndicator(minHeight: 2),
+        final entry = remoteEntries[contentIndex];
+        return _RemoteEntryTile(
+          key: ValueKey<String>('clipboard-remote-entry-${entry.source.id}'),
+          entry: entry,
+          onPreviewEntry: onPreviewRemoteEntry,
+          onCopyText: onCopyRemoteText,
         );
-      }
-      contentIndex -= 1;
-    }
-
-    if (remoteEntries.isEmpty) {
-      return const _SectionMessage(
-        message: 'No remote entries loaded.',
-        topPadding: AppSpacing.sm,
-      );
-    }
-
-    final entry = remoteEntries[contentIndex];
-    return _RemoteEntryTile(
-      key: ValueKey<String>('clipboard-remote-entry-${entry.source.id}'),
-      entry: entry,
-      onPreviewEntry: onPreviewRemoteEntry,
-      onCopyText: onCopyRemoteText,
-    );
-  }
-}
-
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader({required this.title, this.topPadding = 0});
-
-  final String title;
-  final double topPadding;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.only(top: topPadding, bottom: AppSpacing.xs),
-      child: Text(title, style: Theme.of(context).textTheme.titleMedium),
+      },
     );
   }
 }

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_colors.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
+import '../../clipboard/application/clipboard_source_scope_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/preview_cache_owner.dart';
@@ -304,21 +305,27 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   }
 
   Future<void> _openClipboardSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.9,
-          child: ClipboardSheet(
-            controller: _controller,
-            readModel: _readModel,
-            clipboardHistoryStore: _clipboardHistoryStore,
-            remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
-          ),
-        );
-      },
-    );
+    final clipboardSourceScopeStore = ClipboardSourceScopeStore();
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) {
+          return FractionallySizedBox(
+            heightFactor: 0.9,
+            child: ClipboardSheet(
+              controller: _controller,
+              readModel: _readModel,
+              clipboardHistoryStore: _clipboardHistoryStore,
+              remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
+              clipboardSourceScopeStore: clipboardSourceScopeStore,
+            ),
+          );
+        },
+      );
+    } finally {
+      clipboardSourceScopeStore.dispose();
+    }
   }
 
   Future<void> _openSettingsSheet() async {

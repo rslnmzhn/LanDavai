@@ -6,7 +6,6 @@ import 'package:landa/features/clipboard/domain/clipboard_entry.dart';
 import 'package:landa/features/clipboard/presentation/clipboard_preview_dialog.dart';
 import 'package:landa/features/clipboard/presentation/clipboard_sheet_list.dart';
 import 'package:landa/features/clipboard/presentation/clipboard_sheet_preview.dart';
-import 'package:landa/features/discovery/domain/discovered_device.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -30,13 +29,11 @@ void main() {
             body: SizedBox(
               height: 640,
               child: ClipboardSheetList(
+                isLocalScope: true,
                 localEntries: buildLocalClipboardListPreviews(localEntries),
-                remoteDevices: const [],
-                selectedRemoteIp: null,
                 remoteEntries: const <RemoteClipboardListEntryPreview>[],
                 isRemoteLoading: false,
-                onRemoteDeviceChanged: (_) {},
-                onLoadRemoteEntries: null,
+                emptyMessage: 'unused',
                 onPreviewLocalEntry: (_) async {},
                 onPreviewRemoteEntry: (_) async {},
                 onCopyLocalEntry: (_) async {},
@@ -93,13 +90,11 @@ void main() {
             body: SizedBox(
               height: 320,
               child: ClipboardSheetList(
+                isLocalScope: true,
                 localEntries: buildLocalClipboardListPreviews(localEntries),
-                remoteDevices: const [],
-                selectedRemoteIp: null,
                 remoteEntries: const <RemoteClipboardListEntryPreview>[],
                 isRemoteLoading: false,
-                onRemoteDeviceChanged: (_) {},
-                onLoadRemoteEntries: null,
+                emptyMessage: 'unused',
                 onPreviewLocalEntry: (_) async {},
                 onPreviewRemoteEntry: (_) async {},
                 onCopyLocalEntry: (entry) async {
@@ -144,13 +139,11 @@ void main() {
           body: SizedBox(
             height: 320,
             child: ClipboardSheetList(
+              isLocalScope: true,
               localEntries: buildLocalClipboardListPreviews(localEntries),
-              remoteDevices: const [],
-              selectedRemoteIp: null,
               remoteEntries: const <RemoteClipboardListEntryPreview>[],
               isRemoteLoading: false,
-              onRemoteDeviceChanged: (_) {},
-              onLoadRemoteEntries: null,
+              emptyMessage: 'unused',
               onPreviewLocalEntry: (_) async {},
               onPreviewRemoteEntry: (_) async {},
               onCopyLocalEntry: (_) async {},
@@ -192,13 +185,11 @@ void main() {
               body: SizedBox(
                 height: 320,
                 child: ClipboardSheetList(
+                  isLocalScope: true,
                   localEntries: buildLocalClipboardListPreviews(localEntries),
-                  remoteDevices: const [],
-                  selectedRemoteIp: null,
                   remoteEntries: const <RemoteClipboardListEntryPreview>[],
                   isRemoteLoading: false,
-                  onRemoteDeviceChanged: (_) {},
-                  onLoadRemoteEntries: null,
+                  emptyMessage: 'unused',
                   onPreviewLocalEntry: (entry) {
                     return showClipboardTextPreviewDialog(
                       context: context,
@@ -253,13 +244,11 @@ void main() {
               body: SizedBox(
                 height: 320,
                 child: ClipboardSheetList(
+                  isLocalScope: true,
                   localEntries: buildLocalClipboardListPreviews(localEntries),
-                  remoteDevices: const [],
-                  selectedRemoteIp: null,
                   remoteEntries: const <RemoteClipboardListEntryPreview>[],
                   isRemoteLoading: false,
-                  onRemoteDeviceChanged: (_) {},
-                  onLoadRemoteEntries: null,
+                  emptyMessage: 'unused',
                   onPreviewLocalEntry: (_) {
                     return showClipboardImagePreviewDialog(
                       context: context,
@@ -291,12 +280,6 @@ void main() {
   testWidgets('tapping remote image content opens honest preview-only dialog', (
     tester,
   ) async {
-    final remoteDevice = DiscoveredDevice(
-      ip: '10.0.0.20',
-      deviceName: 'Remote friend',
-      isAppDetected: true,
-      lastSeen: DateTime(2026, 4, 1, 14, 15),
-    );
     final remoteEntries = <RemoteClipboardEntry>[
       RemoteClipboardEntry(
         id: 'remote-image-preview-entry',
@@ -314,15 +297,13 @@ void main() {
               body: SizedBox(
                 height: 320,
                 child: ClipboardSheetList(
+                  isLocalScope: false,
                   localEntries: const <LocalClipboardListEntryPreview>[],
-                  remoteDevices: <DiscoveredDevice>[remoteDevice],
-                  selectedRemoteIp: remoteDevice.ip,
                   remoteEntries: buildRemoteClipboardListPreviews(
                     remoteEntries,
                   ),
                   isRemoteLoading: false,
-                  onRemoteDeviceChanged: (_) {},
-                  onLoadRemoteEntries: null,
+                  emptyMessage: 'unused',
                   onPreviewLocalEntry: (_) async {},
                   onPreviewRemoteEntry: (_) {
                     return showClipboardImagePreviewDialog(

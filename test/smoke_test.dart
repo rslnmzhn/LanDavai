@@ -73,6 +73,8 @@ void main() {
     'DiscoveryPage network scope selector filters visible devices on the main surface',
     (tester) async {
       _registerWidgetCleanup(tester);
+      await tester.binding.setSurfaceSize(const Size(320, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
       harness.discoveryNetworkInterfaceCatalog.replaceInterfaces(
         const <DiscoveryRawNetworkInterface>[
           DiscoveryRawNetworkInterface(
@@ -84,6 +86,21 @@ void main() {
             name: 'Tailscale',
             index: 2,
             ipv4Addresses: <String>['100.90.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'ZeroTier',
+            index: 3,
+            ipv4Addresses: <String>['172.30.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Hamachi',
+            index: 4,
+            ipv4Addresses: <String>['25.10.10.5'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Warehouse VLAN',
+            index: 5,
+            ipv4Addresses: <String>['10.55.0.10'],
           ),
         ],
       );
@@ -103,27 +120,77 @@ void main() {
           isReachable: true,
           lastSeen: DateTime(2026, 1, 1, 10),
         ),
+        DiscoveredDevice(
+          ip: '172.30.1.77',
+          deviceName: 'ZeroTier peer',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
       ]);
 
       await _pumpDiscoveryPage(tester, harness: harness);
 
+      expect(
+        find.byKey(const Key('discovery-network-scope-chip-row')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(DiscoveryPage),
+          matching: find.byType(Wrap),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('discovery-network-scope-chip-row')),
+          matching: find.byType(Scrollbar),
+        ),
+        findsNothing,
+      );
       expect(find.text('Все'), findsOneWidget);
       expect(find.text('Office LAN'), findsOneWidget);
       expect(find.text('Tailscale'), findsOneWidget);
+      expect(find.text('ZeroTier'), findsOneWidget);
       expect(find.text('Office laptop'), findsOneWidget);
-      expect(find.text('Tailscale peer'), findsOneWidget);
 
+      final lastChipBefore = tester.getRect(
+        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
+      );
+      await tester.drag(
+        find.byKey(const Key('discovery-network-scope-chip-row')),
+        const Offset(-220, 0),
+      );
+      await _pumpForUi(tester, frames: 4);
+      final lastChipAfter = tester.getRect(
+        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
+      );
+      expect(lastChipAfter.left, lessThan(lastChipBefore.left));
+
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Tailscale'));
+      await _pumpForUi(tester, frames: 4);
       await tester.tap(find.widgetWithText(ChoiceChip, 'Tailscale'));
       await _pumpForUi(tester);
 
       expect(find.text('Office laptop'), findsNothing);
       expect(find.text('Tailscale peer'), findsOneWidget);
+      expect(find.text('ZeroTier peer'), findsNothing);
 
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Все'));
+      await _pumpForUi(tester, frames: 4);
       await tester.tap(find.widgetWithText(ChoiceChip, 'Все'));
       await _pumpForUi(tester);
 
       expect(find.text('Office laptop'), findsOneWidget);
-      expect(find.text('Tailscale peer'), findsOneWidget);
+      await tester.dragUntilVisible(
+        find.text('ZeroTier peer'),
+        find.byType(ListView),
+        const Offset(0, -240),
+      );
+      await _pumpForUi(tester, frames: 4);
+
+      expect(find.text('ZeroTier peer'), findsOneWidget);
     },
   );
 
@@ -225,6 +292,24 @@ void main() {
       await _pumpForUi(tester);
 
       expect(find.text('Clipboard'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Current device'), findsOneWidget);
+      expect(
+        find.widgetWithText(ChoiceChip, 'Remote clipboard'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('History is empty. Copy text or image to start.'),
+        findsOneWidget,
+      );
+      expect(find.text('Remote hello'), findsNothing);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Remote clipboard'));
+      await _pumpForUi(tester);
+
+      expect(
+        find.text('History is empty. Copy text or image to start.'),
+        findsNothing,
+      );
       expect(find.text('Remote hello'), findsOneWidget);
     },
   );

@@ -87,6 +87,15 @@ class DiscoveryReadModel extends ChangeNotifier {
   int get appDetectedCount =>
       devices.where((device) => device.isAppDetected).length;
 
+  List<DiscoveredDevice> get remoteClipboardDevices {
+    final values = devices.where((device) => device.isAppDetected).toList();
+    values.sort(
+      (a, b) =>
+          a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+    );
+    return List<DiscoveredDevice>.unmodifiable(values);
+  }
+
   List<DiscoveredDevice> get friendDevices {
     final values = devices.where((device) => device.isTrusted).toList();
     values.sort(

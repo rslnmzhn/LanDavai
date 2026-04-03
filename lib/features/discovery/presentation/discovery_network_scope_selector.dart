@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../../core/widgets/horizontal_chip_row.dart';
 import '../application/discovery_network_scope_store.dart';
 import '../application/discovery_read_model.dart';
 import '../application/discovery_network_scope.dart';
@@ -28,9 +29,9 @@ class DiscoveryNetworkScopeSelector extends StatelessWidget {
       children: [
         Text('Network scope', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: AppSpacing.xs),
-        Wrap(
+        HorizontalChipRow(
+          scrollKey: const Key('discovery-network-scope-chip-row'),
           spacing: AppSpacing.xs,
-          runSpacing: AppSpacing.xs,
           children: [
             _ScopeChip(
               label: 'Все',
