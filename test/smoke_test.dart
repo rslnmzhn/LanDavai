@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:landa/app/discovery_page_entry.dart';
+import 'package:landa/app/theme/app_spacing.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
@@ -195,6 +196,48 @@ void main() {
   );
 
   testWidgets(
+    'DiscoveryPage wide layout keeps sidebar flush right and action bar inside content pane',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await tester.binding.setSurfaceSize(const Size(3200, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await _pumpDiscoveryPage(
+        tester,
+        harness: harness,
+        platform: TargetPlatform.windows,
+      );
+
+      expect(
+        find.byKey(const Key('discovery-wide-layout-header')),
+        findsOneWidget,
+      );
+
+      final scaffoldRect = tester.getRect(find.byType(Scaffold));
+      final headerRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-header')),
+      );
+      final sidePanelRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-side-panel')),
+      );
+      final actionBarRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-action-bar')),
+      );
+      final sendButtonRect = tester.getRect(
+        find.widgetWithText(FilledButton, 'Отправить'),
+      );
+
+      expect(headerRect.top, lessThan(AppSpacing.xl));
+      expect(sidePanelRect.top, closeTo(scaffoldRect.top, 0.01));
+      expect(sidePanelRect.right, closeTo(scaffoldRect.right, 0.01));
+      expect(actionBarRect.right, lessThanOrEqualTo(sidePanelRect.left));
+      expect(sendButtonRect.right, lessThanOrEqualTo(sidePanelRect.left));
+    },
+  );
+
+  testWidgets(
     'DiscoveryPage receive flow starts remote browse through RemoteShareBrowser',
     (tester) async {
       _registerWidgetCleanup(tester);
@@ -378,6 +421,7 @@ Future<void> _pumpDiscoveryPage(
   WidgetTester tester, {
   required TestDiscoveryControllerHarness harness,
   bool isBoundaryReady = false,
+  TargetPlatform? platform,
 }) async {
   final desktopWindowService = TrackingDesktopWindowService();
   final transferStorageService = StubTransferStorageService(
@@ -386,6 +430,7 @@ Future<void> _pumpDiscoveryPage(
 
   await tester.pumpWidget(
     MaterialApp(
+      theme: platform == null ? null : ThemeData(platform: platform),
       home: DiscoveryPage(
         controller: harness.controller,
         readModel: harness.readModel,

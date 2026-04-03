@@ -20,6 +20,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.onSelectDeviceByIp,
     required this.onSelectNetworkScope,
     required this.onOpenDeviceActionsMenu,
+    this.padding = const EdgeInsets.all(AppSpacing.md),
     super.key,
   });
 
@@ -33,11 +34,12 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final void Function(String scopeId) onSelectNetworkScope;
   final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
   onOpenDeviceActionsMenu;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: padding,
       child: Column(
         children: [
           _NetworkSummaryCard(readModel: readModel, total: devices.length),
