@@ -44,6 +44,7 @@ import '../data/lan_protocol_events.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';
+import 'discovery_network_scope_store.dart';
 
 enum DiscoveryFlowState { idle, discovering }
 
@@ -123,6 +124,7 @@ class DiscoveryController extends ChangeNotifier {
     required InternetPeerEndpointStore internetPeerEndpointStore,
     required TrustedLanPeerStore trustedLanPeerStore,
     required LocalPeerIdentityStore localPeerIdentityStore,
+    required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
     required SettingsStore settingsStore,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
@@ -148,6 +150,7 @@ class DiscoveryController extends ChangeNotifier {
        _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
        _localPeerIdentityStore = localPeerIdentityStore,
+       _discoveryNetworkScopeStore = discoveryNetworkScopeStore,
        _settingsStore = settingsStore,
        _appNotificationService = appNotificationService,
        _remoteShareBrowser = remoteShareBrowser,
@@ -193,6 +196,7 @@ class DiscoveryController extends ChangeNotifier {
               ({required String ownerIp, required String cacheId}) =>
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
         );
+    _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
     _transferSessionCoordinator.addListener(
       _handleTransferSessionCoordinatorChanged,
     );
@@ -213,6 +217,7 @@ class DiscoveryController extends ChangeNotifier {
   final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
   final LocalPeerIdentityStore _localPeerIdentityStore;
+  final DiscoveryNetworkScopeStore _discoveryNetworkScopeStore;
   final SettingsStore _settingsStore;
   final AppNotificationService _appNotificationService;
   final RemoteShareBrowser _remoteShareBrowser;
@@ -237,6 +242,7 @@ class DiscoveryController extends ChangeNotifier {
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
   bool _started = false;
+  bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
   bool _isRefreshInProgress = false;
   bool _isManualRefreshInProgress = false;
@@ -251,9 +257,11 @@ class DiscoveryController extends ChangeNotifier {
   String _localPeerId = '';
   bool _ownerCacheMacRebindChecked = false;
   bool _isFriendMutationInProgress = false;
+  bool _pendingScopeReconfigureAfterRefresh = false;
   String? _selectedDeviceIp;
   String? _errorMessage;
   String? _infoMessage;
+  Set<String> _activeDiscoveryLocalIps = <String>{};
 
   DiscoveryFlowState get state => _state;
   bool get isManualRefreshInProgress => _isManualRefreshInProgress;
@@ -276,6 +284,8 @@ class DiscoveryController extends ChangeNotifier {
   String? get infoMessage => _infoMessage;
   List<IncomingFriendRequest> get incomingFriendRequests =>
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
+  String get selectedNetworkScopeId =>
+      _discoveryNetworkScopeStore.selectedScopeId;
 
   AppSettings get _currentSettings => _settingsStore.settings;
 
@@ -346,8 +356,9 @@ class DiscoveryController extends ChangeNotifier {
 
     _started = true;
 
-    await _resolveLocalAddress();
     _localPeerId = await _localPeerIdentityStore.loadOrCreateLocalPeerId();
+    await _discoveryNetworkScopeStore.refresh();
+    _consumeNetworkScopeState();
     _resolveLocalDeviceMac();
     try {
       await _deviceRegistry.load();
@@ -392,26 +403,8 @@ class DiscoveryController extends ChangeNotifier {
     try {
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
       _syncInternetPeers();
-      final discoveryPreferredSourceIp = Platform.isAndroid ? null : _localIp;
-      await _lanDiscoveryService.start(
-        deviceName: _localName,
-        localPeerId: _localPeerId,
-        onAppDetected: _onAppDetected,
-        onTransferRequest: _onTransferRequest,
-        onTransferDecision: _onTransferDecision,
-        onFriendRequest: _onFriendRequest,
-        onFriendResponse: _onFriendResponse,
-        onShareQuery: _onShareQuery,
-        onShareCatalog: _onShareCatalog,
-        onDownloadRequest: _onDownloadRequest,
-        onThumbnailSyncRequest: _onThumbnailSyncRequest,
-        onThumbnailPacket: _onThumbnailPacket,
-        onClipboardQuery: _onClipboardQuery,
-        onClipboardCatalog: _onClipboardCatalog,
-        preferredSourceIp: discoveryPreferredSourceIp,
-      );
-
-      await _refresh(isManual: false);
+      await _ensureDiscoveryScopeApplied();
+      await _refresh(isManual: false, refreshNetworkScope: false);
       _restartAutoRefreshTimer();
       _startClipboardPolling();
     } catch (error) {
@@ -422,6 +415,21 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> refresh() => _refresh(isManual: true);
+
+  Future<void> selectNetworkScope(String scopeId) async {
+    final changed = _discoveryNetworkScopeStore.selectScope(scopeId);
+    if (!changed) {
+      return;
+    }
+    if (!_started) {
+      return;
+    }
+    if (_isRefreshInProgress) {
+      _pendingScopeReconfigureAfterRefresh = true;
+      return;
+    }
+    await _refresh(isManual: false, refreshNetworkScope: false);
+  }
 
   void clearInfoMessage() {
     _infoMessage = null;
@@ -524,6 +532,15 @@ class DiscoveryController extends ChangeNotifier {
     }
     await _persistSettingsViaStore(
       _currentSettings.copyWith(downloadAttemptNotificationsEnabled: enabled),
+    );
+  }
+
+  Future<void> setUseStandardAppDownloadFolder(bool enabled) async {
+    if (_currentSettings.useStandardAppDownloadFolder == enabled) {
+      return;
+    }
+    await _persistSettingsViaStore(
+      _currentSettings.copyWith(useStandardAppDownloadFolder: enabled),
     );
   }
 
@@ -1109,7 +1126,10 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<void> _refresh({required bool isManual}) async {
+  Future<void> _refresh({
+    required bool isManual,
+    bool refreshNetworkScope = true,
+  }) async {
     if (_isRefreshInProgress) {
       _log('Refresh skipped. Another refresh is already running.');
       return;
@@ -1123,10 +1143,13 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     try {
+      if (refreshNetworkScope) {
+        await _discoveryNetworkScopeStore.refresh();
+      }
+      await _ensureDiscoveryScopeApplied();
       _log('${isManual ? "Manual" : "Auto"} refresh scan started');
-      final scanPreferredSourceIp = Platform.isAndroid ? null : _localIp;
       final hosts = await _networkHostScanner.scanActiveHosts(
-        preferredSourceIp: scanPreferredSourceIp,
+        localSourceIps: _discoveryNetworkScopeStore.activeLocalIps,
       );
       final now = DateTime.now();
       _log(
@@ -1177,7 +1200,10 @@ class DiscoveryController extends ChangeNotifier {
         _devicesByIp.remove(staleIp);
       }
       if (_selectedDeviceIp != null &&
-          !_devicesByIp.containsKey(_selectedDeviceIp)) {
+          (!_devicesByIp.containsKey(_selectedDeviceIp) ||
+              !_discoveryNetworkScopeStore.matchesSelectedScope(
+                _selectedDeviceIp!,
+              ))) {
         _selectedDeviceIp = null;
       }
       _log(
@@ -1196,6 +1222,10 @@ class DiscoveryController extends ChangeNotifier {
         _state = DiscoveryFlowState.idle;
       }
       notifyListeners();
+      if (_pendingScopeReconfigureAfterRefresh) {
+        _pendingScopeReconfigureAfterRefresh = false;
+        unawaited(_refresh(isManual: false, refreshNetworkScope: false));
+      }
     }
   }
 
@@ -1764,43 +1794,66 @@ class DiscoveryController extends ChangeNotifier {
     _transferSessionCoordinator.handleDownloadRequestEvent(event);
   }
 
-  Future<void> _resolveLocalAddress() async {
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-      includeLinkLocal: false,
-    );
-
-    InternetAddress? bestAddress;
-    String? bestInterfaceName;
-    var bestScore = -100000;
-
-    for (final interface in interfaces) {
-      for (final address in interface.addresses) {
-        final score = _scoreAddress(interface.name, address.address);
-        _log(
-          'Interface candidate: ${interface.name} -> ${address.address} '
-          '(score=$score)',
-        );
-        if (score > bestScore) {
-          bestScore = score;
-          bestAddress = address;
-          bestInterfaceName = interface.name;
-        }
-      }
-    }
-
-    if (bestAddress != null) {
-      _localIp = bestAddress.address;
-      _log(
-        'Selected local interface: $bestInterfaceName '
-        '(${bestAddress.address})',
-      );
+  void _handleNetworkScopeChanged() {
+    if (_consumeNetworkScopeState()) {
       notifyListeners();
+    }
+  }
+
+  bool _consumeNetworkScopeState() {
+    var changed = false;
+    final nextLocalIp = _discoveryNetworkScopeStore.preferredLocalIp;
+    if (_localIp != nextLocalIp) {
+      _localIp = nextLocalIp;
+      changed = true;
+    }
+    if (_selectedDeviceIp != null &&
+        !_discoveryNetworkScopeStore.matchesSelectedScope(_selectedDeviceIp!)) {
+      _selectedDeviceIp = null;
+      changed = true;
+    }
+    return changed;
+  }
+
+  Future<void> _ensureDiscoveryScopeApplied() async {
+    final desiredLocalIps = _discoveryNetworkScopeStore.activeLocalIps;
+    _consumeNetworkScopeState();
+    if (!_started) {
       return;
     }
+    if (_isDiscoveryServiceRunning &&
+        setEquals(_activeDiscoveryLocalIps, desiredLocalIps)) {
+      return;
+    }
+    if (_isDiscoveryServiceRunning) {
+      await _lanDiscoveryService.stop();
+      _isDiscoveryServiceRunning = false;
+    }
 
-    _log('No suitable IPv4 local interface found');
+    await _lanDiscoveryService.start(
+      deviceName: _localName,
+      localPeerId: _localPeerId,
+      localSourceIps: desiredLocalIps,
+      onAppDetected: _onAppDetected,
+      onTransferRequest: _onTransferRequest,
+      onTransferDecision: _onTransferDecision,
+      onFriendRequest: _onFriendRequest,
+      onFriendResponse: _onFriendResponse,
+      onShareQuery: _onShareQuery,
+      onShareCatalog: _onShareCatalog,
+      onDownloadRequest: _onDownloadRequest,
+      onThumbnailSyncRequest: _onThumbnailSyncRequest,
+      onThumbnailPacket: _onThumbnailPacket,
+      onClipboardQuery: _onClipboardQuery,
+      onClipboardCatalog: _onClipboardCatalog,
+    );
+    _activeDiscoveryLocalIps = Set<String>.from(desiredLocalIps);
+    _isDiscoveryServiceRunning = true;
+    _log(
+      'Applied discovery network scope. '
+      'scope=${_discoveryNetworkScopeStore.selectedScopeId} '
+      'localIps=$_activeDiscoveryLocalIps',
+    );
   }
 
   void _resolveLocalDeviceMac() {
@@ -1922,6 +1975,7 @@ class DiscoveryController extends ChangeNotifier {
   void dispose() {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
+    _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
     _downloadHistoryBoundary.dispose();
     _clipboardHistoryStore.dispose();
     _remoteClipboardProjectionStore.dispose();
@@ -1929,6 +1983,8 @@ class DiscoveryController extends ChangeNotifier {
       _handleTransferSessionCoordinatorChanged,
     );
     _transferSessionCoordinator.dispose();
+    _isDiscoveryServiceRunning = false;
+    _activeDiscoveryLocalIps = <String>{};
     _lanDiscoveryService.stop();
     super.dispose();
   }
@@ -2017,91 +2073,6 @@ class DiscoveryController extends ChangeNotifier {
       (_, pending) =>
           now.difference(pending.createdAt) > _pendingFriendRequestTtl,
     );
-  }
-
-  int _scoreAddress(String interfaceName, String ip) {
-    final lower = interfaceName.toLowerCase();
-    var score = 0;
-
-    if (_isLikelyVirtualInterface(lower)) {
-      score -= 400;
-    } else {
-      score += 100;
-    }
-
-    if (_isInSubnet(ip, 192, 168)) {
-      score += 220;
-    } else if (_isInSubnet(ip, 10, null)) {
-      score += 170;
-    } else if (_isInRange172Private(ip)) {
-      score += 120;
-    } else if (_isInSubnet(ip, 100, null)) {
-      score += 60;
-    } else {
-      score += 20;
-    }
-
-    if (lower.contains('wi-fi') ||
-        lower.contains('wifi') ||
-        lower.contains('wlan') ||
-        lower.contains('ethernet') ||
-        lower.contains('eth')) {
-      score += 50;
-    }
-
-    return score;
-  }
-
-  bool _isLikelyVirtualInterface(String lowerName) {
-    const hints = <String>[
-      'loopback',
-      'docker',
-      'vmware',
-      'virtual',
-      'vethernet',
-      'hyper-v',
-      'vbox',
-      'wsl',
-      'tailscale',
-      'zerotier',
-      'hamachi',
-      'tun',
-      'tap',
-      'bridge',
-    ];
-    return hints.any(lowerName.contains);
-  }
-
-  bool _isInSubnet(String ip, int first, int? second) {
-    final parts = ip.split('.');
-    if (parts.length != 4) {
-      return false;
-    }
-    final firstOctet = int.tryParse(parts[0]);
-    final secondOctet = int.tryParse(parts[1]);
-    if (firstOctet == null || secondOctet == null) {
-      return false;
-    }
-    if (firstOctet != first) {
-      return false;
-    }
-    if (second != null && secondOctet != second) {
-      return false;
-    }
-    return true;
-  }
-
-  bool _isInRange172Private(String ip) {
-    final parts = ip.split('.');
-    if (parts.length != 4) {
-      return false;
-    }
-    final first = int.tryParse(parts[0]);
-    final second = int.tryParse(parts[1]);
-    if (first == null || second == null) {
-      return false;
-    }
-    return first == 172 && second >= 16 && second <= 31;
   }
 
   DiscoveredDevice _projectDeviceFromOwners(DiscoveredDevice device) {

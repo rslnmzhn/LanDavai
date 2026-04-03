@@ -7,6 +7,7 @@ import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../application/discovery_read_model.dart';
 import '../domain/discovered_device.dart';
+import 'discovery_network_scope_selector.dart';
 
 class DiscoveryDeviceListSection extends StatelessWidget {
   const DiscoveryDeviceListSection({
@@ -17,7 +18,9 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.transferSessionCoordinator,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
+    required this.onSelectNetworkScope,
     required this.onOpenDeviceActionsMenu,
+    this.padding = const EdgeInsets.all(AppSpacing.md),
     super.key,
   });
 
@@ -28,16 +31,23 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final TransferSessionCoordinator transferSessionCoordinator;
   final Future<void> Function() onRefresh;
   final void Function(String ip) onSelectDeviceByIp;
+  final void Function(String scopeId) onSelectNetworkScope;
   final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
   onOpenDeviceActionsMenu;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: padding,
       child: Column(
         children: [
           _NetworkSummaryCard(readModel: readModel, total: devices.length),
+          const SizedBox(height: AppSpacing.md),
+          DiscoveryNetworkScopeSelector(
+            readModel: readModel,
+            onSelectScope: onSelectNetworkScope,
+          ),
           const SizedBox(height: AppSpacing.md),
           if (errorMessage != null) ...[
             _ErrorBanner(message: errorMessage!),
@@ -60,7 +70,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
           ],
           Expanded(
             child: devices.isEmpty
-                ? _EmptyState(onRefresh: onRefresh)
+                ? _EmptyState(readModel: readModel, onRefresh: onRefresh)
                 : ListView.separated(
                     itemCount: devices.length,
                     separatorBuilder: (_, index) =>
@@ -447,12 +457,17 @@ class _StatusChip extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onRefresh});
+  const _EmptyState({required this.readModel, required this.onRefresh});
 
+  final DiscoveryReadModel readModel;
   final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
+    final selectedRange = readModel.selectedNetworkRange;
+    final description = selectedRange == null
+        ? 'Make sure you are on the same Wi-Fi / LAN and refresh.'
+        : 'No devices are visible in ${selectedRange.subnetCidr}. Try refreshing or switch back to "Все".';
     return Center(
       child: Card(
         child: Padding(
@@ -463,12 +478,14 @@ class _EmptyState extends StatelessWidget {
               const Icon(Icons.wifi_find, size: 48, color: AppColors.mutedIcon),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'No devices found yet',
+                selectedRange == null
+                    ? 'No devices found yet'
+                    : 'No devices found in this network',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Make sure you are on the same Wi-Fi / LAN and refresh.',
+                description,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),

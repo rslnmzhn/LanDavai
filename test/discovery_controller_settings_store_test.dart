@@ -29,6 +29,7 @@ import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_app_database.dart';
+import 'test_support/stub_discovery_network_interface_catalog.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
@@ -52,6 +53,7 @@ void main() {
     const expected = AppSettings(
       backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
       downloadAttemptNotificationsEnabled: false,
+      useStandardAppDownloadFolder: false,
       minimizeToTrayOnClose: false,
       isLeftHandedMode: true,
       videoLinkPassword: 'watch-pass',
@@ -74,6 +76,10 @@ void main() {
     expect(
       controller!.settings.downloadAttemptNotificationsEnabled,
       expected.downloadAttemptNotificationsEnabled,
+    );
+    expect(
+      controller!.settings.useStandardAppDownloadFolder,
+      expected.useStandardAppDownloadFolder,
     );
     expect(
       controller!.settings.minimizeToTrayOnClose,
@@ -137,6 +143,31 @@ void main() {
       expect(localPeerRows.single['setting_value'], localPeerId);
     },
   );
+
+  test(
+    'download folder preference mutation routes through SettingsStore',
+    () async {
+      final trackingSettingsStore = TrackingSettingsStore(
+        appSettingsRepository: AppSettingsRepository(
+          database: harness.database,
+        ),
+      );
+      controller = _buildController(
+        database: harness.database,
+        settingsStore: trackingSettingsStore,
+      );
+
+      await controller!.setUseStandardAppDownloadFolder(false);
+
+      final persistedSettings = await AppSettingsRepository(
+        database: harness.database,
+      ).load();
+
+      expect(trackingSettingsStore.saveCalls, 1);
+      expect(controller!.settings.useStandardAppDownloadFolder, isFalse);
+      expect(persistedSettings.useStandardAppDownloadFolder, isFalse);
+    },
+  );
 }
 
 DiscoveryController _buildController({
@@ -167,6 +198,7 @@ DiscoveryController _buildController({
     sharedCacheIndexStore: sharedCacheIndexStore,
     fileHashService: fileHashService,
   );
+  final discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore();
   final lanDiscoveryService = LanDiscoveryService();
   final remoteShareBrowser = RemoteShareBrowser(
     sharedCacheCatalog: sharedCacheCatalog,
@@ -191,6 +223,7 @@ DiscoveryController _buildController({
       deviceAliasRepository: deviceAliasRepository,
     ),
     localPeerIdentityStore: localPeerIdentityStore,
+    discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -227,7 +260,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
 
   @override
   Future<Map<String, String?>> scanActiveHosts({
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     return result;
   }

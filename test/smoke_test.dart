@@ -5,6 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:landa/app/discovery_page_entry.dart';
+import 'package:landa/app/theme/app_spacing.dart';
+import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
@@ -65,6 +67,173 @@ void main() {
       await _pumpForUi(tester);
 
       expect(harness.controller.disposeCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'DiscoveryPage network scope selector filters visible devices on the main surface',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await tester.binding.setSurfaceSize(const Size(320, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      harness.discoveryNetworkInterfaceCatalog.replaceInterfaces(
+        const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'Office LAN',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.10', '192.168.1.11'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Tailscale',
+            index: 2,
+            ipv4Addresses: <String>['100.90.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'ZeroTier',
+            index: 3,
+            ipv4Addresses: <String>['172.30.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Hamachi',
+            index: 4,
+            ipv4Addresses: <String>['25.10.10.5'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Warehouse VLAN',
+            index: 5,
+            ipv4Addresses: <String>['10.55.0.10'],
+          ),
+        ],
+      );
+      await harness.discoveryNetworkScopeStore.refresh();
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.1.77',
+          deviceName: 'Office laptop',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+        DiscoveredDevice(
+          ip: '100.90.1.77',
+          deviceName: 'Tailscale peer',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+        DiscoveredDevice(
+          ip: '172.30.1.77',
+          deviceName: 'ZeroTier peer',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
+
+      await _pumpDiscoveryPage(tester, harness: harness);
+
+      expect(
+        find.byKey(const Key('discovery-network-scope-chip-row')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: find.byType(DiscoveryPage),
+          matching: find.byType(Wrap),
+        ),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('discovery-network-scope-chip-row')),
+          matching: find.byType(Scrollbar),
+        ),
+        findsNothing,
+      );
+      expect(find.text('Все'), findsOneWidget);
+      expect(find.text('Office LAN'), findsOneWidget);
+      expect(find.text('Tailscale'), findsOneWidget);
+      expect(find.text('ZeroTier'), findsOneWidget);
+      expect(find.text('Office laptop'), findsOneWidget);
+
+      final lastChipBefore = tester.getRect(
+        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
+      );
+      await tester.drag(
+        find.byKey(const Key('discovery-network-scope-chip-row')),
+        const Offset(-220, 0),
+      );
+      await _pumpForUi(tester, frames: 4);
+      final lastChipAfter = tester.getRect(
+        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
+      );
+      expect(lastChipAfter.left, lessThan(lastChipBefore.left));
+
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Tailscale'));
+      await _pumpForUi(tester, frames: 4);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Tailscale'));
+      await _pumpForUi(tester);
+
+      expect(find.text('Office laptop'), findsNothing);
+      expect(find.text('Tailscale peer'), findsOneWidget);
+      expect(find.text('ZeroTier peer'), findsNothing);
+
+      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Все'));
+      await _pumpForUi(tester, frames: 4);
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Все'));
+      await _pumpForUi(tester);
+
+      expect(find.text('Office laptop'), findsOneWidget);
+      await tester.dragUntilVisible(
+        find.text('ZeroTier peer'),
+        find.byType(ListView),
+        const Offset(0, -240),
+      );
+      await _pumpForUi(tester, frames: 4);
+
+      expect(find.text('ZeroTier peer'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'DiscoveryPage wide layout keeps sidebar flush right and action bar inside content pane',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await tester.binding.setSurfaceSize(const Size(3200, 1800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await _pumpDiscoveryPage(
+        tester,
+        harness: harness,
+        platform: TargetPlatform.windows,
+      );
+
+      expect(
+        find.byKey(const Key('discovery-wide-layout-header')),
+        findsOneWidget,
+      );
+
+      final scaffoldRect = tester.getRect(find.byType(Scaffold));
+      final headerRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-header')),
+      );
+      final sidePanelRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-side-panel')),
+      );
+      final actionBarRect = tester.getRect(
+        find.byKey(const Key('discovery-wide-layout-action-bar')),
+      );
+      final sendButtonRect = tester.getRect(
+        find.widgetWithText(FilledButton, 'Отправить'),
+      );
+
+      expect(headerRect.top, lessThan(AppSpacing.xl));
+      expect(sidePanelRect.top, closeTo(scaffoldRect.top, 0.01));
+      expect(sidePanelRect.right, closeTo(scaffoldRect.right, 0.01));
+      expect(actionBarRect.right, lessThanOrEqualTo(sidePanelRect.left));
+      expect(sendButtonRect.right, lessThanOrEqualTo(sidePanelRect.left));
     },
   );
 
@@ -166,6 +335,24 @@ void main() {
       await _pumpForUi(tester);
 
       expect(find.text('Clipboard'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Current device'), findsOneWidget);
+      expect(
+        find.widgetWithText(ChoiceChip, 'Remote clipboard'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('History is empty. Copy text or image to start.'),
+        findsOneWidget,
+      );
+      expect(find.text('Remote hello'), findsNothing);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Remote clipboard'));
+      await _pumpForUi(tester);
+
+      expect(
+        find.text('History is empty. Copy text or image to start.'),
+        findsNothing,
+      );
       expect(find.text('Remote hello'), findsOneWidget);
     },
   );
@@ -234,6 +421,7 @@ Future<void> _pumpDiscoveryPage(
   WidgetTester tester, {
   required TestDiscoveryControllerHarness harness,
   bool isBoundaryReady = false,
+  TargetPlatform? platform,
 }) async {
   final desktopWindowService = TrackingDesktopWindowService();
   final transferStorageService = StubTransferStorageService(
@@ -242,6 +430,7 @@ Future<void> _pumpDiscoveryPage(
 
   await tester.pumpWidget(
     MaterialApp(
+      theme: platform == null ? null : ThemeData(platform: platform),
       home: DiscoveryPage(
         controller: harness.controller,
         readModel: harness.readModel,

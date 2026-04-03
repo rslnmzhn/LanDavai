@@ -61,6 +61,7 @@ class AppSettings {
   const AppSettings({
     required this.backgroundScanInterval,
     required this.downloadAttemptNotificationsEnabled,
+    required this.useStandardAppDownloadFolder,
     required this.minimizeToTrayOnClose,
     required this.isLeftHandedMode,
     required this.videoLinkPassword,
@@ -72,6 +73,7 @@ class AppSettings {
 
   final BackgroundScanIntervalOption backgroundScanInterval;
   final bool downloadAttemptNotificationsEnabled;
+  final bool useStandardAppDownloadFolder;
   final bool minimizeToTrayOnClose;
   final bool isLeftHandedMode;
   final String videoLinkPassword;
@@ -83,6 +85,7 @@ class AppSettings {
   static const AppSettings defaults = AppSettings(
     backgroundScanInterval: BackgroundScanIntervalOption.fiveMinutes,
     downloadAttemptNotificationsEnabled: true,
+    useStandardAppDownloadFolder: true,
     minimizeToTrayOnClose: true,
     isLeftHandedMode: false,
     videoLinkPassword: '',
@@ -95,6 +98,7 @@ class AppSettings {
   AppSettings copyWith({
     BackgroundScanIntervalOption? backgroundScanInterval,
     bool? downloadAttemptNotificationsEnabled,
+    bool? useStandardAppDownloadFolder,
     bool? minimizeToTrayOnClose,
     bool? isLeftHandedMode,
     String? videoLinkPassword,
@@ -109,6 +113,8 @@ class AppSettings {
       downloadAttemptNotificationsEnabled:
           downloadAttemptNotificationsEnabled ??
           this.downloadAttemptNotificationsEnabled,
+      useStandardAppDownloadFolder:
+          useStandardAppDownloadFolder ?? this.useStandardAppDownloadFolder,
       minimizeToTrayOnClose:
           minimizeToTrayOnClose ?? this.minimizeToTrayOnClose,
       isLeftHandedMode: isLeftHandedMode ?? this.isLeftHandedMode,

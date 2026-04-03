@@ -6,33 +6,15 @@ class NetworkHostScanner {
   static const int _defaultParallelism = 48;
   static const Duration _probeTimeout = Duration(milliseconds: 220);
   static const Duration _arpPrimeDelay = Duration(milliseconds: 600);
-  static const List<String> _virtualInterfaceHints = <String>[
-    'loopback',
-    'docker',
-    'vmware',
-    'virtual',
-    'vethernet',
-    'hyper-v',
-    'vbox',
-    'wsl',
-    'tailscale',
-    'zerotier',
-    'hamachi',
-    'tun',
-    'tap',
-    'bridge',
-  ];
 
   NetworkHostScanner({this.allowTcpFallback = false});
 
   final bool allowTcpFallback;
 
   Future<Map<String, String?>> scanActiveHosts({
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
-    final localIps = await _getLocalIpv4Addresses(
-      preferredSourceIp: preferredSourceIp,
-    );
+    final localIps = localSourceIps.where(_isValidIpv4).toSet();
     final candidates = <String>{};
 
     for (final ip in localIps) {
@@ -50,13 +32,7 @@ class NetworkHostScanner {
       'candidates=${candidates.length}, parallelism=$_defaultParallelism',
     );
 
-    final arpPreferredSourceIp = Platform.isAndroid || localIps.length > 1
-        ? null
-        : preferredSourceIp;
-    final arpHosts = await _scanUsingNeighborTable(
-      candidates,
-      preferredSourceIp: arpPreferredSourceIp,
-    );
+    final arpHosts = await _scanUsingNeighborTable(candidates);
     if (arpHosts.isNotEmpty) {
       _log('Neighbor-table scan complete. reachable=${arpHosts.length}');
       return arpHosts;
@@ -77,11 +53,10 @@ class NetworkHostScanner {
   }
 
   Future<Map<String, String>> _scanUsingNeighborTable(
-    Set<String> candidates, {
-    String? preferredSourceIp,
-  }) async {
+    Set<String> candidates,
+  ) async {
     await _primeNeighborCache(candidates);
-    final arpByIp = await _loadArpEntries(preferredSourceIp: preferredSourceIp);
+    final arpByIp = await _loadArpEntries();
     if (arpByIp.isEmpty) {
       _log('ARP table is empty or unreadable.');
       return <String, String>{};
@@ -176,13 +151,9 @@ class NetworkHostScanner {
     return filtered;
   }
 
-  Future<Map<String, String>> _loadArpEntries({
-    String? preferredSourceIp,
-  }) async {
+  Future<Map<String, String>> _loadArpEntries() async {
     if (Platform.isLinux || Platform.isAndroid) {
-      final fromProc = await _loadArpFromProc(
-        preferredSourceIp: preferredSourceIp,
-      );
+      final fromProc = await _loadArpFromProc();
       if (fromProc.isNotEmpty) {
         _log('Loaded ARP entries from /proc/net/arp: ${fromProc.length}');
         return fromProc;
@@ -207,10 +178,7 @@ class NetworkHostScanner {
         }
 
         final output = result.stdout.toString();
-        final parsed = _parseArpOutput(
-          output,
-          preferredSourceIp: preferredSourceIp,
-        );
+        final parsed = _parseArpOutput(output);
         if (parsed.isNotEmpty) {
           _log(
             'Loaded ARP entries using "$executable ${args.join(" ")}": '
@@ -236,9 +204,7 @@ class NetworkHostScanner {
     return <String, String>{};
   }
 
-  Future<Map<String, String>> _loadArpFromProc({
-    String? preferredSourceIp,
-  }) async {
+  Future<Map<String, String>> _loadArpFromProc() async {
     try {
       final file = File('/proc/net/arp');
       if (!await file.exists()) {
@@ -269,10 +235,6 @@ class NetworkHostScanner {
         if (!_isUsableHostIpv4(ip)) {
           continue;
         }
-        if (preferredSourceIp != null &&
-            !_isSame24Subnet(ip, preferredSourceIp)) {
-          continue;
-        }
         map[ip] = mac;
       }
       return map;
@@ -281,15 +243,9 @@ class NetworkHostScanner {
     }
   }
 
-  Map<String, String> _parseArpOutput(
-    String output, {
-    String? preferredSourceIp,
-  }) {
+  Map<String, String> _parseArpOutput(String output) {
     if (Platform.isWindows) {
-      return _parseWindowsArpOutput(
-        output,
-        preferredSourceIp: preferredSourceIp,
-      );
+      return _parseWindowsArpOutput(output);
     }
 
     final entries = <String, String>{};
@@ -303,7 +259,6 @@ class NetworkHostScanner {
       r'(\d+\.\d+\.\d+\.\d+).{0,32}([0-9a-fA-F:-]{11,17})',
     );
 
-    String? currentInterfaceIp;
     for (final line in lines) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) {
@@ -312,13 +267,6 @@ class NetworkHostScanner {
 
       final interfaceMatch = interfaceLine.firstMatch(trimmed);
       if (interfaceMatch != null) {
-        currentInterfaceIp = interfaceMatch.group(1);
-        continue;
-      }
-
-      final acceptCurrentSection =
-          preferredSourceIp == null || currentInterfaceIp == preferredSourceIp;
-      if (!acceptCurrentSection) {
         continue;
       }
 
@@ -330,10 +278,6 @@ class NetworkHostScanner {
         if (mac != null &&
             (type.contains('dynamic') || type.contains('static'))) {
           if (!_isUsableHostIpv4(ip)) {
-            continue;
-          }
-          if (preferredSourceIp != null &&
-              !_isSame24Subnet(ip, preferredSourceIp)) {
             continue;
           }
           entries[ip] = mac;
@@ -349,10 +293,6 @@ class NetworkHostScanner {
           if (!_isUsableHostIpv4(ip)) {
             continue;
           }
-          if (preferredSourceIp != null &&
-              !_isSame24Subnet(ip, preferredSourceIp)) {
-            continue;
-          }
           entries[ip] = mac;
         }
       }
@@ -361,10 +301,7 @@ class NetworkHostScanner {
     return entries;
   }
 
-  Map<String, String> _parseWindowsArpOutput(
-    String output, {
-    String? preferredSourceIp,
-  }) {
+  Map<String, String> _parseWindowsArpOutput(String output) {
     final entries = <String, String>{};
     final lines = output.split(RegExp(r'\r?\n'));
     final entry = RegExp(
@@ -379,10 +316,6 @@ class NetworkHostScanner {
       final ip = match.group(1)!;
       final mac = _normalizeMac(match.group(2)!);
       if (mac == null || !_isUsableHostIpv4(ip)) {
-        continue;
-      }
-      if (preferredSourceIp != null &&
-          !_isSame24Subnet(ip, preferredSourceIp)) {
         continue;
       }
       entries[ip] = mac;
@@ -448,45 +381,6 @@ class NetworkHostScanner {
     return null;
   }
 
-  Future<Set<String>> _getLocalIpv4Addresses({
-    String? preferredSourceIp,
-  }) async {
-    final preferredIp = preferredSourceIp?.trim();
-    final localIps = <String>{};
-    final fallbackIps = <String>{};
-
-    try {
-      final interfaces = await NetworkInterface.list(
-        type: InternetAddressType.IPv4,
-        includeLinkLocal: false,
-        includeLoopback: false,
-      );
-      for (final interface in interfaces) {
-        final name = interface.name.toLowerCase();
-        final isVirtual = _virtualInterfaceHints.any(name.contains);
-
-        for (final address in interface.addresses) {
-          if (isVirtual) {
-            fallbackIps.add(address.address);
-            continue;
-          }
-          localIps.add(address.address);
-        }
-      }
-    } catch (error) {
-      _log('Failed to enumerate local interfaces: $error');
-    }
-
-    if (preferredIp != null && _isValidIpv4(preferredIp)) {
-      localIps.add(preferredIp);
-      fallbackIps.add(preferredIp);
-    }
-
-    final result = localIps.isNotEmpty ? localIps : fallbackIps;
-    _log('Interfaces resolved. localIps=$result');
-    return result;
-  }
-
   Set<String> _buildSubnetCandidates(String ip) {
     final parts = ip.split('.');
     if (parts.length != 4) {
@@ -542,16 +436,6 @@ class NetworkHostScanner {
       return false;
     }
     return true;
-  }
-
-  bool _isSame24Subnet(String ip, String sourceIp) {
-    if (!_isValidIpv4(ip) || !_isValidIpv4(sourceIp)) {
-      return false;
-    }
-
-    final a = ip.split('.');
-    final b = sourceIp.split('.');
-    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
   }
 
   void _log(String message) {

@@ -105,15 +105,69 @@ void main() {
       expect(File(imagePath).existsSync(), isFalse);
     },
   );
+
+  test(
+    'copyEntryToSystemClipboard routes full text payload through clipboard IO',
+    () async {
+      final entry = ClipboardHistoryEntry(
+        id: 'text-entry',
+        type: ClipboardEntryType.text,
+        contentHash: 'text:full',
+        textValue: 'Full clipboard text payload',
+        createdAt: DateTime.fromMillisecondsSinceEpoch(200),
+      );
+
+      final result = await store.copyEntryToSystemClipboard(entry);
+
+      expect(result, isNull);
+      expect(captureService.lastWrittenText, 'Full clipboard text payload');
+    },
+  );
+
+  test(
+    'copyEntryToSystemClipboard reads persisted local image bytes only at action boundary',
+    () async {
+      captureService.nextData = ClipboardCaptureData(
+        type: ClipboardEntryType.image,
+        contentHash: 'image:hash',
+        imageBytes: Uint8List.fromList(const <int>[1, 2, 3, 4]),
+      );
+      await store.captureSnapshot(maxEntries: 10);
+
+      final entry = store.entries.single;
+
+      final result = await store.copyEntryToSystemClipboard(entry);
+
+      expect(result, isNull);
+      expect(captureService.lastWrittenImageBytes, <int>[1, 2, 3, 4]);
+    },
+  );
 }
 
 class FakeClipboardCaptureService extends ClipboardCaptureService {
   ClipboardCaptureData? nextData;
   int readCalls = 0;
+  String? lastWrittenText;
+  Uint8List? lastWrittenImageBytes;
 
   @override
   Future<ClipboardCaptureData?> readCurrentClipboard() async {
     readCalls += 1;
     return nextData;
+  }
+
+  @override
+  Future<bool> writeTextToClipboard(String text) async {
+    lastWrittenText = text;
+    return true;
+  }
+
+  @override
+  Future<bool> writeImageBytesToClipboard(
+    Uint8List imageBytes, {
+    String suggestedName = 'clipboard-image.png',
+  }) async {
+    lastWrittenImageBytes = Uint8List.fromList(imageBytes);
+    return true;
   }
 }

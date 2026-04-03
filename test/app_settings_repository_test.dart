@@ -46,6 +46,10 @@ void main() {
       AppSettings.defaults.downloadAttemptNotificationsEnabled,
     );
     expect(
+      settings.useStandardAppDownloadFolder,
+      AppSettings.defaults.useStandardAppDownloadFolder,
+    );
+    expect(
       settings.minimizeToTrayOnClose,
       AppSettings.defaults.minimizeToTrayOnClose,
     );
@@ -73,6 +77,7 @@ void main() {
     const expected = AppSettings(
       backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
       downloadAttemptNotificationsEnabled: false,
+      useStandardAppDownloadFolder: false,
       minimizeToTrayOnClose: false,
       isLeftHandedMode: true,
       videoLinkPassword: 'secret123',
@@ -89,6 +94,10 @@ void main() {
     expect(
       restored.downloadAttemptNotificationsEnabled,
       expected.downloadAttemptNotificationsEnabled,
+    );
+    expect(
+      restored.useStandardAppDownloadFolder,
+      expected.useStandardAppDownloadFolder,
     );
     expect(restored.minimizeToTrayOnClose, expected.minimizeToTrayOnClose);
     expect(restored.isLeftHandedMode, expected.isLeftHandedMode);

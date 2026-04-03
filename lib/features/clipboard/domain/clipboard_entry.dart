@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 enum ClipboardEntryType { text, image }
 
 extension ClipboardEntryTypeX on ClipboardEntryType {
@@ -52,5 +54,5 @@ class RemoteClipboardEntry {
   final ClipboardEntryType type;
   final DateTime createdAt;
   final String? textValue;
-  final List<int>? imageBytes;
+  final Uint8List? imageBytes;
 }

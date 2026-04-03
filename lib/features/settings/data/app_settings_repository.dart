@@ -16,6 +16,8 @@ class AppSettingsRepository {
   static const String _backgroundScanIntervalKey = 'background_scan_seconds';
   static const String _downloadNotificationsKey =
       'download_attempt_notifications_enabled';
+  static const String _useStandardAppDownloadFolderKey =
+      'use_standard_app_download_folder';
   static const String _minimizeToTrayKey = 'minimize_to_tray_on_close';
   static const String _leftHandedModeKey = 'left_handed_mode_enabled';
   static const String _videoLinkPasswordKey = 'video_link_password';
@@ -54,6 +56,10 @@ class AppSettingsRepository {
       downloadAttemptNotificationsEnabled: _parseBool(
         values[_downloadNotificationsKey],
         fallback: defaults.downloadAttemptNotificationsEnabled,
+      ),
+      useStandardAppDownloadFolder: _parseBool(
+        values[_useStandardAppDownloadFolderKey],
+        fallback: defaults.useStandardAppDownloadFolder,
       ),
       minimizeToTrayOnClose: _parseBool(
         values[_minimizeToTrayKey],
@@ -97,6 +103,12 @@ class AppSettingsRepository {
         txn: txn,
         key: _downloadNotificationsKey,
         value: settings.downloadAttemptNotificationsEnabled ? '1' : '0',
+        updatedAtMs: now,
+      );
+      await _upsertSetting(
+        txn: txn,
+        key: _useStandardAppDownloadFolderKey,
+        value: settings.useStandardAppDownloadFolder ? '1' : '0',
         updatedAtMs: now,
       );
       await _upsertSetting(

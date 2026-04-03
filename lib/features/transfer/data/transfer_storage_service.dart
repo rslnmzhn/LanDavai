@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -21,6 +22,11 @@ class PreviewCacheCleanupResult {
 
 class TransferStorageService {
   static const MethodChannel _platformChannel = MethodChannel('landa/network');
+
+  bool get supportsDesktopDownloadPicker =>
+      Platform.isWindows || Platform.isLinux;
+
+  bool get publishesReceivedDownloadsToUserDownloads => Platform.isAndroid;
 
   Future<Directory> resolveReceiveDirectory({
     String appFolderName = 'Landa',
@@ -44,6 +50,21 @@ class TransferStorageService {
 
     final docs = await getApplicationDocumentsDirectory();
     final target = Directory(p.join(docs.path, appFolderName, 'downloads'));
+    await target.create(recursive: true);
+    return target;
+  }
+
+  Future<Directory?> pickDesktopDownloadDirectory() async {
+    if (!Platform.isWindows && !Platform.isLinux) {
+      return null;
+    }
+
+    final path = await FilePicker.platform.getDirectoryPath();
+    if (path == null || path.trim().isEmpty) {
+      return null;
+    }
+
+    final target = Directory(path.trim());
     await target.create(recursive: true);
     return target;
   }

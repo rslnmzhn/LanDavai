@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
@@ -29,10 +30,11 @@ class ClipboardHistoryStore extends ChangeNotifier {
   final String appFolderName;
 
   final List<ClipboardHistoryEntry> _entries = <ClipboardHistoryEntry>[];
+  late final UnmodifiableListView<ClipboardHistoryEntry> _entriesView =
+      UnmodifiableListView<ClipboardHistoryEntry>(_entries);
   String? _lastCapturedClipboardHash;
 
-  List<ClipboardHistoryEntry> get entries =>
-      List<ClipboardHistoryEntry>.unmodifiable(_entries);
+  List<ClipboardHistoryEntry> get entries => _entriesView;
 
   ClipboardHistoryEntry? findLatest() {
     if (_entries.isEmpty) {
@@ -122,6 +124,52 @@ class ClipboardHistoryStore extends ChangeNotifier {
   Future<void> trimHistory(int maxEntries) async {
     await _trimRemovedEntries(maxEntries);
     await load(updateLastCapturedHash: false);
+  }
+
+  Future<String?> copyEntryToSystemClipboard(
+    ClipboardHistoryEntry entry,
+  ) async {
+    if (entry.type == ClipboardEntryType.text) {
+      final text = entry.textValue;
+      if (text == null || text.isEmpty) {
+        return 'Clipboard text is empty.';
+      }
+
+      final copied = await _clipboardCaptureService.writeTextToClipboard(text);
+      if (copied) {
+        return null;
+      }
+      return 'Clipboard is not available on this platform.';
+    }
+
+    final imagePath = entry.imagePath?.trim();
+    if (imagePath == null || imagePath.isEmpty) {
+      return 'Clipboard image is unavailable.';
+    }
+
+    try {
+      final file = File(imagePath);
+      if (!await file.exists()) {
+        return 'Clipboard image file is missing.';
+      }
+
+      final bytes = await file.readAsBytes();
+      if (bytes.isEmpty) {
+        return 'Clipboard image is empty.';
+      }
+
+      final copied = await _clipboardCaptureService.writeImageBytesToClipboard(
+        bytes,
+        suggestedName: p.basename(imagePath),
+      );
+      if (copied) {
+        return null;
+      }
+      return 'Clipboard is not available on this platform.';
+    } catch (error) {
+      _log('Failed to copy clipboard image $imagePath: $error');
+      return 'Failed to copy image to clipboard.';
+    }
   }
 
   Future<ClipboardHistoryEntry> _buildEntryFromCapture(

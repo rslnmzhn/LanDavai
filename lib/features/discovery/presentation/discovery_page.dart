@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
+import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
+import '../../clipboard/application/clipboard_source_scope_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/preview_cache_owner.dart';
@@ -31,6 +33,7 @@ import 'discovery_friends_sheet.dart';
 import 'discovery_history_sheet.dart';
 import 'discovery_receive_panel_sheet.dart';
 import 'discovery_side_menu_surface.dart';
+import 'discovery_wide_layout_surface.dart';
 
 class DiscoveryPage extends StatefulWidget {
   const DiscoveryPage({
@@ -157,7 +160,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       builder: (context, _) {
         final devices = _readModel.devices;
         final isLeftHanded = _readModel.settings.isLeftHandedMode;
-        final isTabletLayout = MediaQuery.sizeOf(context).width >= 900;
+        final isWideLayout = MediaQuery.sizeOf(context).width >= 900;
 
         final drawerSurface = Drawer(
           child: DiscoverySideMenuSurface(
@@ -203,6 +206,18 @@ class _DiscoveryPageState extends State<DiscoveryPage>
             ),
           ),
         );
+        final actionBar = DiscoveryActionBar(
+          sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
+          sharedFolderIndexingProgress:
+              _controller.sharedFolderIndexingProgress,
+          sharedFolderIndexingProgressValue:
+              _controller.sharedFolderIndexingProgressValue,
+          isAddingShare: _controller.isAddingShare,
+          isSendingTransfer: _transferSessionCoordinator.isSendingTransfer,
+          onReceive: _openReceivePanel,
+          onAdd: _openAddShareMenu,
+          onSend: _controller.sendFilesToSelectedDevice,
+        );
         final mainContent = DiscoveryDeviceListSection(
           readModel: _readModel,
           devices: devices,
@@ -211,82 +226,70 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           transferSessionCoordinator: _transferSessionCoordinator,
           onRefresh: _controller.refresh,
           onSelectDeviceByIp: _controller.selectDeviceByIp,
+          onSelectNetworkScope: (scopeId) {
+            unawaited(_controller.selectNetworkScope(scopeId));
+          },
           onOpenDeviceActionsMenu: _openDeviceActionsMenu,
+          padding: isWideLayout
+              ? const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  0,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                )
+              : const EdgeInsets.all(AppSpacing.md),
         );
 
         return Scaffold(
-          appBar: AppBar(
-            automaticallyImplyLeading: false,
-            leading: isLeftHanded && !isTabletLayout
-                ? Builder(
-                    builder: (buttonContext) {
-                      return IconButton(
-                        tooltip: 'Menu',
-                        onPressed: () {
-                          _requestVideoSurfaceReload();
-                          Scaffold.of(buttonContext).openDrawer();
+          appBar: isWideLayout
+              ? null
+              : AppBar(
+                  automaticallyImplyLeading: false,
+                  leading: isLeftHanded
+                      ? Builder(
+                          builder: (buttonContext) {
+                            return IconButton(
+                              tooltip: 'Menu',
+                              onPressed: () {
+                                _requestVideoSurfaceReload();
+                                Scaffold.of(buttonContext).openDrawer();
+                              },
+                              icon: const Icon(Icons.menu_rounded),
+                            );
+                          },
+                        )
+                      : null,
+                  title: const Text('Landa devices'),
+                  actions: [
+                    if (!isLeftHanded)
+                      Builder(
+                        builder: (buttonContext) {
+                          return IconButton(
+                            tooltip: 'Menu',
+                            onPressed: () {
+                              _requestVideoSurfaceReload();
+                              Scaffold.of(buttonContext).openEndDrawer();
+                            },
+                            icon: const Icon(Icons.menu_rounded),
+                          );
                         },
-                        icon: const Icon(Icons.menu_rounded),
-                      );
-                    },
-                  )
-                : null,
-            title: const Text('Landa devices'),
-            actions: [
-              if (!isLeftHanded && !isTabletLayout)
-                Builder(
-                  builder: (buttonContext) {
-                    return IconButton(
-                      tooltip: 'Menu',
-                      onPressed: () {
-                        _requestVideoSurfaceReload();
-                        Scaffold.of(buttonContext).openEndDrawer();
-                      },
-                      icon: const Icon(Icons.menu_rounded),
-                    );
-                  },
-                ),
-            ],
-          ),
-          drawer: !isTabletLayout && isLeftHanded ? drawerSurface : null,
-          endDrawer: !isTabletLayout && !isLeftHanded ? drawerSurface : null,
-          drawerEnableOpenDragGesture: !isTabletLayout && isLeftHanded,
-          endDrawerEnableOpenDragGesture: !isTabletLayout && !isLeftHanded,
-          body: isTabletLayout
-              ? Row(
-                  children: [
-                    if (isLeftHanded) ...[
-                      panelSurface,
-                      const VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: AppColors.mutedBorder,
                       ),
-                    ],
-                    Expanded(child: mainContent),
-                    if (!isLeftHanded) ...[
-                      const VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: AppColors.mutedBorder,
-                      ),
-                      panelSurface,
-                    ],
                   ],
+                ),
+          drawer: !isWideLayout && isLeftHanded ? drawerSurface : null,
+          endDrawer: !isWideLayout && !isLeftHanded ? drawerSurface : null,
+          drawerEnableOpenDragGesture: !isWideLayout && isLeftHanded,
+          endDrawerEnableOpenDragGesture: !isWideLayout && !isLeftHanded,
+          body: isWideLayout
+              ? DiscoveryWideLayoutSurface(
+                  title: 'Landa devices',
+                  mainContent: mainContent,
+                  sidePanel: panelSurface,
+                  actionBar: actionBar,
+                  isLeftHanded: isLeftHanded,
                 )
               : mainContent,
-          bottomNavigationBar: DiscoveryActionBar(
-            sharedCacheMaintenanceBoundary: _sharedCacheMaintenanceBoundary,
-            sharedFolderIndexingProgress:
-                _controller.sharedFolderIndexingProgress,
-            sharedFolderIndexingProgressValue:
-                _controller.sharedFolderIndexingProgressValue,
-            isAddingShare: _controller.isAddingShare,
-            isSendingTransfer: _transferSessionCoordinator.isSendingTransfer,
-            onReceive: _openReceivePanel,
-            onAdd: _openAddShareMenu,
-            onSend: _controller.sendFilesToSelectedDevice,
-          ),
+          bottomNavigationBar: isWideLayout ? null : actionBar,
         );
       },
     );
@@ -301,21 +304,27 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   }
 
   Future<void> _openClipboardSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return FractionallySizedBox(
-          heightFactor: 0.9,
-          child: ClipboardSheet(
-            controller: _controller,
-            readModel: _readModel,
-            clipboardHistoryStore: _clipboardHistoryStore,
-            remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
-          ),
-        );
-      },
-    );
+    final clipboardSourceScopeStore = ClipboardSourceScopeStore();
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (context) {
+          return FractionallySizedBox(
+            heightFactor: 0.9,
+            child: ClipboardSheet(
+              controller: _controller,
+              readModel: _readModel,
+              clipboardHistoryStore: _clipboardHistoryStore,
+              remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
+              clipboardSourceScopeStore: clipboardSourceScopeStore,
+            ),
+          );
+        },
+      );
+    } finally {
+      clipboardSourceScopeStore.dispose();
+    }
   }
 
   Future<void> _openSettingsSheet() async {
@@ -335,6 +344,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                 unawaited(
                   _controller.setDownloadAttemptNotificationsEnabled(enabled),
                 );
+              },
+              onUseStandardAppDownloadFolderChanged: (enabled) {
+                unawaited(_controller.setUseStandardAppDownloadFolder(enabled));
               },
               onMinimizeToTrayChanged: (enabled) {
                 unawaited(_controller.setMinimizeToTrayOnClose(enabled));
@@ -439,6 +451,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       remoteShareBrowser: _remoteShareBrowser,
       previewCacheOwner: _previewCacheOwner,
       transferSessionCoordinator: _transferSessionCoordinator,
+      useStandardAppDownloadFolder:
+          _readModel.settings.useStandardAppDownloadFolder,
     );
   }
 }

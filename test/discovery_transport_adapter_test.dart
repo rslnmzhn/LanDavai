@@ -8,13 +8,21 @@ void main() {
   test('owns UDP lifecycle and keeps start stop idempotent', () async {
     final adapter = UdpDiscoveryTransportAdapter();
 
-    await adapter.start(port: 0, onDatagram: (_) {});
+    await adapter.start(
+      port: 0,
+      localSourceIps: const <String>{'127.0.0.1'},
+      onDatagram: (_) {},
+    );
 
     expect(adapter.isStarted, isTrue);
     expect(adapter.boundPort, isNotNull);
     final initialPort = adapter.boundPort;
 
-    await adapter.start(port: 0, onDatagram: (_) {});
+    await adapter.start(
+      port: 0,
+      localSourceIps: const <String>{'127.0.0.1'},
+      onDatagram: (_) {},
+    );
 
     expect(adapter.isStarted, isTrue);
     expect(adapter.boundPort, initialPort);
@@ -38,7 +46,7 @@ void main() {
     try {
       await adapter.start(
         port: 0,
-        preferredSourceIp: '127.0.0.1',
+        localSourceIps: const <String>{'127.0.0.1'},
         onDatagram: (datagram) {
           if (!inboundDatagram.isCompleted) {
             inboundDatagram.complete(datagram);

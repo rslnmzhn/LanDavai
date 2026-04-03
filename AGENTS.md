@@ -26,8 +26,9 @@ Goal: keep Landa behavior, visuals, and data model consistent.
 Canonical state ownership is now split across explicit owner boundaries.
 
 Current owner/boundary map:
-- `DiscoveryController`: discovery shell state, device actions, friend flows, settings commands, and protocol entry wiring only
+- `DiscoveryController`: discovery shell state, device actions, friend flows, settings commands, protocol entry wiring, and discovery-scope restart orchestration only
 - `DiscoveryReadModel`: consumer-facing read projection over discovery shell plus supporting stores
+- `DiscoveryNetworkScopeStore`: session-scoped local network range truth, active discovery scope selection, and grouped local IP sets
 - `LocalPeerIdentityStore`: local peer identity persistence and generation
 - `SharedCacheCatalog`: shared-cache metadata truth
 - `SharedCacheIndexStore`: shared-cache index truth
@@ -50,6 +51,14 @@ Rules:
   widgets, repositories, or new facades/helpers.
 - `DiscoveryController` may stay a thin command/protocol shell where public entry
   still needs it, but it must not regain canonical ownership for extracted seams.
+- Raw interface enumeration belongs in discovery data catalogs, subnet grouping
+  belongs in application, and visible network labels belong in presentation.
+- `DiscoveryController` must not compute subnet groups or adapter label
+  heuristics. It may only consume already-computed active scope IP sets and
+  orchestrate restart/refresh.
+- `DiscoveryReadModel` network-scope filtering is projection-only and must
+  derive from the same grouped subnet identity used by
+  `DiscoveryNetworkScopeStore`.
 - `VideoLinkShareService.activeSession` remains a separate seam from
   `TransferSessionCoordinator`; do not silently merge those seams.
 - `SharedCacheCatalogBridge` is deleted and forbidden by guard tests.
@@ -87,9 +96,14 @@ lib/
       presentation/
     discovery/
       application/
+        discovery_network_scope.dart
+        discovery_network_scope_grouper.dart
+        discovery_network_scope_store.dart
       data/
+        discovery_network_interface_catalog.dart
       domain/
       presentation/
+        discovery_network_scope_selector.dart
     files/
       application/
       presentation/
@@ -110,6 +124,8 @@ test/
   architecture_guard_test.dart
   smoke_test.dart
   blocked_entry_flow_regression_test.dart
+  discovery_controller_network_scope_test.dart
+  discovery_network_scope_store_test.dart
   *_flow_regression_test.dart
   *_owner_test.dart
   *_boundary_test.dart
@@ -119,6 +135,9 @@ test/
 Rules:
 - No UI code in data repositories.
 - No direct networking calls from widgets.
+- `UdpDiscoveryTransportAdapter` and `NetworkHostScanner` must consume the
+  provided active `localSourceIps` set; do not reintroduce local interface
+  enumeration there.
 - Shared design tokens only in `lib/app/theme/*`.
 
 ## Visual Identity Contract (Do Not Drift)
@@ -172,7 +191,12 @@ Rules:
 - App presence discovery: UDP broadcast handshake in LAN.
 - Handshake payload identifiers: `LANDA_DISCOVER_V1` / `LANDA_HERE_V1`.
 - Packets include per-instance ID to avoid self-detection loops.
-- Discovery input is filtered to active subnet (`preferredSourceIp`).
+- Discovery scope is driven by explicit active `localSourceIps`.
+- `DiscoveryNetworkScopeStore` owns grouped local ranges and the selected
+  `Все` / per-range scope.
+- `Все` maps to the union of all eligible grouped ranges.
+- Discovery input is filtered to the selected active scope; read-model filtering
+  is projection-only over the same grouped subnet identity.
 - LAN host visibility uses ARP/neighbor table first.
 - TCP probing is fallback-only and disabled by default.
 - Keep manual IP connect as fallback path for edge networks.
@@ -286,8 +310,13 @@ The following must not regress:
 - No `part / part of` under `lib/`
 - No controller ownership of:
   - local peer identity
+  - network scope grouping / adapter label heuristics
   - video-link sessions
   - thumbnail IO
+- No reintroduction of local interface enumeration inside:
+  - `DiscoveryController`
+  - `UdpDiscoveryTransportAdapter`
+  - `NetworkHostScanner`
 - No broadening of:
   - `SharedFolderCacheRepository`
   - `LanPacketCodec`

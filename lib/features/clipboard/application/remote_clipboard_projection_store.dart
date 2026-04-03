@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:developer' as developer;
 
@@ -16,6 +17,8 @@ class RemoteClipboardProjectionStore extends ChangeNotifier {
 
   final Map<String, List<RemoteClipboardEntry>> _entriesByOwnerIp =
       <String, List<RemoteClipboardEntry>>{};
+  final Map<String, UnmodifiableListView<RemoteClipboardEntry>>
+  _entryViewsByOwnerIp = <String, UnmodifiableListView<RemoteClipboardEntry>>{};
   bool _isLoading = false;
   String? _loadingOwnerIp;
   String? _activeRequestId;
@@ -24,11 +27,7 @@ class RemoteClipboardProjectionStore extends ChangeNotifier {
   String? get loadingOwnerIp => _loadingOwnerIp;
 
   List<RemoteClipboardEntry> entriesFor(String ownerIp) {
-    final entries = _entriesByOwnerIp[ownerIp];
-    if (entries == null) {
-      return const <RemoteClipboardEntry>[];
-    }
-    return List<RemoteClipboardEntry>.unmodifiable(entries);
+    return _entryViewsByOwnerIp[ownerIp] ?? const <RemoteClipboardEntry>[];
   }
 
   bool hasEntriesFor(String ownerIp) {
@@ -51,6 +50,7 @@ class RemoteClipboardProjectionStore extends ChangeNotifier {
     _loadingOwnerIp = ownerIp;
     _isLoading = true;
     _entriesByOwnerIp.remove(ownerIp);
+    _entryViewsByOwnerIp.remove(ownerIp);
     notifyListeners();
     return requestId;
   }
@@ -63,6 +63,8 @@ class RemoteClipboardProjectionStore extends ChangeNotifier {
     final mapped = _mapEntries(event.entries);
     mapped.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     _entriesByOwnerIp[event.ownerIp] = mapped;
+    _entryViewsByOwnerIp[event.ownerIp] =
+        UnmodifiableListView<RemoteClipboardEntry>(mapped);
     notifyListeners();
     return true;
   }
@@ -81,7 +83,7 @@ class RemoteClipboardProjectionStore extends ChangeNotifier {
     final mapped = <RemoteClipboardEntry>[];
     for (final item in items) {
       final type = ClipboardEntryTypeX.fromValue(item.entryType);
-      List<int>? imageBytes;
+      Uint8List? imageBytes;
       if (type == ClipboardEntryType.image) {
         final encoded = item.imagePreviewBase64;
         if (encoded == null || encoded.trim().isEmpty) {

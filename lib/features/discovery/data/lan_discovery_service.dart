@@ -70,6 +70,7 @@ class LanDiscoveryService {
   Future<void> start({
     required String deviceName,
     required String localPeerId,
+    required Set<String> localSourceIps,
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -82,7 +83,6 @@ class LanDiscoveryService {
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
-    String? preferredSourceIp,
   }) async {
     if (_started) {
       _log('start() ignored: service already running');
@@ -94,7 +94,7 @@ class LanDiscoveryService {
     try {
       await _transportAdapter.start(
         port: discoveryPort,
-        preferredSourceIp: preferredSourceIp,
+        localSourceIps: localSourceIps,
         onDatagram: (datagram) => _handleIncomingDatagram(
           datagram: datagram,
           deviceName: deviceName,

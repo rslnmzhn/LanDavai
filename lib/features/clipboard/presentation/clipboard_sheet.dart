@@ -1,12 +1,17 @@
-import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_spacing.dart';
 import '../application/clipboard_history_store.dart';
+import '../application/clipboard_source_scope_store.dart';
 import '../application/remote_clipboard_projection_store.dart';
-import '../../clipboard/domain/clipboard_entry.dart';
+import '../domain/clipboard_entry.dart';
+import 'clipboard_preview_dialog.dart';
+import 'clipboard_source_selector.dart';
+import 'clipboard_sheet_list.dart';
+import 'clipboard_sheet_preview.dart';
 import '../../discovery/application/discovery_controller.dart';
 import '../../discovery/application/discovery_read_model.dart';
 import '../../discovery/domain/discovered_device.dart';
@@ -17,6 +22,7 @@ class ClipboardSheet extends StatefulWidget {
     required this.readModel,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
+    required this.clipboardSourceScopeStore,
     super.key,
   });
 
@@ -24,30 +30,60 @@ class ClipboardSheet extends StatefulWidget {
   final DiscoveryReadModel readModel;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
+  final ClipboardSourceScopeStore clipboardSourceScopeStore;
 
   @override
   State<ClipboardSheet> createState() => _ClipboardSheetState();
 }
 
 class _ClipboardSheetState extends State<ClipboardSheet> {
-  String? _selectedRemoteIp;
-
   @override
   void initState() {
     super.initState();
-    final firstFriend = _availableRemoteDevices.isEmpty
-        ? null
-        : _availableRemoteDevices.first.ip;
-    _selectedRemoteIp = firstFriend;
+    widget.readModel.addListener(_handleAvailableRemoteDevicesChanged);
+    _handleAvailableRemoteDevicesChanged();
+  }
+
+  @override
+  void didUpdateWidget(covariant ClipboardSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.readModel != widget.readModel) {
+      oldWidget.readModel.removeListener(_handleAvailableRemoteDevicesChanged);
+      widget.readModel.addListener(_handleAvailableRemoteDevicesChanged);
+    }
+    _handleAvailableRemoteDevicesChanged();
+  }
+
+  @override
+  void dispose() {
+    widget.readModel.removeListener(_handleAvailableRemoteDevicesChanged);
+    super.dispose();
   }
 
   List<DiscoveredDevice> get _availableRemoteDevices {
-    return widget.readModel.friendDevices
-        .where((device) => device.isAppDetected)
-        .toList(growable: false);
+    return widget.readModel.remoteClipboardDevices;
   }
 
-  Future<void> _copyText(String value) async {
+  DiscoveredDevice? get _selectedRemoteDevice {
+    final selectedRemoteIp = widget.clipboardSourceScopeStore.selectedRemoteIp;
+    if (selectedRemoteIp == null) {
+      return null;
+    }
+    for (final device in _availableRemoteDevices) {
+      if (device.ip == selectedRemoteIp) {
+        return device;
+      }
+    }
+    return null;
+  }
+
+  void _handleAvailableRemoteDevicesChanged() {
+    widget.clipboardSourceScopeStore.syncAvailableRemoteIps(
+      _availableRemoteDevices.map((device) => device.ip),
+    );
+  }
+
+  Future<void> _copyRemoteText(String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) {
       return;
@@ -55,6 +91,88 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+  }
+
+  Future<void> _copyLocalEntry(ClipboardHistoryEntry entry) async {
+    final errorMessage = await widget.clipboardHistoryStore
+        .copyEntryToSystemClipboard(entry);
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(errorMessage ?? 'Copied to clipboard')),
+    );
+  }
+
+  Future<void> _previewLocalEntry(ClipboardHistoryEntry entry) async {
+    if (entry.type == ClipboardEntryType.text) {
+      final text = entry.textValue;
+      if (text == null || text.isEmpty) {
+        return;
+      }
+      await showClipboardTextPreviewDialog(
+        context: context,
+        title: 'Clipboard text',
+        text: text,
+      );
+      return;
+    }
+
+    final imageProvider = buildClipboardFullImageProviderFromPath(
+      entry.imagePath,
+    );
+    if (imageProvider == null) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Clipboard image is unavailable.')),
+      );
+      return;
+    }
+
+    await showClipboardImagePreviewDialog(
+      context: context,
+      title: 'Clipboard image',
+      imageProvider: imageProvider,
+    );
+  }
+
+  Future<void> _previewRemoteEntry(RemoteClipboardEntry entry) async {
+    if (entry.type == ClipboardEntryType.text) {
+      final text = entry.textValue;
+      if (text == null || text.isEmpty) {
+        return;
+      }
+      await showClipboardTextPreviewDialog(
+        context: context,
+        title: 'Remote clipboard text',
+        text: text,
+        note:
+            'Shown as received from the remote clipboard catalog. It may be shortened.',
+      );
+      return;
+    }
+
+    final bytes = entry.imageBytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Remote image preview is unavailable.')),
+      );
+      return;
+    }
+
+    await showClipboardImagePreviewDialog(
+      context: context,
+      title: 'Remote clipboard image preview',
+      imageProvider: MemoryImage(bytes),
+      note:
+          'Preview quality only. Original remote clipboard image is not available.',
+    );
   }
 
   Future<void> _confirmAndDeleteLocalEntry(ClipboardHistoryEntry entry) async {
@@ -86,6 +204,14 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     await widget.clipboardHistoryStore.deleteEntry(entry.id);
   }
 
+  Future<void> _loadSelectedRemoteClipboard() async {
+    final selectedRemoteDevice = _selectedRemoteDevice;
+    if (selectedRemoteDevice == null || !selectedRemoteDevice.isTrusted) {
+      return;
+    }
+    await widget.controller.requestRemoteClipboardHistory(selectedRemoteDevice);
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -93,22 +219,43 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
         animation: Listenable.merge(<Listenable>[
           widget.clipboardHistoryStore,
           widget.remoteClipboardProjectionStore,
+          widget.clipboardSourceScopeStore,
           widget.readModel,
         ]),
         builder: (context, _) {
-          final localEntries = widget.clipboardHistoryStore.entries;
           final remoteDevices = _availableRemoteDevices;
-          if (_selectedRemoteIp != null &&
-              remoteDevices.every((device) => device.ip != _selectedRemoteIp)) {
-            _selectedRemoteIp = remoteDevices.isEmpty
-                ? null
-                : remoteDevices.first.ip;
-          }
-          final remoteEntries = _selectedRemoteIp == null
-              ? const <RemoteClipboardEntry>[]
-              : widget.remoteClipboardProjectionStore.entriesFor(
-                  _selectedRemoteIp!,
-                );
+          final selectedRemoteDevice = _selectedRemoteDevice;
+          final isLocalSelected = selectedRemoteDevice == null;
+          final selectedRemoteIp = selectedRemoteDevice?.ip;
+          final localEntryPreviews = isLocalSelected
+              ? buildLocalClipboardListPreviews(
+                  widget.clipboardHistoryStore.entries,
+                )
+              : const <LocalClipboardListEntryPreview>[];
+          final remoteEntryPreviews =
+              !isLocalSelected && selectedRemoteIp != null
+              ? buildRemoteClipboardListPreviews(
+                  widget.remoteClipboardProjectionStore.entriesFor(
+                    selectedRemoteIp,
+                  ),
+                )
+              : const <RemoteClipboardListEntryPreview>[];
+          final isRemoteLoading =
+              selectedRemoteIp != null &&
+              widget.remoteClipboardProjectionStore.isLoadingFor(
+                selectedRemoteIp,
+              );
+          final remoteHasCachedEntries =
+              selectedRemoteIp != null &&
+              widget.remoteClipboardProjectionStore.hasEntriesFor(
+                selectedRemoteIp,
+              );
+          final remoteLoadLabel = remoteHasCachedEntries ? 'Refresh' : 'Load';
+          final emptyMessage = isLocalSelected
+              ? 'History is empty. Copy text or image to start.'
+              : !selectedRemoteDevice.isTrusted
+              ? 'Confirm ${selectedRemoteDevice.displayName} as a friend to view its clipboard.'
+              : 'No clipboard entries loaded for ${selectedRemoteDevice.displayName}. Use $remoteLoadLabel to request them.';
 
           return Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
@@ -120,102 +267,39 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: AppSpacing.sm),
+                ClipboardSourceSelector(
+                  remoteDevices: remoteDevices,
+                  selectedSourceId:
+                      widget.clipboardSourceScopeStore.selectedSourceId,
+                  onSelectLocal: widget.clipboardSourceScopeStore.selectLocal,
+                  onSelectRemote: (device) {
+                    widget.clipboardSourceScopeStore.selectRemote(device.ip);
+                  },
+                ),
+                if (!isLocalSelected) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  _RemoteClipboardScopeBanner(
+                    device: selectedRemoteDevice,
+                    isLoading: isRemoteLoading,
+                    onLoad: selectedRemoteDevice.isTrusted && !isRemoteLoading
+                        ? _loadSelectedRemoteClipboard
+                        : null,
+                    loadLabel: remoteLoadLabel,
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.sm),
                 Expanded(
-                  child: ListView(
-                    children: [
-                      Text(
-                        'This device',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      if (localEntries.isEmpty)
-                        const Text(
-                          'History is empty. Copy text or image to start.',
-                        )
-                      else
-                        ...localEntries.map(
-                          (entry) => _LocalEntryTile(
-                            entry: entry,
-                            onCopyText: _copyText,
-                            onDeleteEntry: _confirmAndDeleteLocalEntry,
-                          ),
-                        ),
-                      const SizedBox(height: AppSpacing.md),
-                      Text(
-                        'Remote device',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                      if (remoteDevices.isEmpty)
-                        const Text(
-                          'Add the device to Friends to view clipboard.',
-                        )
-                      else ...[
-                        Row(
-                          children: [
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                key: ValueKey<String?>(_selectedRemoteIp),
-                                initialValue: _selectedRemoteIp,
-                                items: remoteDevices
-                                    .map(
-                                      (device) => DropdownMenuItem<String>(
-                                        value: device.ip,
-                                        child: Text(device.displayName),
-                                      ),
-                                    )
-                                    .toList(growable: false),
-                                onChanged: (next) {
-                                  setState(() {
-                                    _selectedRemoteIp = next;
-                                  });
-                                },
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  border: OutlineInputBorder(),
-                                  labelText: 'Friend device',
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            FilledButton(
-                              onPressed:
-                                  widget
-                                          .remoteClipboardProjectionStore
-                                          .isLoading ||
-                                      _selectedRemoteIp == null
-                                  ? null
-                                  : () {
-                                      final target = remoteDevices.firstWhere(
-                                        (device) =>
-                                            device.ip == _selectedRemoteIp,
-                                      );
-                                      widget.controller
-                                          .requestRemoteClipboardHistory(
-                                            target,
-                                          );
-                                    },
-                              child: const Text('Load'),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: AppSpacing.sm),
-                        if (widget.remoteClipboardProjectionStore.isLoading)
-                          const LinearProgressIndicator(minHeight: 2),
-                        if (remoteEntries.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.only(top: AppSpacing.sm),
-                            child: Text('No remote entries loaded.'),
-                          )
-                        else
-                          ...remoteEntries.map(
-                            (entry) => _RemoteEntryTile(
-                              entry: entry,
-                              onCopyText: _copyText,
-                            ),
-                          ),
-                      ],
-                    ],
+                  child: ClipboardSheetList(
+                    isLocalScope: isLocalSelected,
+                    localEntries: localEntryPreviews,
+                    remoteEntries: remoteEntryPreviews,
+                    isRemoteLoading: isRemoteLoading,
+                    emptyMessage: emptyMessage,
+                    onPreviewLocalEntry: _previewLocalEntry,
+                    onPreviewRemoteEntry: _previewRemoteEntry,
+                    onCopyLocalEntry: _copyLocalEntry,
+                    onCopyRemoteText: _copyRemoteText,
+                    onDeleteLocalEntry: _confirmAndDeleteLocalEntry,
                   ),
                 ),
               ],
@@ -227,118 +311,35 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
   }
 }
 
-class _LocalEntryTile extends StatelessWidget {
-  const _LocalEntryTile({
-    required this.entry,
-    required this.onCopyText,
-    required this.onDeleteEntry,
+class _RemoteClipboardScopeBanner extends StatelessWidget {
+  const _RemoteClipboardScopeBanner({
+    required this.device,
+    required this.isLoading,
+    required this.loadLabel,
+    this.onLoad,
   });
 
-  final ClipboardHistoryEntry entry;
-  final Future<void> Function(String value) onCopyText;
-  final Future<void> Function(ClipboardHistoryEntry entry) onDeleteEntry;
+  final DiscoveredDevice device;
+  final bool isLoading;
+  final String loadLabel;
+  final Future<void> Function()? onLoad;
 
   @override
   Widget build(BuildContext context) {
-    final created = entry.createdAt.toLocal().toIso8601String().replaceFirst(
-      'T',
-      ' ',
-    );
-    if (entry.type == ClipboardEntryType.text) {
-      final text = entry.textValue ?? '';
-      return ListTile(
-        dense: true,
-        leading: const Icon(Icons.text_fields_rounded),
-        title: Text(text, maxLines: 3, overflow: TextOverflow.ellipsis),
-        subtitle: Text(created),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'Copy',
-              icon: const Icon(Icons.copy_rounded),
-              onPressed: text.isEmpty ? null : () => onCopyText(text),
-            ),
-            IconButton(
-              tooltip: 'Delete',
-              icon: const Icon(Icons.delete_outline_rounded),
-              onPressed: () => onDeleteEntry(entry),
-            ),
-          ],
+    final message = device.isTrusted
+        ? 'Viewing ${device.displayName}.'
+        : 'Remote clipboard is available only for confirmed friends.';
+    return Row(
+      children: [
+        Expanded(
+          child: Text(message, style: Theme.of(context).textTheme.bodySmall),
         ),
-      );
-    }
-
-    final imagePath = entry.imagePath;
-    final imageFile = imagePath == null ? null : File(imagePath);
-    return ListTile(
-      dense: true,
-      leading: SizedBox(
-        width: 52,
-        height: 52,
-        child: imageFile == null || !imageFile.existsSync()
-            ? const Icon(Icons.broken_image_outlined)
-            : ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.file(imageFile, fit: BoxFit.cover),
-              ),
-      ),
-      title: const Text('Image from clipboard'),
-      subtitle: Text(created),
-      trailing: IconButton(
-        tooltip: 'Delete',
-        icon: const Icon(Icons.delete_outline_rounded),
-        onPressed: () => onDeleteEntry(entry),
-      ),
-    );
-  }
-}
-
-class _RemoteEntryTile extends StatelessWidget {
-  const _RemoteEntryTile({required this.entry, required this.onCopyText});
-
-  final RemoteClipboardEntry entry;
-  final Future<void> Function(String value) onCopyText;
-
-  @override
-  Widget build(BuildContext context) {
-    final created = entry.createdAt.toLocal().toIso8601String().replaceFirst(
-      'T',
-      ' ',
-    );
-    if (entry.type == ClipboardEntryType.text) {
-      final text = entry.textValue ?? '';
-      return ListTile(
-        dense: true,
-        leading: const Icon(Icons.text_fields_rounded),
-        title: Text(text, maxLines: 3, overflow: TextOverflow.ellipsis),
-        subtitle: Text(created),
-        trailing: IconButton(
-          tooltip: 'Copy',
-          icon: const Icon(Icons.copy_rounded),
-          onPressed: text.isEmpty ? null : () => onCopyText(text),
+        const SizedBox(width: AppSpacing.sm),
+        FilledButton(
+          onPressed: onLoad == null ? null : () => unawaited(onLoad!()),
+          child: Text(loadLabel),
         ),
-      );
-    }
-
-    final bytes = entry.imageBytes;
-    return ListTile(
-      dense: true,
-      leading: SizedBox(
-        width: 52,
-        height: 52,
-        child: bytes == null || bytes.isEmpty
-            ? const Icon(Icons.broken_image_outlined)
-            : ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.memory(
-                  Uint8List.fromList(bytes),
-                  fit: BoxFit.cover,
-                ),
-              ),
-      ),
-      title: const Text('Image from remote clipboard'),
-      subtitle: Text(created),
+      ],
     );
   }
 }

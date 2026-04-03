@@ -9,10 +9,12 @@ import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
 import 'package:landa/features/discovery/application/local_peer_identity_store.dart';
+import 'package:landa/features/discovery/application/discovery_network_scope_store.dart';
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
+import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/network_host_scanner.dart';
@@ -30,6 +32,7 @@ import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_app_database.dart';
+import 'test_support/stub_discovery_network_interface_catalog.dart';
 
 void main() {
   late TestAppDatabaseHarness harness;
@@ -38,6 +41,8 @@ void main() {
   late InternetPeerEndpointStore internetPeerEndpointStore;
   late TrustedLanPeerStore trustedLanPeerStore;
   late SettingsStore settingsStore;
+  late StubDiscoveryNetworkInterfaceCatalog discoveryNetworkInterfaceCatalog;
+  late DiscoveryNetworkScopeStore discoveryNetworkScopeStore;
   late DiscoveryController controller;
   late DiscoveryReadModel readModel;
 
@@ -59,18 +64,24 @@ void main() {
     settingsStore = SettingsStore(
       appSettingsRepository: AppSettingsRepository(database: harness.database),
     );
+    discoveryNetworkInterfaceCatalog = StubDiscoveryNetworkInterfaceCatalog();
+    discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
+      interfaceCatalog: discoveryNetworkInterfaceCatalog,
+    );
     controller = _buildController(
       database: harness.database,
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
       settingsStore: settingsStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     );
     readModel = DiscoveryReadModel(
       legacyController: controller,
       deviceRegistry: deviceRegistry,
       internetPeerEndpointStore: internetPeerEndpointStore,
       trustedLanPeerStore: trustedLanPeerStore,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
     );
   });
@@ -143,6 +154,72 @@ void main() {
       expect(controller.settings.isLeftHandedMode, isTrue);
     },
   );
+
+  test(
+    'filters devices by the selected network scope as projection only',
+    () async {
+      discoveryNetworkInterfaceCatalog.replaceInterfaces(
+        const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'Ethernet',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Tailscale',
+            index: 2,
+            ipv4Addresses: <String>['100.90.1.10'],
+          ),
+        ],
+      );
+      controller.dispose();
+      readModel.dispose();
+      discoveryNetworkScopeStore.dispose();
+
+      discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
+        interfaceCatalog: discoveryNetworkInterfaceCatalog,
+      );
+      controller = _buildController(
+        database: harness.database,
+        deviceRegistry: deviceRegistry,
+        internetPeerEndpointStore: internetPeerEndpointStore,
+        trustedLanPeerStore: trustedLanPeerStore,
+        settingsStore: settingsStore,
+        discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+        hostScanResult: const <String, String?>{
+          '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
+          '100.90.1.77': '11-22-33-44-55-66',
+        },
+      );
+      readModel = DiscoveryReadModel(
+        legacyController: controller,
+        deviceRegistry: deviceRegistry,
+        internetPeerEndpointStore: internetPeerEndpointStore,
+        trustedLanPeerStore: trustedLanPeerStore,
+        discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+        settingsStore: settingsStore,
+      );
+
+      await controller.refresh();
+
+      expect(readModel.devices.map((device) => device.ip), <String>[
+        '100.90.1.77',
+        '192.168.1.77',
+      ]);
+      expect(readModel.appDetectedCount, 0);
+
+      final tailscaleRange = readModel.availableNetworkRanges.singleWhere(
+        (range) => range.subnetCidr == '100.90.1.0/24',
+      );
+      final changed = discoveryNetworkScopeStore.selectScope(tailscaleRange.id);
+
+      expect(changed, isTrue);
+      expect(readModel.selectedNetworkScopeId, tailscaleRange.id);
+      expect(readModel.devices.map((device) => device.ip), <String>[
+        '100.90.1.77',
+      ]);
+    },
+  );
 }
 
 DiscoveryController _buildController({
@@ -151,6 +228,10 @@ DiscoveryController _buildController({
   required InternetPeerEndpointStore internetPeerEndpointStore,
   required TrustedLanPeerStore trustedLanPeerStore,
   required SettingsStore settingsStore,
+  required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
+  Map<String, String?> hostScanResult = const <String, String?>{
+    '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
+  },
 }) {
   final thumbnailCacheService = ThumbnailCacheService(database: database);
   final sharedFolderCacheRepository = SharedFolderCacheRepository(
@@ -185,13 +266,12 @@ DiscoveryController _buildController({
   );
   return DiscoveryController(
     lanDiscoveryService: lanDiscoveryService,
-    networkHostScanner: StubNetworkHostScanner(const <String, String?>{
-      '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
-    }),
+    networkHostScanner: StubNetworkHostScanner(hostScanResult),
     deviceRegistry: deviceRegistry,
     internetPeerEndpointStore: internetPeerEndpointStore,
     trustedLanPeerStore: trustedLanPeerStore,
     localPeerIdentityStore: localPeerIdentityStore,
+    discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     settingsStore: settingsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
@@ -216,7 +296,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
 
   @override
   Future<Map<String, String?>> scanActiveHosts({
-    String? preferredSourceIp,
+    required Set<String> localSourceIps,
   }) async {
     return result;
   }
