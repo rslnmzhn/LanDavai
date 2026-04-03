@@ -265,6 +265,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String ownerIp,
     required String ownerName,
     required Map<String, Set<String>> selectedRelativePathsByCache,
+    required bool useStandardAppDownloadFolder,
   }) async {
     if (selectedRelativePathsByCache.isEmpty) {
       _publishNotice(
@@ -302,6 +303,25 @@ class TransferSessionCoordinator extends ChangeNotifier {
       return;
     }
 
+    Directory? destinationDirectory;
+    try {
+      destinationDirectory = await _resolveRemoteDownloadDestinationDirectory(
+        useStandardAppDownloadFolder: useStandardAppDownloadFolder,
+      );
+    } catch (error) {
+      _log('Failed to resolve remote download destination: $error');
+      _publishNotice(
+        TransferSessionNotice(
+          errorMessage: 'Failed to choose download destination: $error',
+        ),
+      );
+      return;
+    }
+
+    if (destinationDirectory == null) {
+      return;
+    }
+
     try {
       _purgeExpiredPendingRemoteDownloads();
       final stamp = DateTime.now().microsecondsSinceEpoch;
@@ -330,6 +350,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             cacheId: entry.key,
           ),
           cacheId: entry.key,
+          destinationDirectoryPath: destinationDirectory.path,
           createdAt: DateTime.now(),
         );
       }
@@ -439,6 +460,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required bool approved,
     bool forPreview = false,
     String? previewRelativePath,
+    String? destinationDirectoryOverridePath,
   }) async {
     final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
     if (index < 0) {
@@ -459,6 +481,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
       if (decisionApproved) {
         final destinationDirectory = isPreview
             ? await _previewCacheOwner.resolvePreviewArtifactDirectory()
+            : destinationDirectoryOverridePath != null
+            ? Directory(destinationDirectoryOverridePath)
             : await _transferStorageService.resolveReceiveDirectory(
                 appFolderName: 'Landa',
               );
@@ -701,8 +725,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
       event.senderMacAddress,
     );
-    final requestedByCurrentDevice = _consumePendingRemoteDownload(event);
-    if (requestedByCurrentDevice) {
+    final pendingRemoteDownload = _consumePendingRemoteDownload(event);
+    if (pendingRemoteDownload != null) {
       _publishNotice(
         TransferSessionNotice(
           infoMessage:
@@ -711,7 +735,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
         ),
       );
       unawaited(
-        respondToTransferRequest(requestId: event.requestId, approved: true),
+        respondToTransferRequest(
+          requestId: event.requestId,
+          approved: true,
+          destinationDirectoryOverridePath:
+              pendingRemoteDownload.destinationDirectoryPath,
+        ),
       );
       return;
     }
@@ -913,7 +942,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
       final result = await session.result;
       if (result.success) {
         var savedPaths = result.savedPaths;
-        if (persistToUserDownloads) {
+        if (persistToUserDownloads &&
+            _transferStorageService.publishesReceivedDownloadsToUserDownloads) {
           try {
             savedPaths = await _transferStorageService.publishToUserDownloads(
               sourcePaths: result.savedPaths,
@@ -927,9 +957,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
           }
         }
 
-        final rootPath = savedPaths.isEmpty
-            ? result.destinationDirectory
-            : File(savedPaths.first).parent.path;
+        final rootPath =
+            persistToUserDownloads &&
+                _transferStorageService
+                    .publishesReceivedDownloadsToUserDownloads
+            ? savedPaths.isEmpty
+                  ? result.destinationDirectory
+                  : File(savedPaths.first).parent.path
+            : result.destinationDirectory;
 
         if (recordHistory) {
           try {
@@ -1494,7 +1529,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return value.replaceAll('\\', '/').trim().toLowerCase();
   }
 
-  bool _consumePendingRemoteDownload(TransferRequestEvent event) {
+  _PendingRemoteDownloadIntent? _consumePendingRemoteDownload(
+    TransferRequestEvent event,
+  ) {
     _purgeExpiredPendingRemoteDownloads();
     final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
       event.senderMacAddress,
@@ -1521,10 +1558,26 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     if (matchedKey == null) {
-      return false;
+      return null;
     }
-    _pendingRemoteDownloads.remove(matchedKey);
-    return true;
+    return _pendingRemoteDownloads.remove(matchedKey);
+  }
+
+  Future<Directory?> _resolveRemoteDownloadDestinationDirectory({
+    required bool useStandardAppDownloadFolder,
+  }) async {
+    if (_transferStorageService.supportsDesktopDownloadPicker) {
+      if (useStandardAppDownloadFolder) {
+        return _transferStorageService.resolveReceiveDirectory(
+          appFolderName: 'Landa',
+        );
+      }
+      return _transferStorageService.pickDesktopDownloadDirectory();
+    }
+
+    return _transferStorageService.resolveReceiveDirectory(
+      appFolderName: 'Landa',
+    );
   }
 
   _PendingRemotePreviewIntent? _consumePendingRemotePreview(
@@ -1648,12 +1701,14 @@ class _PendingRemoteDownloadIntent {
     required this.ownerIp,
     required this.ownerMacAddress,
     required this.cacheId,
+    required this.destinationDirectoryPath,
     required this.createdAt,
   });
 
   final String ownerIp;
   final String? ownerMacAddress;
   final String cacheId;
+  final String destinationDirectoryPath;
   final DateTime createdAt;
 }
 

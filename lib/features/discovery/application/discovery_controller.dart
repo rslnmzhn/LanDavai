@@ -535,6 +535,15 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  Future<void> setUseStandardAppDownloadFolder(bool enabled) async {
+    if (_currentSettings.useStandardAppDownloadFolder == enabled) {
+      return;
+    }
+    await _persistSettingsViaStore(
+      _currentSettings.copyWith(useStandardAppDownloadFolder: enabled),
+    );
+  }
+
   Future<void> setMinimizeToTrayOnClose(bool enabled) async {
     if (_currentSettings.minimizeToTrayOnClose == enabled) {
       return;

@@ -53,6 +53,7 @@ void main() {
     const expected = AppSettings(
       backgroundScanInterval: BackgroundScanIntervalOption.fifteenMinutes,
       downloadAttemptNotificationsEnabled: false,
+      useStandardAppDownloadFolder: false,
       minimizeToTrayOnClose: false,
       isLeftHandedMode: true,
       videoLinkPassword: 'watch-pass',
@@ -75,6 +76,10 @@ void main() {
     expect(
       controller!.settings.downloadAttemptNotificationsEnabled,
       expected.downloadAttemptNotificationsEnabled,
+    );
+    expect(
+      controller!.settings.useStandardAppDownloadFolder,
+      expected.useStandardAppDownloadFolder,
     );
     expect(
       controller!.settings.minimizeToTrayOnClose,
@@ -136,6 +141,31 @@ void main() {
       expect(persistedSettings.videoLinkPassword, 'secret-code');
       expect(localPeerRows, hasLength(1));
       expect(localPeerRows.single['setting_value'], localPeerId);
+    },
+  );
+
+  test(
+    'download folder preference mutation routes through SettingsStore',
+    () async {
+      final trackingSettingsStore = TrackingSettingsStore(
+        appSettingsRepository: AppSettingsRepository(
+          database: harness.database,
+        ),
+      );
+      controller = _buildController(
+        database: harness.database,
+        settingsStore: trackingSettingsStore,
+      );
+
+      await controller!.setUseStandardAppDownloadFolder(false);
+
+      final persistedSettings = await AppSettingsRepository(
+        database: harness.database,
+      ).load();
+
+      expect(trackingSettingsStore.saveCalls, 1);
+      expect(controller!.settings.useStandardAppDownloadFolder, isFalse);
+      expect(persistedSettings.useStandardAppDownloadFolder, isFalse);
     },
   );
 }

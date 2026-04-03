@@ -16,6 +16,7 @@ Future<void> showDiscoveryReceivePanel({
   required RemoteShareBrowser remoteShareBrowser,
   required PreviewCacheOwner previewCacheOwner,
   required TransferSessionCoordinator transferSessionCoordinator,
+  required bool useStandardAppDownloadFolder,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -28,6 +29,7 @@ Future<void> showDiscoveryReceivePanel({
           remoteShareBrowser: remoteShareBrowser,
           previewCacheOwner: previewCacheOwner,
           transferSessionCoordinator: transferSessionCoordinator,
+          useStandardAppDownloadFolder: useStandardAppDownloadFolder,
         ),
       );
     },
@@ -40,6 +42,7 @@ class DiscoveryReceivePanelSheet extends StatefulWidget {
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.useStandardAppDownloadFolder,
     super.key,
   });
 
@@ -47,6 +50,7 @@ class DiscoveryReceivePanelSheet extends StatefulWidget {
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final bool useStandardAppDownloadFolder;
 
   @override
   State<DiscoveryReceivePanelSheet> createState() =>
@@ -522,6 +526,7 @@ class _DiscoveryReceivePanelSheetState
       ownerIp: owner.ip,
       ownerName: owner.name,
       selectedRelativePathsByCache: selectedByCache,
+      useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
     );
 
     if (!mounted) {
@@ -543,6 +548,7 @@ class _DiscoveryReceivePanelSheetState
       ownerIp: owner.ip,
       ownerName: owner.name,
       selectedRelativePathsByCache: selectedByCache,
+      useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
     );
   }
 

@@ -12,6 +12,7 @@ class AppSettingsSheet extends StatefulWidget {
     required this.settings,
     required this.onBackgroundIntervalChanged,
     required this.onDownloadAttemptNotificationsChanged,
+    required this.onUseStandardAppDownloadFolderChanged,
     required this.onMinimizeToTrayChanged,
     required this.onLeftHandedModeChanged,
     required this.onVideoLinkPasswordChanged,
@@ -25,6 +26,7 @@ class AppSettingsSheet extends StatefulWidget {
   final AppSettings settings;
   final ValueChanged<BackgroundScanIntervalOption> onBackgroundIntervalChanged;
   final ValueChanged<bool> onDownloadAttemptNotificationsChanged;
+  final ValueChanged<bool> onUseStandardAppDownloadFolderChanged;
   final ValueChanged<bool> onMinimizeToTrayChanged;
   final ValueChanged<bool> onLeftHandedModeChanged;
   final ValueChanged<String> onVideoLinkPasswordChanged;
@@ -217,6 +219,17 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 contentPadding: EdgeInsets.zero,
                 onChanged: widget.onDownloadAttemptNotificationsChanged,
               ),
+              if (defaultTargetPlatform == TargetPlatform.windows ||
+                  defaultTargetPlatform == TargetPlatform.linux)
+                SwitchListTile.adaptive(
+                  value: widget.settings.useStandardAppDownloadFolder,
+                  title: const Text('Скачивать в стандартную папку Landa'),
+                  subtitle: const Text(
+                    'Если выключено, Windows/Linux будут спрашивать папку назначения перед скачиванием из общих папок.',
+                  ),
+                  contentPadding: EdgeInsets.zero,
+                  onChanged: widget.onUseStandardAppDownloadFolderChanged,
+                ),
               if (defaultTargetPlatform == TargetPlatform.windows ||
                   defaultTargetPlatform == TargetPlatform.linux)
                 SwitchListTile.adaptive(

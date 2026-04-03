@@ -346,6 +346,9 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   _controller.setDownloadAttemptNotificationsEnabled(enabled),
                 );
               },
+              onUseStandardAppDownloadFolderChanged: (enabled) {
+                unawaited(_controller.setUseStandardAppDownloadFolder(enabled));
+              },
               onMinimizeToTrayChanged: (enabled) {
                 unawaited(_controller.setMinimizeToTrayOnClose(enabled));
                 unawaited(
@@ -449,6 +452,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       remoteShareBrowser: _remoteShareBrowser,
       previewCacheOwner: _previewCacheOwner,
       transferSessionCoordinator: _transferSessionCoordinator,
+      useStandardAppDownloadFolder:
+          _readModel.settings.useStandardAppDownloadFolder,
     );
   }
 }

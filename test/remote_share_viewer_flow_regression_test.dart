@@ -87,6 +87,7 @@ void main() {
             remoteShareBrowser: remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
           ),
         ),
       ),
@@ -101,10 +102,7 @@ void main() {
       find.byType(LocalFileViewerPage, skipOffstage: false),
       failureMessage: 'Remote-share preview did not open the file viewer.',
     );
-    final viewerFinder = find.byType(
-      LocalFileViewerPage,
-      skipOffstage: false,
-    );
+    final viewerFinder = find.byType(LocalFileViewerPage, skipOffstage: false);
     expect(viewerFinder, findsOneWidget);
     await _pumpForUi(tester, frames: 4);
     await _closeCurrentRoute(tester, viewerFinder.first);
