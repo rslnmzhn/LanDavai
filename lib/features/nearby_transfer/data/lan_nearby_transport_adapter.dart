@@ -29,6 +29,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       <String, Completer<int>>{};
   final Map<String, TransferReceiveSession> _receiveSessions =
       <String, TransferReceiveSession>{};
+  Future<void> _pendingControlWrite = Future<void>.value();
 
   ServerSocket? _server;
   Socket? _activeSocket;
@@ -235,6 +236,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
 
   Future<void> _attachSocket(Socket socket) async {
     _activeSocket = socket;
+    _pendingControlWrite = Future<void>.value();
     _activeSocketLines?.cancel();
     _activeSocketLines = socket
         .cast<List<int>>()
@@ -349,15 +351,15 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       displayName: deviceName.trim(),
       host: socket.remoteAddress.address,
     );
-    _events.add(
-      NearbyTransferConnectedEvent(peer: _peer!, sessionId: localSessionId),
-    );
     await _sendControlMessage(<String, Object?>{
       'type': 'connectAccepted',
       'sessionId': localSessionId,
       'deviceId': _localDeviceId ?? 'unknown-device',
       'deviceName': _localDeviceName ?? 'Landa',
     });
+    _events.add(
+      NearbyTransferConnectedEvent(peer: _peer!, sessionId: localSessionId),
+    );
   }
 
   void _handleConnectAccepted(Map<String, dynamic> json) {
@@ -486,9 +488,16 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     if (socket == null) {
       throw StateError('Nearby transfer socket is not connected.');
     }
-    socket.write(jsonEncode(payload));
-    socket.write('\n');
-    await socket.flush();
+    final encodedPayload = '${jsonEncode(payload)}\n';
+    final writeFuture = _pendingControlWrite.then((_) async {
+      if (!identical(socket, _activeSocket)) {
+        throw StateError('Nearby transfer socket is not connected.');
+      }
+      socket.write(encodedPayload);
+      await socket.flush();
+    });
+    _pendingControlWrite = writeFuture.catchError((_) {});
+    await writeFuture;
   }
 
   Future<void> _handleSocketClosed(Socket socket) async {
@@ -498,6 +507,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     _peer = null;
     _expectedSessionId = null;
     _activeSocket = null;
+    _pendingControlWrite = Future<void>.value();
     await _activeSocketLines?.cancel();
     _activeSocketLines = null;
     try {

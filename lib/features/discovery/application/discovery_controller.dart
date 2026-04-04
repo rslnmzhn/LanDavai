@@ -711,6 +711,12 @@ class DiscoveryController extends ChangeNotifier {
 
     try {
       if (accept) {
+        await _rememberVisibleFriendPeer(
+          ip: request.senderIp,
+          macAddress: request.senderMacAddress,
+          deviceName: request.senderName,
+          observedAt: request.createdAt,
+        );
         await _setFriendStatus(
           macAddress: request.senderMacAddress,
           isFriend: true,
@@ -1338,7 +1344,16 @@ class DiscoveryController extends ChangeNotifier {
     final senderName = senderDevice?.displayName ?? event.requesterName;
 
     if (_trustedLanPeerStore.isTrustedMac(normalizedSenderMac)) {
+      unawaited(
+        _rememberVisibleFriendPeer(
+          ip: event.requesterIp,
+          macAddress: normalizedSenderMac,
+          deviceName: senderName,
+          observedAt: event.observedAt,
+        ),
+      );
       _log('Friend request from known friend $senderName. Auto-accepting.');
+      notifyListeners();
       unawaited(
         _lanDiscoveryService.sendFriendResponse(
           targetIp: event.requesterIp,
@@ -1351,6 +1366,14 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    unawaited(
+      _rememberVisibleFriendPeer(
+        ip: event.requesterIp,
+        macAddress: normalizedSenderMac,
+        deviceName: senderName,
+        observedAt: event.observedAt,
+      ),
+    );
     _incomingFriendRequests.removeWhere(
       (request) =>
           request.requestId == event.requestId ||
@@ -1404,14 +1427,31 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    unawaited(_setFriendAfterAcceptance(responderMac, responderName));
+    unawaited(
+      _setFriendAfterAcceptance(
+        responderMac,
+        responderName,
+        responderIp: event.responderIp,
+        observedAt: event.observedAt,
+      ),
+    );
   }
 
   Future<void> _setFriendAfterAcceptance(
     String responderMac,
-    String responderName,
-  ) async {
+    String responderName, {
+    String? responderIp,
+    DateTime? observedAt,
+  }) async {
     try {
+      if (responderIp != null) {
+        await _rememberVisibleFriendPeer(
+          ip: responderIp,
+          macAddress: responderMac,
+          deviceName: responderName,
+          observedAt: observedAt ?? DateTime.now(),
+        );
+      }
       await _setFriendStatus(macAddress: responderMac, isFriend: true);
       _errorMessage = null;
       _infoMessage = '$responderName accepted your friend request.';
@@ -1421,6 +1461,36 @@ class DiscoveryController extends ChangeNotifier {
       _log(_errorMessage!);
       notifyListeners();
     }
+  }
+
+  Future<void> _rememberVisibleFriendPeer({
+    required String ip,
+    required String macAddress,
+    required String deviceName,
+    required DateTime observedAt,
+  }) async {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    final trimmedIp = ip.trim();
+    if (normalizedMac == null || trimmedIp.isEmpty) {
+      return;
+    }
+
+    final existing = _devicesByIp[trimmedIp];
+    final trimmedName = deviceName.trim();
+    _devicesByIp[trimmedIp] =
+        (existing ?? DiscoveredDevice(ip: trimmedIp, lastSeen: observedAt))
+            .copyWith(
+              macAddress: normalizedMac,
+              deviceName: trimmedName.isEmpty
+                  ? existing?.deviceName
+                  : trimmedName,
+              isAppDetected: true,
+              isReachable: true,
+              lastSeen: observedAt,
+            );
+    await _deviceRegistry.recordSeenDevices(<String, String>{
+      normalizedMac: trimmedIp,
+    });
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
