@@ -39,6 +39,7 @@ class LanDiscoveryService {
     LanFriendProtocolHandler? friendProtocolHandler,
     LanShareProtocolHandler? shareProtocolHandler,
     LanClipboardProtocolHandler? clipboardProtocolHandler,
+    int? Function()? nearbyTransferPortProvider,
   }) : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter(),
        _packetCodec = packetCodec ?? LanPacketCodec(),
        _presenceProtocolHandler =
@@ -50,7 +51,8 @@ class LanDiscoveryService {
        _shareProtocolHandler =
            shareProtocolHandler ?? const LanShareProtocolHandler(),
        _clipboardProtocolHandler =
-           clipboardProtocolHandler ?? const LanClipboardProtocolHandler();
+           clipboardProtocolHandler ?? const LanClipboardProtocolHandler(),
+       _nearbyTransferPortProvider = nearbyTransferPortProvider;
 
   final DiscoveryTransportAdapter _transportAdapter;
   final LanPacketCodec _packetCodec;
@@ -59,6 +61,7 @@ class LanDiscoveryService {
   final LanFriendProtocolHandler _friendProtocolHandler;
   final LanShareProtocolHandler _shareProtocolHandler;
   final LanClipboardProtocolHandler _clipboardProtocolHandler;
+  final int? Function()? _nearbyTransferPortProvider;
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -156,6 +159,13 @@ class LanDiscoveryService {
     _beaconTimer = null;
     await _transportAdapter.stop();
     _started = false;
+  }
+
+  Future<void> broadcastPresenceNow({required String deviceName}) async {
+    if (!_started) {
+      return;
+    }
+    await _sendDiscoveryPing(deviceName);
   }
 
   Future<void> sendTransferRequest({
@@ -405,6 +415,21 @@ class LanDiscoveryService {
     required String ownerMacAddress,
     required List<ClipboardCatalogItem> entries,
   }) async {
+    final createdAtMs = DateTime.now().millisecondsSinceEpoch;
+    final fittedEntries = _packetCodec.fitClipboardCatalogEntries(
+      instanceId: _instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      createdAtMs: createdAtMs,
+    );
+    if (fittedEntries.length < entries.length) {
+      _log(
+        'Clipboard catalog trimmed for UDP: '
+        'entries=${fittedEntries.length}/${entries.length}',
+      );
+    }
     await _sendOutgoingPacket(
       prefix: lanClipboardCatalogPrefix,
       packet: _packetCodec.encodeClipboardCatalog(
@@ -412,8 +437,8 @@ class LanDiscoveryService {
         requestId: requestId,
         ownerName: ownerName,
         ownerMacAddress: ownerMacAddress,
-        entries: entries,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        entries: fittedEntries,
+        createdAtMs: createdAtMs,
       ),
       targetIp: targetIp,
     );
@@ -442,10 +467,12 @@ class LanDiscoveryService {
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
+    final nearbyTransferPort = _nearbyTransferPortProvider?.call();
     final request = _packetCodec.encodeDiscoveryRequest(
       instanceId: _instanceId,
       deviceName: deviceName,
       localPeerId: _localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
     final bytes = utf8.encode(request);
     final localIps = _transportAdapter.localIps;
@@ -609,6 +636,7 @@ class LanDiscoveryService {
           instanceId: _instanceId,
           deviceName: deviceName,
           localPeerId: _localPeerId,
+          nearbyTransferPort: _nearbyTransferPortProvider?.call(),
         );
         _transportAdapter.send(
           bytes: utf8.encode(response),

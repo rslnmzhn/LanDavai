@@ -79,4 +79,29 @@ void main() {
       expect(rows, isEmpty);
     },
   );
+
+  test(
+    'persists peer identity binding alongside normalized known-device metadata',
+    () async {
+      const mac = 'AA-BB-CC-DD-EE-FF';
+
+      await repository.setPeerIdentity(
+        macAddress: mac,
+        peerId: 'LN-PEER-ALICE',
+        lastKnownIp: '192.168.1.80',
+      );
+
+      final peerIdMap = await repository.loadPeerIdMap();
+      final lastKnownIps = await repository.loadLastKnownIpMap();
+      final rows = await database.query(
+        AppDatabase.knownDevicesTable,
+        where: 'mac_address = ?',
+        whereArgs: <Object>['aa:bb:cc:dd:ee:ff'],
+      );
+
+      expect(peerIdMap['aa:bb:cc:dd:ee:ff'], 'LN-PEER-ALICE');
+      expect(lastKnownIps['aa:bb:cc:dd:ee:ff'], '192.168.1.80');
+      expect(rows.single['peer_id'], 'LN-PEER-ALICE');
+    },
+  );
 }

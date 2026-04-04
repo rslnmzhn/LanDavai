@@ -16,12 +16,14 @@ class LanPresencePacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _encodeDiscoveryPacket(
       prefix: lanDiscoverPrefix,
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 
@@ -29,12 +31,14 @@ class LanPresencePacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _encodeDiscoveryPacket(
       prefix: lanResponsePrefix,
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 
@@ -70,6 +74,7 @@ class LanPresencePacketCodec {
           operatingSystem: decodedPayload.operatingSystem,
           deviceType: decodedPayload.deviceType,
           peerId: decodedPayload.peerId,
+          nearbyTransferPort: decodedPayload.nearbyTransferPort,
         );
       }
 
@@ -88,12 +93,14 @@ class LanPresencePacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
-    final payload = <String, Object>{
+    final payload = <String, Object?>{
       'name': deviceName,
       'os': _operatingSystem,
       'type': _deviceType,
       'peerId': localPeerId,
+      'nearbyPort': nearbyTransferPort,
     };
     final encodedPayload = base64UrlEncode(utf8.encode(jsonEncode(payload)));
     return '$prefix|$instanceId|$encodedPayload';
@@ -114,6 +121,7 @@ class LanPresencePacketCodec {
       final rawOs = decoded['os'] as String?;
       final rawType = decoded['type'] as String?;
       final rawPeerId = decoded['peerId'] as String?;
+      final rawNearbyPort = decoded['nearbyPort'];
       return _DiscoveryIdentity(
         deviceName: (rawName == null || rawName.trim().isEmpty)
             ? 'Unknown device'
@@ -121,6 +129,7 @@ class LanPresencePacketCodec {
         operatingSystem: _normalizeDiscoveryText(rawOs),
         deviceType: _normalizeDiscoveryText(rawType),
         peerId: _normalizeDiscoveryText(rawPeerId),
+        nearbyTransferPort: rawNearbyPort is num ? rawNearbyPort.toInt() : null,
       );
     } catch (_) {
       return null;
@@ -155,10 +164,12 @@ class _DiscoveryIdentity {
     this.operatingSystem,
     this.deviceType,
     this.peerId,
+    this.nearbyTransferPort,
   });
 
   final String deviceName;
   final String? operatingSystem;
   final String? deviceType;
   final String? peerId;
+  final int? nearbyTransferPort;
 }

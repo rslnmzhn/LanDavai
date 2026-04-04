@@ -83,6 +83,54 @@ void main() {
   );
 
   test(
+    'treats incoming discover requests as visible peers and mirrors nearby availability in the response',
+    () async {
+      service = LanDiscoveryService(
+        transportAdapter: transportAdapter,
+        nearbyTransferPortProvider: () => 47890,
+      );
+      AppPresenceEvent? detectedEvent;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (event) {
+          detectedEvent = event;
+        },
+      );
+      transportAdapter.clearSentPackets();
+
+      final requestMessage = codec.encodeDiscoveryRequest(
+        instanceId: 'remote-instance',
+        deviceName: 'Remote node',
+        localPeerId: 'remote-peer',
+        nearbyTransferPort: 47901,
+      );
+      transportAdapter.emitDatagram(
+        bytes: utf8.encode(requestMessage),
+        senderIp: '192.168.1.24',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(detectedEvent, isNotNull);
+      expect(detectedEvent!.ip, '192.168.1.24');
+      expect(detectedEvent!.deviceName, 'Remote node');
+      expect(detectedEvent!.peerId, 'remote-peer');
+      expect(detectedEvent!.nearbyTransferPort, 47901);
+
+      final responsePacket = transportAdapter.sentPackets.singleWhere(
+        (packet) => packet.context == 'discover-response',
+      );
+      final responseMessage = utf8.decode(responsePacket.bytes);
+      final decoded = codec.decodeDiscoveryPacket(responseMessage);
+
+      expect(decoded, isNotNull);
+      expect(decoded!.nearbyTransferPort, 47890);
+    },
+  );
+
+  test(
     'keeps encoded packet send path routed through transport adapter',
     () async {
       await service.start(
@@ -124,6 +172,40 @@ void main() {
       expect(decoded?['sharedCacheId'], 'cache-1');
     },
   );
+
+  test('trims oversized clipboard catalogs instead of dropping them', () async {
+    final oversizedPreview = base64Encode(
+      List<int>.filled(18 * 1024, 3, growable: false),
+    );
+    final entries = List<ClipboardCatalogItem>.generate(
+      3,
+      (index) => ClipboardCatalogItem(
+        id: 'clip-$index',
+        entryType: 'image',
+        createdAtMs: index + 1,
+        imagePreviewBase64: oversizedPreview,
+      ),
+    );
+
+    await service.sendClipboardCatalog(
+      targetIp: '192.168.1.20',
+      requestId: 'request-clip',
+      ownerName: 'Windows peer',
+      ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+      entries: entries,
+    );
+
+    expect(transportAdapter.sentPackets, hasLength(1));
+    final packet = transportAdapter.sentPackets.single;
+    final decoded =
+        codec.decodeIncomingPacket(utf8.decode(packet.bytes))
+            as LanClipboardCatalogPacket?;
+
+    expect(packet.context, LanPacketCodec.clipboardCatalogPrefix);
+    expect(decoded, isNotNull);
+    expect(decoded!.entries, isNotEmpty);
+    expect(decoded.entries.length, lessThan(entries.length));
+  });
 }
 
 class FakeDiscoveryTransportAdapter implements DiscoveryTransportAdapter {

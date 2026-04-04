@@ -73,4 +73,37 @@ void main() {
     expect(registry.aliasForMac('aa:bb:cc:dd:ee:ff'), 'Office laptop');
     expect(aliasMap['aa:bb:cc:dd:ee:ff'], 'Office laptop');
   });
+
+  test(
+    'peer identity binding survives reload and reconciles the same device after ip change',
+    () async {
+      const mac = 'AA-BB-CC-DD-EE-FF';
+
+      await registry.load();
+      await registry.recordPeerIdentity(
+        macAddress: mac,
+        peerId: 'LN-PEER-ALICE',
+        ip: '192.168.1.80',
+      );
+
+      expect(registry.macForPeerId('LN-PEER-ALICE'), 'aa:bb:cc:dd:ee:ff');
+      expect(registry.macForIp('192.168.1.80'), 'aa:bb:cc:dd:ee:ff');
+
+      registry.dispose();
+      registry = DeviceRegistry(deviceAliasRepository: repository);
+      await registry.load();
+
+      expect(registry.macForPeerId('LN-PEER-ALICE'), 'aa:bb:cc:dd:ee:ff');
+      expect(registry.peerIdForMac(mac), 'LN-PEER-ALICE');
+
+      await registry.recordPeerIdentity(
+        macAddress: mac,
+        peerId: 'LN-PEER-ALICE',
+        ip: '192.168.1.95',
+      );
+
+      expect(registry.macForIp('192.168.1.80'), isNull);
+      expect(registry.macForIp('192.168.1.95'), 'aa:bb:cc:dd:ee:ff');
+    },
+  );
 }

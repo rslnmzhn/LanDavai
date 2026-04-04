@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
@@ -597,6 +598,175 @@ void main() {
         );
       },
     );
+
+    test(
+      'whole-cache remote download preserves the shared root folder on receive and in history',
+      () async {
+        final transferStorageService = RecordingTransferStorageService(
+          rootDirectory: harness.rootDirectory,
+        );
+        final fileTransferService = AllocatingReceiveFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          transferStorageService: transferStorageService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{},
+          },
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(lanDiscoveryService.downloadRequests, hasLength(1));
+        expect(
+          lanDiscoveryService.downloadRequests.single.selectedRelativePaths,
+          isEmpty,
+        );
+
+        coordinator.handleTransferRequestEvent(
+          TransferRequestEvent(
+            requestId: lanDiscoveryService.downloadRequests.single.requestId,
+            senderIp: '192.168.1.40',
+            senderName: 'Remote peer',
+            senderMacAddress: '11:22:33:44:55:66',
+            sharedCacheId: 'remote-cache',
+            sharedLabel: 'Docs',
+            observedAt: DateTime(2026),
+            items: <TransferAnnouncementItem>[
+              TransferAnnouncementItem(
+                fileName: 'a.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+              TransferAnnouncementItem(
+                fileName: 'sub/b.txt',
+                sizeBytes: 24,
+                sha256: 'def456',
+              ),
+            ],
+          ),
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        final history = downloadHistoryBoundary.records.single;
+        final expectedRoot = p.join(
+          transferStorageService.standardReceiveDirectory.path,
+          'Docs',
+        );
+        expect(fileTransferService.startReceiverCalls, 1);
+        expect(fileTransferService.lastDestinationRelativeRootPrefix, 'Docs');
+        expect(history.rootPath, expectedRoot);
+        expect(
+          history.savedPaths,
+          containsAll(<String>[
+            p.join(expectedRoot, 'a.txt'),
+            p.join(expectedRoot, 'sub', 'b.txt'),
+          ]),
+        );
+      },
+    );
+
+    test(
+      'published whole-cache folder downloads keep the shared root as history root',
+      () async {
+        final transferStorageService = RecordingTransferStorageService(
+          rootDirectory: harness.rootDirectory,
+          supportsDesktopDownloadPicker: false,
+          publishesReceivedDownloadsToUserDownloads: true,
+          publishedDownloadPaths: <String>[
+            p.join(
+              harness.rootDirectory.path,
+              'Downloads',
+              'Landa',
+              'Docs',
+              'a.txt',
+            ),
+            p.join(
+              harness.rootDirectory.path,
+              'Downloads',
+              'Landa',
+              'Docs',
+              'sub',
+              'b.txt',
+            ),
+          ],
+        );
+        final fileTransferService = AllocatingReceiveFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          transferStorageService: transferStorageService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{},
+          },
+          useStandardAppDownloadFolder: false,
+        );
+
+        coordinator.handleTransferRequestEvent(
+          TransferRequestEvent(
+            requestId: lanDiscoveryService.downloadRequests.single.requestId,
+            senderIp: '192.168.1.40',
+            senderName: 'Remote peer',
+            senderMacAddress: '11:22:33:44:55:66',
+            sharedCacheId: 'remote-cache',
+            sharedLabel: 'Docs',
+            observedAt: DateTime(2026),
+            items: <TransferAnnouncementItem>[
+              TransferAnnouncementItem(
+                fileName: 'a.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+              TransferAnnouncementItem(
+                fileName: 'sub/b.txt',
+                sizeBytes: 24,
+                sha256: 'def456',
+              ),
+            ],
+          ),
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        final history = downloadHistoryBoundary.records.single;
+        expect(
+          history.rootPath,
+          p.join(harness.rootDirectory.path, 'Downloads', 'Landa', 'Docs'),
+        );
+        expect(
+          history.savedPaths,
+          containsAll(transferStorageService.publishedDownloadPaths!),
+        );
+      },
+    );
   });
 
   test(
@@ -942,6 +1112,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
     Future<String> Function({
       required Directory destinationDirectory,
       required String relativePath,
@@ -955,6 +1126,67 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     return TransferReceiveSession(
       port: 40404,
       result: Future<FileTransferResult>.value(result),
+      close: () async {},
+    );
+  }
+}
+
+class AllocatingReceiveFileTransferService extends FileTransferService {
+  int startReceiverCalls = 0;
+  String? lastDestinationDirectoryPath;
+  String? lastDestinationRelativeRootPrefix;
+
+  @override
+  Future<TransferReceiveSession> startReceiver({
+    required String requestId,
+    required List<TransferFileManifestItem> expectedItems,
+    required Directory destinationDirectory,
+    Duration timeout = const Duration(minutes: 3),
+    void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
+  }) async {
+    startReceiverCalls += 1;
+    lastDestinationDirectoryPath = destinationDirectory.path;
+    lastDestinationRelativeRootPrefix = destinationRelativeRootPrefix;
+    final savedPaths = <String>[];
+    for (final item in expectedItems) {
+      final destinationPath = destinationPathAllocator == null
+          ? destinationRelativeRootPrefix == null ||
+                    destinationRelativeRootPrefix.isEmpty
+                ? p.join(destinationDirectory.path, item.fileName)
+                : p.joinAll(<String>[
+                    destinationDirectory.path,
+                    destinationRelativeRootPrefix,
+                    ...p.split(item.fileName),
+                  ])
+          : await destinationPathAllocator(
+              destinationDirectory: destinationDirectory,
+              relativePath: item.fileName,
+            );
+      savedPaths.add(destinationPath);
+    }
+    final totalBytes = expectedItems.fold<int>(
+      0,
+      (sum, item) => sum + item.sizeBytes,
+    );
+    onProgress?.call(totalBytes, totalBytes);
+    return TransferReceiveSession(
+      port: 40404,
+      result: Future<FileTransferResult>.value(
+        FileTransferResult(
+          success: true,
+          message: 'ok',
+          savedPaths: savedPaths,
+          totalBytes: totalBytes,
+          destinationDirectory: destinationDirectory.path,
+          hashVerified: true,
+        ),
+      ),
       close: () async {},
     );
   }

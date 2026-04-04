@@ -224,6 +224,8 @@ Rules:
 
 ## Device Identity Contract
 - IP is transient; MAC is identity key when available.
+- Stable `peer_id` is the restart-time reconciliation key when LAN app presence
+  arrives without a usable MAC.
 - User device alias is bound to normalized MAC (`aa:bb:cc:dd:ee:ff`).
 - If IP changes but MAC is the same, alias must remain.
 
@@ -234,6 +236,7 @@ Database file:
 Tables:
 1. `known_devices`
    - `mac_address` (PK)
+   - `peer_id` (nullable)
    - `alias_name`
    - `last_known_ip`
    - `last_seen_at`

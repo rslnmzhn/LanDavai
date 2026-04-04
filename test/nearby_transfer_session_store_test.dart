@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_availability_store.dart';
 import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_adapter.dart';
 import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
 
@@ -66,6 +67,8 @@ void main() {
           ip: '192.168.0.2',
           macAddress: 'aa:bb:cc:00:00:02',
           deviceName: 'Peer A',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 45321,
           isAppDetected: true,
           isReachable: true,
           lastSeen: DateTime(2026, 1, 1, 10),
@@ -87,6 +90,8 @@ void main() {
           ip: '192.168.0.3',
           macAddress: 'aa:bb:cc:00:00:03',
           deviceName: 'Peer B',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 45322,
           isAppDetected: true,
           isReachable: true,
           lastSeen: DateTime(2026, 1, 1, 11),
@@ -98,6 +103,47 @@ void main() {
       expect(store.candidateDevices, hasLength(1));
       expect(store.candidateDevices.single.displayName, 'Peer B');
       expect(store.candidateDevices.single.host, '192.168.0.3');
+      expect(store.candidateDevices.single.port, 45322);
+    },
+  );
+
+  test(
+    'candidate devices exclude general app peers until nearby availability is advertised',
+    () async {
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.0.4',
+          macAddress: 'aa:bb:cc:00:00:04',
+          deviceName: 'Peer C',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 12),
+        ),
+      ]);
+      final store = buildTestNearbyTransferStore(readModel: harness.readModel);
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+
+      expect(store.candidateDevices, isEmpty);
+
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.0.4',
+          macAddress: 'aa:bb:cc:00:00:04',
+          deviceName: 'Peer C',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 45323,
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 12, 1),
+        ),
+      ]);
+      await store.refreshCandidates();
+
+      expect(store.candidateDevices, hasLength(1));
+      expect(store.candidateDevices.single.displayName, 'Peer C');
+      expect(store.candidateDevices.single.port, 45323);
     },
   );
 
@@ -131,4 +177,30 @@ void main() {
     expect(store.hasActiveConnection, isFalse);
     expect(store.selectedCandidateId, isNull);
   });
+
+  test(
+    'send flow advertises nearby availability only while the sheet session is active',
+    () async {
+      final availabilityStore = NearbyTransferAvailabilityStore();
+      final lanAdapter = FakeNearbyTransferTransportAdapter(hostingPort: 47890);
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+        availabilityStore: availabilityStore,
+      );
+      addTearDown(store.dispose);
+
+      expect(availabilityStore.isLanFallbackAdvertised, isFalse);
+
+      await store.prepareSendFlow();
+
+      expect(availabilityStore.lanFallbackPort, 47890);
+      expect(availabilityStore.isLanFallbackAdvertised, isTrue);
+
+      await store.disconnect(restart: false);
+
+      expect(availabilityStore.lanFallbackPort, isNull);
+      expect(availabilityStore.isLanFallbackAdvertised, isFalse);
+    },
+  );
 }

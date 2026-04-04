@@ -12,12 +12,14 @@ class NearbyTransferCandidateDevice {
     required this.deviceId,
     required this.displayName,
     required this.host,
+    this.port,
   });
 
   final String id;
   final String deviceId;
   final String displayName;
   final String host;
+  final int? port;
 }
 
 class NearbyTransferPeerDevice {

@@ -16,7 +16,7 @@ class AppDatabase {
   static const String appSettingsTable = 'app_settings';
   static const String friendsTable = 'friends';
   static const String clipboardHistoryTable = 'clipboard_history';
-  static const int schemaVersion = 6;
+  static const int schemaVersion = 7;
 
   Database? _database;
 
@@ -98,6 +98,7 @@ class AppDatabase {
     await db.execute('''
       CREATE TABLE $knownDevicesTable (
         mac_address TEXT PRIMARY KEY,
+        peer_id TEXT,
         alias_name TEXT,
         is_trusted INTEGER NOT NULL DEFAULT 0,
         last_known_ip TEXT,
@@ -159,6 +160,13 @@ class AppDatabase {
 
     if (oldVersion < 6 && newVersion >= 6) {
       await _createClipboardHistoryTable(db);
+    }
+
+    if (oldVersion < 7 && newVersion >= 7) {
+      await db.execute(
+        'ALTER TABLE $knownDevicesTable '
+        'ADD COLUMN peer_id TEXT',
+      );
     }
   }
 

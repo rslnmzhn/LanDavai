@@ -67,6 +67,7 @@ class FileTransferService {
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
     Future<String> Function({
       required Directory destinationDirectory,
       required String relativePath,
@@ -133,6 +134,7 @@ class FileTransferService {
             expectedItems: expectedItems,
             destinationDirectory: destinationDirectory,
             onProgress: onProgress,
+            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             destinationPathAllocator: destinationPathAllocator,
           ).then(resultCompleter.complete).catchError((Object error) {
             if (!resultCompleter.isCompleted) {
@@ -257,6 +259,7 @@ class FileTransferService {
     required List<TransferFileManifestItem> expectedItems,
     required Directory destinationDirectory,
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
     Future<String> Function({
       required Directory destinationDirectory,
       required String relativePath,
@@ -340,6 +343,7 @@ class FileTransferService {
             ? await _allocateDestinationPath(
                 destinationDirectory: destinationDirectory,
                 relativePath: file.name,
+                destinationRelativeRootPrefix: destinationRelativeRootPrefix,
               )
             : await destinationPathAllocator(
                 destinationDirectory: destinationDirectory,
@@ -411,8 +415,15 @@ class FileTransferService {
   Future<String> _allocateDestinationPath({
     required Directory destinationDirectory,
     required String relativePath,
+    String? destinationRelativeRootPrefix,
   }) async {
-    final sanitized = _sanitizeRelativePath(relativePath);
+    final sanitizedRelative = _sanitizeRelativePath(relativePath);
+    final sanitizedPrefix = destinationRelativeRootPrefix == null
+        ? null
+        : _sanitizeRelativePath(destinationRelativeRootPrefix);
+    final sanitized = sanitizedPrefix == null || sanitizedPrefix.isEmpty
+        ? sanitizedRelative
+        : p.join(sanitizedPrefix, sanitizedRelative);
     final fullPath = p.join(destinationDirectory.path, sanitized);
     final file = File(fullPath);
     if (!await file.exists()) {

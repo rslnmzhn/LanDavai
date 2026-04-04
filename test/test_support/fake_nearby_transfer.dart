@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_candidate_projection.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_availability_store.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_capability_service.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_mode_resolver.dart';
@@ -147,6 +148,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
   String localDeviceId = 'aa:bb:cc:dd:ee:ff',
   String localDeviceName = 'Test device',
   String? localIp = '192.168.0.10',
+  NearbyTransferAvailabilityStore? availabilityStore,
 }) {
   return NearbyTransferSessionStore(
     capabilityService: NearbyTransferCapabilityService(
@@ -157,6 +159,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
     candidateProjection: NearbyTransferCandidateProjection(
       readModel: readModel,
     ),
+    availabilityStore: availabilityStore ?? NearbyTransferAvailabilityStore(),
     qrCodec: const NearbyTransferQrCodec(),
     wifiDirectTransportAdapter:
         wifiAdapter ?? FakeNearbyTransferTransportAdapter(),

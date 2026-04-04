@@ -28,6 +28,8 @@ void main() {
           ip: '192.168.0.20',
           macAddress: 'aa:bb:cc:00:00:20',
           deviceName: 'Peer A',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 45321,
           isAppDetected: true,
           isReachable: true,
           lastSeen: DateTime(2026, 1, 1, 10),

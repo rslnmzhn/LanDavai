@@ -15,6 +15,7 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
+import '../../nearby_transfer/application/nearby_transfer_availability_store.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
@@ -117,6 +118,16 @@ class SharedFolderIndexingProgress {
 }
 
 class DiscoveryController extends ChangeNotifier {
+  static const int _maxClipboardImagePreviewBytes = 22 * 1024;
+  static const List<({int longestEdge, int quality})>
+  _clipboardImagePreviewProfiles = <({int longestEdge, int quality})>[
+    (longestEdge: 512, quality: 55),
+    (longestEdge: 420, quality: 50),
+    (longestEdge: 320, quality: 42),
+    (longestEdge: 256, quality: 36),
+    (longestEdge: 192, quality: 30),
+  ];
+
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
@@ -143,7 +154,12 @@ class DiscoveryController extends ChangeNotifier {
     required TransferStorageService transferStorageService,
     required PreviewCacheOwner previewCacheOwner,
     required PathOpener pathOpener,
+    NearbyTransferAvailabilityStore? nearbyTransferAvailabilityStore,
     TransferSessionCoordinator? transferSessionCoordinator,
+    Duration appPresenceTtl = const Duration(seconds: 12),
+    Duration nearbyAvailabilityTtl = const Duration(seconds: 8),
+    Duration presenceExpiryCheckInterval = const Duration(seconds: 2),
+    DateTime Function()? nowProvider,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceRegistry = deviceRegistry,
@@ -159,7 +175,14 @@ class DiscoveryController extends ChangeNotifier {
        _sharedCacheIndexStore = sharedCacheIndexStore,
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
-       _pathOpener = pathOpener {
+       _pathOpener = pathOpener,
+       _appPresenceTtl = appPresenceTtl,
+       _nearbyAvailabilityTtl = nearbyAvailabilityTtl,
+       _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
+       _now = nowProvider ?? DateTime.now,
+       _nearbyTransferAvailabilityStore =
+           nearbyTransferAvailabilityStore ??
+           NearbyTransferAvailabilityStore() {
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
         DownloadHistoryBoundary(
@@ -197,6 +220,9 @@ class DiscoveryController extends ChangeNotifier {
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
         );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
+    _nearbyTransferAvailabilityStore.addListener(
+      _handleNearbyTransferAvailabilityChanged,
+    );
     _transferSessionCoordinator.addListener(
       _handleTransferSessionCoordinatorChanged,
     );
@@ -227,6 +253,11 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
+  final Duration _appPresenceTtl;
+  final Duration _nearbyAvailabilityTtl;
+  final Duration _presenceExpiryCheckInterval;
+  final DateTime Function() _now;
+  final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
@@ -241,6 +272,7 @@ class DiscoveryController extends ChangeNotifier {
       <String, _PendingOutgoingFriendRequest>{};
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
+  Timer? _presenceExpiryTimer;
   bool _started = false;
   bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
@@ -406,6 +438,7 @@ class DiscoveryController extends ChangeNotifier {
       await _ensureDiscoveryScopeApplied();
       await _refresh(isManual: false, refreshNetworkScope: false);
       _restartAutoRefreshTimer();
+      _restartPresenceExpiryTimer();
       _startClipboardPolling();
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
@@ -711,6 +744,12 @@ class DiscoveryController extends ChangeNotifier {
 
     try {
       if (accept) {
+        await _rememberVisibleFriendPeer(
+          ip: request.senderIp,
+          macAddress: request.senderMacAddress,
+          deviceName: request.senderName,
+          observedAt: request.createdAt,
+        );
         await _setFriendStatus(
           macAddress: request.senderMacAddress,
           isFriend: true,
@@ -1206,6 +1245,7 @@ class DiscoveryController extends ChangeNotifier {
               ))) {
         _selectedDeviceIp = null;
       }
+      _expireStalePresence(now: now, notifyListenersWhenChanged: false);
       _log(
         'Device list updated. total=${_devicesByIp.length} '
         'appDetected=$appDetectedCount removed=${staleIps.length}',
@@ -1232,15 +1272,17 @@ class DiscoveryController extends ChangeNotifier {
   void _onAppDetected(AppPresenceEvent event) {
     _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
+    final normalizedPeerId = _normalizePeerId(event.peerId);
     final normalizedMac = _resolveStableDeviceMac(
       ip: event.ip,
+      peerId: normalizedPeerId,
       observedMac: null,
       existingMac: existing?.macAddress,
     );
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
-    final friendName = event.peerId == null
+    final friendName = normalizedPeerId == null
         ? null
-        : _displayNameForPeerId(event.peerId!);
+        : _displayNameForPeerId(normalizedPeerId);
     final detectedCategory = _resolveDeviceCategory(
       deviceType: event.deviceType,
       operatingSystem: detectedOs,
@@ -1248,15 +1290,44 @@ class DiscoveryController extends ChangeNotifier {
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
+              peerId: normalizedPeerId ?? existing?.peerId,
               deviceName: friendName ?? event.deviceName,
               operatingSystem: detectedOs ?? existing?.operatingSystem,
               deviceCategory: detectedCategory,
               macAddress: normalizedMac ?? existing?.macAddress,
+              isNearbyTransferAvailable: event.nearbyTransferPort != null,
+              nearbyTransferPort: event.nearbyTransferPort,
+              appPresenceObservedAt: event.observedAt,
+              nearbyAvailabilityObservedAt: event.nearbyTransferPort != null
+                  ? event.observedAt
+                  : null,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
             );
+    if (normalizedMac != null && normalizedPeerId != null) {
+      final persistedMac = _deviceRegistry.macForPeerId(normalizedPeerId);
+      final persistedIpMac = _deviceRegistry.macForIp(event.ip);
+      if (persistedMac != normalizedMac || persistedIpMac != normalizedMac) {
+        unawaited(
+          _deviceRegistry.recordPeerIdentity(
+            macAddress: normalizedMac,
+            peerId: normalizedPeerId,
+            ip: event.ip,
+          ),
+        );
+      }
+    }
     notifyListeners();
+  }
+
+  void _handleNearbyTransferAvailabilityChanged() {
+    if (!_started) {
+      return;
+    }
+    unawaited(
+      _lanDiscoveryService.broadcastPresenceNow(deviceName: _localName),
+    );
   }
 
   String? _normalizeOperatingSystemName(String? raw) {
@@ -1338,7 +1409,16 @@ class DiscoveryController extends ChangeNotifier {
     final senderName = senderDevice?.displayName ?? event.requesterName;
 
     if (_trustedLanPeerStore.isTrustedMac(normalizedSenderMac)) {
+      unawaited(
+        _rememberVisibleFriendPeer(
+          ip: event.requesterIp,
+          macAddress: normalizedSenderMac,
+          deviceName: senderName,
+          observedAt: event.observedAt,
+        ),
+      );
       _log('Friend request from known friend $senderName. Auto-accepting.');
+      notifyListeners();
       unawaited(
         _lanDiscoveryService.sendFriendResponse(
           targetIp: event.requesterIp,
@@ -1351,6 +1431,14 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
+    unawaited(
+      _rememberVisibleFriendPeer(
+        ip: event.requesterIp,
+        macAddress: normalizedSenderMac,
+        deviceName: senderName,
+        observedAt: event.observedAt,
+      ),
+    );
     _incomingFriendRequests.removeWhere(
       (request) =>
           request.requestId == event.requestId ||
@@ -1404,14 +1492,31 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
 
-    unawaited(_setFriendAfterAcceptance(responderMac, responderName));
+    unawaited(
+      _setFriendAfterAcceptance(
+        responderMac,
+        responderName,
+        responderIp: event.responderIp,
+        observedAt: event.observedAt,
+      ),
+    );
   }
 
   Future<void> _setFriendAfterAcceptance(
     String responderMac,
-    String responderName,
-  ) async {
+    String responderName, {
+    String? responderIp,
+    DateTime? observedAt,
+  }) async {
     try {
+      if (responderIp != null) {
+        await _rememberVisibleFriendPeer(
+          ip: responderIp,
+          macAddress: responderMac,
+          deviceName: responderName,
+          observedAt: observedAt ?? DateTime.now(),
+        );
+      }
       await _setFriendStatus(macAddress: responderMac, isFriend: true);
       _errorMessage = null;
       _infoMessage = '$responderName accepted your friend request.';
@@ -1420,6 +1525,49 @@ class DiscoveryController extends ChangeNotifier {
       _errorMessage = 'Failed to save accepted friend: $error';
       _log(_errorMessage!);
       notifyListeners();
+    }
+  }
+
+  Future<void> _rememberVisibleFriendPeer({
+    required String ip,
+    required String macAddress,
+    required String deviceName,
+    required DateTime observedAt,
+    String? peerId,
+  }) async {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    final trimmedIp = ip.trim();
+    if (normalizedMac == null || trimmedIp.isEmpty) {
+      return;
+    }
+
+    final existing = _devicesByIp[trimmedIp];
+    final normalizedPeerId =
+        _normalizePeerId(peerId) ?? _normalizePeerId(existing?.peerId);
+    final trimmedName = deviceName.trim();
+    _devicesByIp[trimmedIp] =
+        (existing ?? DiscoveredDevice(ip: trimmedIp, lastSeen: observedAt))
+            .copyWith(
+              peerId: normalizedPeerId ?? existing?.peerId,
+              macAddress: normalizedMac,
+              deviceName: trimmedName.isEmpty
+                  ? existing?.deviceName
+                  : trimmedName,
+              appPresenceObservedAt: observedAt,
+              isAppDetected: true,
+              isReachable: true,
+              lastSeen: observedAt,
+            );
+    if (normalizedPeerId != null) {
+      await _deviceRegistry.recordPeerIdentity(
+        macAddress: normalizedMac,
+        peerId: normalizedPeerId,
+        ip: trimmedIp,
+      );
+    } else {
+      await _deviceRegistry.recordSeenDevices(<String, String>{
+        normalizedMac: trimmedIp,
+      });
     }
   }
 
@@ -1526,6 +1674,7 @@ class DiscoveryController extends ChangeNotifier {
               deviceName: event.ownerName,
               isReachable: true,
               isAppDetected: true,
+              appPresenceObservedAt: event.observedAt,
               macAddress: ownerMac ?? existing?.macAddress,
               lastSeen: event.observedAt,
             );
@@ -1547,28 +1696,40 @@ class DiscoveryController extends ChangeNotifier {
       if (decoded == null) {
         return null;
       }
-
-      final longest = math.max(decoded.width, decoded.height);
-      var resized = longest > 512
-          ? img.copyResize(
-              decoded,
-              width: decoded.width >= decoded.height ? 512 : null,
-              height: decoded.height > decoded.width ? 512 : null,
-            )
-          : decoded;
-      var encoded = img.encodeJpg(resized, quality: 55);
-      if (encoded.length > 48 * 1024) {
-        resized = img.copyResize(
+      List<int>? encoded;
+      for (final profile in _clipboardImagePreviewProfiles) {
+        final resized = _resizeClipboardPreviewImage(
           decoded,
-          width: decoded.width >= decoded.height ? 360 : null,
-          height: decoded.height > decoded.width ? 360 : null,
+          longestEdge: profile.longestEdge,
         );
-        encoded = img.encodeJpg(resized, quality: 45);
+        final candidate = img.encodeJpg(resized, quality: profile.quality);
+        encoded = candidate;
+        if (candidate.length <= _maxClipboardImagePreviewBytes) {
+          break;
+        }
+      }
+      if (encoded == null || encoded.isEmpty) {
+        return null;
       }
       return base64Encode(encoded);
     } catch (_) {
       return null;
     }
+  }
+
+  img.Image _resizeClipboardPreviewImage(
+    img.Image source, {
+    required int longestEdge,
+  }) {
+    final longest = math.max(source.width, source.height);
+    if (longest <= longestEdge) {
+      return source;
+    }
+    return img.copyResize(
+      source,
+      width: source.width >= source.height ? longestEdge : null,
+      height: source.height > source.width ? longestEdge : null,
+    );
   }
 
   void _startClipboardPolling() {
@@ -1706,6 +1867,7 @@ class DiscoveryController extends ChangeNotifier {
                 deviceName: event.ownerName,
                 isAppDetected: true,
                 isReachable: true,
+                appPresenceObservedAt: event.observedAt,
                 lastSeen: event.observedAt,
               );
 
@@ -1937,6 +2099,87 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  void _restartPresenceExpiryTimer() {
+    _presenceExpiryTimer?.cancel();
+    _presenceExpiryTimer = Timer.periodic(
+      _presenceExpiryCheckInterval,
+      (_) => _expireStalePresence(),
+    );
+  }
+
+  void _expireStalePresence({
+    DateTime? now,
+    bool notifyListenersWhenChanged = true,
+  }) {
+    final observedNow = now ?? _now();
+    final staleIps = <String>[];
+    var changed = false;
+
+    _devicesByIp.forEach((ip, device) {
+      var nextDevice = device;
+      final appPresenceObservedAt = nextDevice.appPresenceObservedAt;
+      final nearbyAvailabilityObservedAt =
+          nextDevice.nearbyAvailabilityObservedAt;
+
+      if (nextDevice.isNearbyTransferAvailable &&
+          (nearbyAvailabilityObservedAt == null ||
+              observedNow.difference(nearbyAvailabilityObservedAt) >
+                  _nearbyAvailabilityTtl)) {
+        nextDevice = nextDevice.copyWith(
+          isNearbyTransferAvailable: false,
+          nearbyTransferPort: null,
+          nearbyAvailabilityObservedAt: null,
+        );
+      }
+
+      if (nextDevice.isAppDetected &&
+          (appPresenceObservedAt == null ||
+              observedNow.difference(appPresenceObservedAt) >
+                  _appPresenceTtl)) {
+        final hadFreshReachabilitySignal =
+            appPresenceObservedAt != null &&
+            nextDevice.lastSeen.isAfter(appPresenceObservedAt);
+        nextDevice = nextDevice.copyWith(
+          isAppDetected: false,
+          appPresenceObservedAt: null,
+          isNearbyTransferAvailable: false,
+          nearbyTransferPort: null,
+          nearbyAvailabilityObservedAt: null,
+          isReachable: hadFreshReachabilitySignal
+              ? nextDevice.isReachable
+              : false,
+        );
+      }
+
+      if (!nextDevice.isAppDetected && !nextDevice.isReachable) {
+        staleIps.add(ip);
+        if (!identical(nextDevice, device)) {
+          changed = true;
+        }
+        return;
+      }
+
+      if (!identical(nextDevice, device)) {
+        _devicesByIp[ip] = nextDevice;
+        changed = true;
+      }
+    });
+
+    if (staleIps.isNotEmpty) {
+      for (final ip in staleIps) {
+        _devicesByIp.remove(ip);
+      }
+      if (_selectedDeviceIp != null && staleIps.contains(_selectedDeviceIp)) {
+        _selectedDeviceIp = null;
+      }
+      changed = true;
+    }
+
+    if (changed && notifyListenersWhenChanged) {
+      notifyListeners();
+    }
+  }
+
   Duration get _activeAutoRefreshInterval {
     return _currentSettings.backgroundScanInterval.duration;
   }
@@ -1975,7 +2218,11 @@ class DiscoveryController extends ChangeNotifier {
   void dispose() {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
+    _presenceExpiryTimer?.cancel();
     _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
+    _nearbyTransferAvailabilityStore.removeListener(
+      _handleNearbyTransferAvailabilityChanged,
+    );
     _downloadHistoryBoundary.dispose();
     _clipboardHistoryStore.dispose();
     _remoteClipboardProjectionStore.dispose();
@@ -2039,6 +2286,7 @@ class DiscoveryController extends ChangeNotifier {
 
   String? _resolveStableDeviceMac({
     required String ip,
+    String? peerId,
     required String? observedMac,
     required String? existingMac,
   }) {
@@ -2049,12 +2297,28 @@ class DiscoveryController extends ChangeNotifier {
       return normalizedObservedMac;
     }
 
+    final normalizedPeerId = _normalizePeerId(peerId);
+    if (normalizedPeerId != null) {
+      final knownMac = _deviceRegistry.macForPeerId(normalizedPeerId);
+      if (knownMac != null) {
+        return knownMac;
+      }
+    }
+
     final knownMac = _deviceRegistry.macForIp(ip);
     if (knownMac != null) {
       return knownMac;
     }
 
     return DeviceAliasRepository.normalizeMac(existingMac);
+  }
+
+  String? _normalizePeerId(String? peerId) {
+    final normalized = peerId?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
   }
 
   String? _resolveRemoteOwnerMac({

@@ -46,11 +46,13 @@ class LanPacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _presenceCodec.encodeDiscoveryRequest(
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 
@@ -58,11 +60,13 @@ class LanPacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _presenceCodec.encodeDiscoveryResponse(
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 
@@ -307,6 +311,24 @@ class LanPacketCodec {
     required int createdAtMs,
   }) {
     return _clipboardCodec.encodeClipboardCatalog(
+      instanceId: instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  List<ClipboardCatalogItem> fitClipboardCatalogEntries({
+    required String instanceId,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<ClipboardCatalogItem> entries,
+    required int createdAtMs,
+  }) {
+    return _clipboardCodec.fitClipboardCatalogEntries(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,

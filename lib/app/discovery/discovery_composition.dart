@@ -30,6 +30,7 @@ import '../../features/files/application/preview_cache_owner.dart';
 import '../../features/history/application/download_history_boundary.dart';
 import '../../features/history/data/transfer_history_repository.dart';
 import '../../features/nearby_transfer/application/nearby_transfer_candidate_projection.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_availability_store.dart';
 import '../../features/nearby_transfer/application/nearby_transfer_capability_service.dart';
 import '../../features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
 import '../../features/nearby_transfer/application/nearby_transfer_mode_resolver.dart';
@@ -183,7 +184,11 @@ class DiscoveryCompositionFactory {
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
     );
-    final lanDiscoveryService = LanDiscoveryService();
+    final nearbyTransferAvailabilityStore = NearbyTransferAvailabilityStore();
+    final lanDiscoveryService = LanDiscoveryService(
+      nearbyTransferPortProvider: () =>
+          nearbyTransferAvailabilityStore.lanFallbackPort,
+    );
     final fileTransferService = FileTransferService();
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
@@ -271,6 +276,7 @@ class DiscoveryCompositionFactory {
       transferStorageService: resolvedTransferStorageService,
       previewCacheOwner: previewCacheOwner,
       pathOpener: PathOpener(),
+      nearbyTransferAvailabilityStore: nearbyTransferAvailabilityStore,
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(
         allowTcpFallback: Platform.isAndroid,
@@ -321,6 +327,7 @@ class DiscoveryCompositionFactory {
           modeResolver: nearbyTransferModeResolver,
           handshakeService: nearbyTransferHandshakeService,
           candidateProjection: nearbyTransferCandidateProjection,
+          availabilityStore: nearbyTransferAvailabilityStore,
           qrCodec: const NearbyTransferQrCodec(),
           wifiDirectTransportAdapter: WifiDirectTransportAdapter(),
           lanNearbyTransportAdapter: LanNearbyTransportAdapter(

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../data/nearby_transfer_file_picker.dart';
 import '../data/nearby_transfer_transport_adapter.dart';
 import '../data/qr_payload_codec.dart';
+import 'nearby_transfer_availability_store.dart';
 import 'nearby_transfer_candidate_projection.dart';
 import 'nearby_transfer_capability_service.dart';
 import 'nearby_transfer_handshake_service.dart';
@@ -25,6 +26,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     required NearbyTransferModeResolver modeResolver,
     required NearbyTransferHandshakeService handshakeService,
     required NearbyTransferCandidateProjection candidateProjection,
+    required NearbyTransferAvailabilityStore availabilityStore,
     required NearbyTransferQrCodec qrCodec,
     required NearbyTransferTransportAdapter wifiDirectTransportAdapter,
     required NearbyTransferTransportAdapter lanNearbyTransportAdapter,
@@ -37,6 +39,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
        _modeResolver = modeResolver,
        _handshakeService = handshakeService,
        _candidateProjection = candidateProjection,
+       _availabilityStore = availabilityStore,
        _qrCodec = qrCodec,
        _wifiDirectTransportAdapter = wifiDirectTransportAdapter,
        _lanNearbyTransportAdapter = lanNearbyTransportAdapter,
@@ -52,6 +55,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   final NearbyTransferModeResolver _modeResolver;
   final NearbyTransferHandshakeService _handshakeService;
   final NearbyTransferCandidateProjection _candidateProjection;
+  final NearbyTransferAvailabilityStore _availabilityStore;
   final NearbyTransferQrCodec _qrCodec;
   final NearbyTransferTransportAdapter _wifiDirectTransportAdapter;
   final NearbyTransferTransportAdapter _lanNearbyTransportAdapter;
@@ -154,6 +158,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     );
     _phase = NearbyTransferSessionPhase.waitingForPeer;
     if (_mode == NearbyTransferMode.lanFallback) {
+      _availabilityStore.advertiseLanFallback(hostingInfo.port);
       final host = _localIpProvider();
       if (host == null || host.trim().isEmpty) {
         _setBanner('Не удалось определить локальный IP для QR.', isError: true);
@@ -208,7 +213,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     NearbyTransferCandidateDevice candidate,
   ) async {
     final adapter = _activeAdapter;
-    final port = adapter?.visibleCandidatePort;
+    final port = candidate.port ?? adapter?.visibleCandidatePort;
     if (_mode != NearbyTransferMode.lanFallback ||
         adapter == null ||
         port == null) {
@@ -437,6 +442,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   void _clearConnectionState() {
+    _availabilityStore.clear();
     _peer = null;
     _handshakeChallenge = null;
     _transferCompletedBytes = 0;
@@ -457,6 +463,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       return;
     }
     _disposed = true;
+    _availabilityStore.clear();
     _candidateRefreshTimer?.cancel();
     _transportSubscription?.cancel();
     _wifiDirectTransportAdapter.dispose();
