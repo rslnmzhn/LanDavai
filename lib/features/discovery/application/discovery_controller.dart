@@ -118,6 +118,16 @@ class SharedFolderIndexingProgress {
 }
 
 class DiscoveryController extends ChangeNotifier {
+  static const int _maxClipboardImagePreviewBytes = 22 * 1024;
+  static const List<({int longestEdge, int quality})>
+  _clipboardImagePreviewProfiles = <({int longestEdge, int quality})>[
+    (longestEdge: 512, quality: 55),
+    (longestEdge: 420, quality: 50),
+    (longestEdge: 320, quality: 42),
+    (longestEdge: 256, quality: 36),
+    (longestEdge: 192, quality: 30),
+  ];
+
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
@@ -1686,28 +1696,40 @@ class DiscoveryController extends ChangeNotifier {
       if (decoded == null) {
         return null;
       }
-
-      final longest = math.max(decoded.width, decoded.height);
-      var resized = longest > 512
-          ? img.copyResize(
-              decoded,
-              width: decoded.width >= decoded.height ? 512 : null,
-              height: decoded.height > decoded.width ? 512 : null,
-            )
-          : decoded;
-      var encoded = img.encodeJpg(resized, quality: 55);
-      if (encoded.length > 48 * 1024) {
-        resized = img.copyResize(
+      List<int>? encoded;
+      for (final profile in _clipboardImagePreviewProfiles) {
+        final resized = _resizeClipboardPreviewImage(
           decoded,
-          width: decoded.width >= decoded.height ? 360 : null,
-          height: decoded.height > decoded.width ? 360 : null,
+          longestEdge: profile.longestEdge,
         );
-        encoded = img.encodeJpg(resized, quality: 45);
+        final candidate = img.encodeJpg(resized, quality: profile.quality);
+        encoded = candidate;
+        if (candidate.length <= _maxClipboardImagePreviewBytes) {
+          break;
+        }
+      }
+      if (encoded == null || encoded.isEmpty) {
+        return null;
       }
       return base64Encode(encoded);
     } catch (_) {
       return null;
     }
+  }
+
+  img.Image _resizeClipboardPreviewImage(
+    img.Image source, {
+    required int longestEdge,
+  }) {
+    final longest = math.max(source.width, source.height);
+    if (longest <= longestEdge) {
+      return source;
+    }
+    return img.copyResize(
+      source,
+      width: source.width >= source.height ? longestEdge : null,
+      height: source.height > source.width ? longestEdge : null,
+    );
   }
 
   void _startClipboardPolling() {

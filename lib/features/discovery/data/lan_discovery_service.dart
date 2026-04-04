@@ -415,6 +415,21 @@ class LanDiscoveryService {
     required String ownerMacAddress,
     required List<ClipboardCatalogItem> entries,
   }) async {
+    final createdAtMs = DateTime.now().millisecondsSinceEpoch;
+    final fittedEntries = _packetCodec.fitClipboardCatalogEntries(
+      instanceId: _instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      createdAtMs: createdAtMs,
+    );
+    if (fittedEntries.length < entries.length) {
+      _log(
+        'Clipboard catalog trimmed for UDP: '
+        'entries=${fittedEntries.length}/${entries.length}',
+      );
+    }
     await _sendOutgoingPacket(
       prefix: lanClipboardCatalogPrefix,
       packet: _packetCodec.encodeClipboardCatalog(
@@ -422,8 +437,8 @@ class LanDiscoveryService {
         requestId: requestId,
         ownerName: ownerName,
         ownerMacAddress: ownerMacAddress,
-        entries: entries,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+        entries: fittedEntries,
+        createdAtMs: createdAtMs,
       ),
       targetIp: targetIp,
     );

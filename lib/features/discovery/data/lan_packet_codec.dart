@@ -320,6 +320,24 @@ class LanPacketCodec {
     );
   }
 
+  List<ClipboardCatalogItem> fitClipboardCatalogEntries({
+    required String instanceId,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<ClipboardCatalogItem> entries,
+    required int createdAtMs,
+  }) {
+    return _clipboardCodec.fitClipboardCatalogEntries(
+      instanceId: instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      createdAtMs: createdAtMs,
+    );
+  }
+
   List<SharedCatalogEntryItem> fitShareCatalogEntries(
     List<SharedCatalogEntryItem> entries,
   ) {

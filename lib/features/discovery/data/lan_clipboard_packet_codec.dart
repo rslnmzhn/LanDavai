@@ -4,6 +4,8 @@ import 'lan_packet_codec_models.dart';
 class LanClipboardPacketCodec {
   const LanClipboardPacketCodec();
 
+  static const int maxClipboardCatalogEntriesPerPacket = 24;
+
   EncodedLanPacket? encodeClipboardQuery({
     required String instanceId,
     required String requestId,
@@ -46,6 +48,32 @@ class LanClipboardPacketCodec {
       prefix: lanClipboardCatalogPrefix,
       payload: payload,
     );
+  }
+
+  List<ClipboardCatalogItem> fitClipboardCatalogEntries({
+    required String instanceId,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<ClipboardCatalogItem> entries,
+    required int createdAtMs,
+  }) {
+    final fitted = <ClipboardCatalogItem>[];
+    for (final entry in entries.take(maxClipboardCatalogEntriesPerPacket)) {
+      final candidate = <ClipboardCatalogItem>[...fitted, entry];
+      final packet = encodeClipboardCatalog(
+        instanceId: instanceId,
+        requestId: requestId,
+        ownerName: ownerName,
+        ownerMacAddress: ownerMacAddress,
+        entries: candidate,
+        createdAtMs: createdAtMs,
+      );
+      if (packet != null) {
+        fitted.add(entry);
+      }
+    }
+    return fitted;
   }
 
   LanClipboardQueryPacket? parseClipboardQueryPacket(String message) {

@@ -172,6 +172,40 @@ void main() {
       expect(decoded?['sharedCacheId'], 'cache-1');
     },
   );
+
+  test('trims oversized clipboard catalogs instead of dropping them', () async {
+    final oversizedPreview = base64Encode(
+      List<int>.filled(18 * 1024, 3, growable: false),
+    );
+    final entries = List<ClipboardCatalogItem>.generate(
+      3,
+      (index) => ClipboardCatalogItem(
+        id: 'clip-$index',
+        entryType: 'image',
+        createdAtMs: index + 1,
+        imagePreviewBase64: oversizedPreview,
+      ),
+    );
+
+    await service.sendClipboardCatalog(
+      targetIp: '192.168.1.20',
+      requestId: 'request-clip',
+      ownerName: 'Windows peer',
+      ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+      entries: entries,
+    );
+
+    expect(transportAdapter.sentPackets, hasLength(1));
+    final packet = transportAdapter.sentPackets.single;
+    final decoded =
+        codec.decodeIncomingPacket(utf8.decode(packet.bytes))
+            as LanClipboardCatalogPacket?;
+
+    expect(packet.context, LanPacketCodec.clipboardCatalogPrefix);
+    expect(decoded, isNotNull);
+    expect(decoded!.entries, isNotEmpty);
+    expect(decoded.entries.length, lessThan(entries.length));
+  });
 }
 
 class FakeDiscoveryTransportAdapter implements DiscoveryTransportAdapter {

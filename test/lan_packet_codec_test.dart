@@ -171,6 +171,42 @@ void main() {
     expect(totalFiles, 240);
   });
 
+  test('fits oversized clipboard catalogs into a UDP-safe subset', () {
+    final oversizedPreview = base64Encode(
+      List<int>.filled(18 * 1024, 7, growable: false),
+    );
+    final oversizedEntries = List<ClipboardCatalogItem>.generate(
+      3,
+      (index) => ClipboardCatalogItem(
+        id: 'clip-$index',
+        entryType: 'image',
+        createdAtMs: index + 1,
+        imagePreviewBase64: oversizedPreview,
+      ),
+    );
+
+    final fitted = codec.fitClipboardCatalogEntries(
+      instanceId: 'instance-clipboard',
+      requestId: 'request-clipboard',
+      ownerName: 'Carol',
+      ownerMacAddress: '22:33:44:55:66:77',
+      entries: oversizedEntries,
+      createdAtMs: 9999,
+    );
+    final encoded = codec.encodeClipboardCatalog(
+      instanceId: 'instance-clipboard',
+      requestId: 'request-clipboard',
+      ownerName: 'Carol',
+      ownerMacAddress: '22:33:44:55:66:77',
+      entries: fitted,
+      createdAtMs: 9999,
+    );
+
+    expect(fitted, isNotEmpty);
+    expect(fitted.length, lessThan(oversizedEntries.length));
+    expect(encoded, isNotNull);
+  });
+
   test(
     'keeps public decode rejection semantics for malformed envelopes and empty transfer payloads',
     () {
