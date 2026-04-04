@@ -11,6 +11,7 @@ class AppPresenceEvent {
     this.peerId,
     this.operatingSystem,
     this.deviceType,
+    this.nearbyTransferPort,
   });
 
   final String ip;
@@ -19,6 +20,7 @@ class AppPresenceEvent {
   final String? peerId;
   final String? operatingSystem;
   final String? deviceType;
+  final int? nearbyTransferPort;
 }
 
 class TransferRequestEvent {

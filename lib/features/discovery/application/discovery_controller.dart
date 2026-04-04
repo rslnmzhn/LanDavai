@@ -15,6 +15,7 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
+import '../../nearby_transfer/application/nearby_transfer_availability_store.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
@@ -143,6 +144,7 @@ class DiscoveryController extends ChangeNotifier {
     required TransferStorageService transferStorageService,
     required PreviewCacheOwner previewCacheOwner,
     required PathOpener pathOpener,
+    NearbyTransferAvailabilityStore? nearbyTransferAvailabilityStore,
     TransferSessionCoordinator? transferSessionCoordinator,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
@@ -159,7 +161,10 @@ class DiscoveryController extends ChangeNotifier {
        _sharedCacheIndexStore = sharedCacheIndexStore,
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
-       _pathOpener = pathOpener {
+       _pathOpener = pathOpener,
+       _nearbyTransferAvailabilityStore =
+           nearbyTransferAvailabilityStore ??
+           NearbyTransferAvailabilityStore() {
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
         DownloadHistoryBoundary(
@@ -197,6 +202,9 @@ class DiscoveryController extends ChangeNotifier {
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
         );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
+    _nearbyTransferAvailabilityStore.addListener(
+      _handleNearbyTransferAvailabilityChanged,
+    );
     _transferSessionCoordinator.addListener(
       _handleTransferSessionCoordinatorChanged,
     );
@@ -227,6 +235,7 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
+  final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
@@ -1258,11 +1267,22 @@ class DiscoveryController extends ChangeNotifier {
               operatingSystem: detectedOs ?? existing?.operatingSystem,
               deviceCategory: detectedCategory,
               macAddress: normalizedMac ?? existing?.macAddress,
+              isNearbyTransferAvailable: event.nearbyTransferPort != null,
+              nearbyTransferPort: event.nearbyTransferPort,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
             );
     notifyListeners();
+  }
+
+  void _handleNearbyTransferAvailabilityChanged() {
+    if (!_started) {
+      return;
+    }
+    unawaited(
+      _lanDiscoveryService.broadcastPresenceNow(deviceName: _localName),
+    );
   }
 
   String? _normalizeOperatingSystemName(String? raw) {
@@ -2046,6 +2066,9 @@ class DiscoveryController extends ChangeNotifier {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
     _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
+    _nearbyTransferAvailabilityStore.removeListener(
+      _handleNearbyTransferAvailabilityChanged,
+    );
     _downloadHistoryBoundary.dispose();
     _clipboardHistoryStore.dispose();
     _remoteClipboardProjectionStore.dispose();

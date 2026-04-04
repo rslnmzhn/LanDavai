@@ -10,7 +10,13 @@ class NearbyTransferCandidateProjection {
 
   List<NearbyTransferCandidateDevice> snapshotCandidates() {
     final devices = _readModel.devices
-        .where((device) => device.isAppDetected)
+        .where(
+          (device) =>
+              device.isAppDetected &&
+              device.isReachable &&
+              device.isNearbyTransferAvailable &&
+              device.nearbyTransferPort != null,
+        )
         .toList(growable: false);
     devices.sort(
       (a, b) =>
@@ -24,6 +30,7 @@ class NearbyTransferCandidateProjection {
               deviceId: device.macAddress ?? device.ip,
               displayName: device.displayName,
               host: device.ip,
+              port: device.nearbyTransferPort,
             ),
           )
           .toList(growable: false),

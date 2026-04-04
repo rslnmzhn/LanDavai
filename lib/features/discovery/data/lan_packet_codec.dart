@@ -46,11 +46,13 @@ class LanPacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _presenceCodec.encodeDiscoveryRequest(
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 
@@ -58,11 +60,13 @@ class LanPacketCodec {
     required String instanceId,
     required String deviceName,
     required String localPeerId,
+    int? nearbyTransferPort,
   }) {
     return _presenceCodec.encodeDiscoveryResponse(
       instanceId: instanceId,
       deviceName: deviceName,
       localPeerId: localPeerId,
+      nearbyTransferPort: nearbyTransferPort,
     );
   }
 

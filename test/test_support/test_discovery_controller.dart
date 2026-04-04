@@ -27,6 +27,7 @@ import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/history/application/download_history_boundary.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_candidate_projection.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_availability_store.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_capability_service.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_mode_resolver.dart';
@@ -123,6 +124,7 @@ class TestDiscoveryControllerHarness {
       candidateProjection: NearbyTransferCandidateProjection(
         readModel: readModel,
       ),
+      availabilityStore: NearbyTransferAvailabilityStore(),
       qrCodec: const NearbyTransferQrCodec(),
       wifiDirectTransportAdapter: WifiDirectTransportAdapter(),
       lanNearbyTransportAdapter: LanNearbyTransportAdapter(
@@ -209,6 +211,7 @@ class TestDiscoveryControllerHarness {
     final remoteShareBrowser = TrackingRemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
     );
+    final nearbyTransferAvailabilityStore = NearbyTransferAvailabilityStore();
     final remoteShareMediaProjectionBoundary =
         RemoteShareMediaProjectionBoundary(
           remoteShareBrowser: remoteShareBrowser,
@@ -268,6 +271,7 @@ class TestDiscoveryControllerHarness {
       transferStorageService: transferStorageService,
       previewCacheOwner: previewCacheOwner,
       pathOpener: resolvedPathOpener,
+      nearbyTransferAvailabilityStore: nearbyTransferAvailabilityStore,
       transferSessionCoordinator: transferSessionCoordinator,
     );
     final videoLinkSessionBoundary = VideoLinkSessionBoundary(
@@ -350,6 +354,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.transferStorageService,
     required super.previewCacheOwner,
     required super.pathOpener,
+    super.nearbyTransferAvailabilityStore,
     super.transferSessionCoordinator,
   });
 

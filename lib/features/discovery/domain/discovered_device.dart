@@ -10,6 +10,8 @@ class DiscoveredDevice {
     this.operatingSystem,
     this.deviceCategory = DeviceCategory.unknown,
     this.isTrusted = false,
+    this.isNearbyTransferAvailable = false,
+    this.nearbyTransferPort,
     this.isAppDetected = false,
     this.isReachable = false,
   });
@@ -21,6 +23,8 @@ class DiscoveredDevice {
   final String? operatingSystem;
   final DeviceCategory deviceCategory;
   final bool isTrusted;
+  final bool isNearbyTransferAvailable;
+  final int? nearbyTransferPort;
   final bool isAppDetected;
   final bool isReachable;
   final DateTime lastSeen;
@@ -34,6 +38,8 @@ class DiscoveredDevice {
     Object? operatingSystem = _unset,
     DeviceCategory? deviceCategory,
     bool? isTrusted,
+    bool? isNearbyTransferAvailable,
+    Object? nearbyTransferPort = _unset,
     bool? isAppDetected,
     bool? isReachable,
     DateTime? lastSeen,
@@ -54,6 +60,11 @@ class DiscoveredDevice {
           : operatingSystem as String?,
       deviceCategory: deviceCategory ?? this.deviceCategory,
       isTrusted: isTrusted ?? this.isTrusted,
+      isNearbyTransferAvailable:
+          isNearbyTransferAvailable ?? this.isNearbyTransferAvailable,
+      nearbyTransferPort: identical(nearbyTransferPort, _unset)
+          ? this.nearbyTransferPort
+          : nearbyTransferPort as int?,
       isAppDetected: isAppDetected ?? this.isAppDetected,
       isReachable: isReachable ?? this.isReachable,
       lastSeen: lastSeen ?? this.lastSeen,

@@ -83,6 +83,54 @@ void main() {
   );
 
   test(
+    'treats incoming discover requests as visible peers and mirrors nearby availability in the response',
+    () async {
+      service = LanDiscoveryService(
+        transportAdapter: transportAdapter,
+        nearbyTransferPortProvider: () => 47890,
+      );
+      AppPresenceEvent? detectedEvent;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (event) {
+          detectedEvent = event;
+        },
+      );
+      transportAdapter.clearSentPackets();
+
+      final requestMessage = codec.encodeDiscoveryRequest(
+        instanceId: 'remote-instance',
+        deviceName: 'Remote node',
+        localPeerId: 'remote-peer',
+        nearbyTransferPort: 47901,
+      );
+      transportAdapter.emitDatagram(
+        bytes: utf8.encode(requestMessage),
+        senderIp: '192.168.1.24',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(detectedEvent, isNotNull);
+      expect(detectedEvent!.ip, '192.168.1.24');
+      expect(detectedEvent!.deviceName, 'Remote node');
+      expect(detectedEvent!.peerId, 'remote-peer');
+      expect(detectedEvent!.nearbyTransferPort, 47901);
+
+      final responsePacket = transportAdapter.sentPackets.singleWhere(
+        (packet) => packet.context == 'discover-response',
+      );
+      final responseMessage = utf8.decode(responsePacket.bytes);
+      final decoded = codec.decodeDiscoveryPacket(responseMessage);
+
+      expect(decoded, isNotNull);
+      expect(decoded!.nearbyTransferPort, 47890);
+    },
+  );
+
+  test(
     'keeps encoded packet send path routed through transport adapter',
     () async {
       await service.start(

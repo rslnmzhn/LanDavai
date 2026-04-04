@@ -20,21 +20,24 @@ class LanPresenceProtocolHandler {
     required String senderIp,
     required DateTime observedAt,
   }) {
+    final detectedEvent = AppPresenceEvent(
+      ip: senderIp,
+      deviceName: packet.deviceName,
+      operatingSystem: packet.operatingSystem,
+      deviceType: packet.deviceType,
+      peerId: packet.peerId,
+      nearbyTransferPort: packet.nearbyTransferPort,
+      observedAt: observedAt,
+    );
     if (packet.prefix == lanDiscoverPrefix) {
-      return const PresenceHandlingResult(shouldRespondToDiscover: true);
+      return PresenceHandlingResult(
+        detectedEvent: detectedEvent,
+        shouldRespondToDiscover: true,
+      );
     }
     if (packet.prefix != lanResponsePrefix) {
       return const PresenceHandlingResult();
     }
-    return PresenceHandlingResult(
-      detectedEvent: AppPresenceEvent(
-        ip: senderIp,
-        deviceName: packet.deviceName,
-        operatingSystem: packet.operatingSystem,
-        deviceType: packet.deviceType,
-        peerId: packet.peerId,
-        observedAt: observedAt,
-      ),
-    );
+    return PresenceHandlingResult(detectedEvent: detectedEvent);
   }
 }

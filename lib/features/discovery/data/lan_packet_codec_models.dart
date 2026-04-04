@@ -224,6 +224,7 @@ class LanDiscoveryPresencePacket extends LanInboundPacket {
     this.operatingSystem,
     this.deviceType,
     this.peerId,
+    this.nearbyTransferPort,
   });
 
   final String prefix;
@@ -231,6 +232,7 @@ class LanDiscoveryPresencePacket extends LanInboundPacket {
   final String? operatingSystem;
   final String? deviceType;
   final String? peerId;
+  final int? nearbyTransferPort;
 }
 
 class LanTransferRequestPacket extends LanInboundPacket {
