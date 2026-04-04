@@ -351,6 +351,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
           cacheId: entry.key,
           destinationDirectoryPath: destinationDirectory.path,
+          preserveSharedRootOnReceive: entry.value.isEmpty,
           createdAt: DateTime.now(),
         );
       }
@@ -461,6 +462,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     bool forPreview = false,
     String? previewRelativePath,
     String? destinationDirectoryOverridePath,
+    bool preserveSharedRootOnReceive = false,
   }) async {
     final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
     if (index < 0) {
@@ -486,6 +488,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
             : await _transferStorageService.resolveReceiveDirectory(
                 appFolderName: 'Landa',
               );
+        final destinationRelativeRootPrefix =
+            !isPreview && preserveSharedRootOnReceive
+            ? _resolveReceiveRootPrefix(request.sharedLabel)
+            : null;
 
         if (isPreview) {
           final normalizedPreviewPath = previewRelativePath == null
@@ -508,6 +514,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           itemsToReceive = await _filterMissingIncomingItems(
             items: request.items,
             destinationDirectory: destinationDirectory,
+            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
           );
           skippedExistingCount = request.items.length - itemsToReceive.length;
         }
@@ -540,6 +547,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             requestId: request.requestId,
             expectedItems: request.items,
             destinationDirectory: destinationDirectory,
+            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             onProgress: (received, total) {
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
@@ -589,6 +597,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
               persistToUserDownloads: !isPreview,
               recordHistory: !isPreview,
               sendCompletionNotification: !isPreview,
+              destinationRelativeRootPrefix: destinationRelativeRootPrefix,
               previewCompleter: previewCompleter,
             ),
           );
@@ -740,6 +749,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
           approved: true,
           destinationDirectoryOverridePath:
               pendingRemoteDownload.destinationDirectoryPath,
+          preserveSharedRootOnReceive:
+              pendingRemoteDownload.preserveSharedRootOnReceive,
         ),
       );
       return;
@@ -936,20 +947,27 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required bool persistToUserDownloads,
     required bool recordHistory,
     required bool sendCompletionNotification,
+    String? destinationRelativeRootPrefix,
     Completer<String?>? previewCompleter,
   }) async {
     try {
       final result = await session.result;
       if (result.success) {
         var savedPaths = result.savedPaths;
+        final recordedRelativePaths = acceptedItems
+            .map(
+              (item) => _buildReceiveRelativePath(
+                item.fileName,
+                destinationRelativeRootPrefix: destinationRelativeRootPrefix,
+              ),
+            )
+            .toList(growable: false);
         if (persistToUserDownloads &&
             _transferStorageService.publishesReceivedDownloadsToUserDownloads) {
           try {
             savedPaths = await _transferStorageService.publishToUserDownloads(
               sourcePaths: result.savedPaths,
-              relativePaths: acceptedItems
-                  .map((item) => item.fileName)
-                  .toList(growable: false),
+              relativePaths: recordedRelativePaths,
               appFolderName: 'Landa',
             );
           } catch (error) {
@@ -957,13 +975,20 @@ class TransferSessionCoordinator extends ChangeNotifier {
           }
         }
 
+        final hasReceiveRootPrefix =
+            destinationRelativeRootPrefix != null &&
+            destinationRelativeRootPrefix.isNotEmpty;
         final rootPath =
             persistToUserDownloads &&
                 _transferStorageService
                     .publishesReceivedDownloadsToUserDownloads
-            ? savedPaths.isEmpty
+            ? hasReceiveRootPrefix
+                  ? _sharedParentPath(savedPaths)
+                  : savedPaths.isEmpty
                   ? result.destinationDirectory
                   : File(savedPaths.first).parent.path
+            : hasReceiveRootPrefix
+            ? p.join(result.destinationDirectory, destinationRelativeRootPrefix)
             : result.destinationDirectory;
 
         if (recordHistory) {
@@ -1304,10 +1329,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
   Future<List<TransferFileManifestItem>> _filterMissingIncomingItems({
     required List<TransferFileManifestItem> items,
     required Directory destinationDirectory,
+    String? destinationRelativeRootPrefix,
   }) async {
     final missing = <TransferFileManifestItem>[];
     for (final item in items) {
-      final relativePath = _sanitizeTransferRelativePath(item.fileName);
+      final relativePath = _buildReceiveRelativePath(
+        item.fileName,
+        destinationRelativeRootPrefix: destinationRelativeRootPrefix,
+      );
       final targetPath = p.join(destinationDirectory.path, relativePath);
       final targetFile = File(targetPath);
       if (!await targetFile.exists()) {
@@ -1400,6 +1429,60 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     return value.isEmpty ? '_' : value;
+  }
+
+  String _buildReceiveRelativePath(
+    String relativePath, {
+    String? destinationRelativeRootPrefix,
+  }) {
+    final sanitizedRelativePath = _sanitizeTransferRelativePath(relativePath);
+    final sanitizedPrefix = destinationRelativeRootPrefix?.trim();
+    if (sanitizedPrefix == null || sanitizedPrefix.isEmpty) {
+      return sanitizedRelativePath;
+    }
+    return p.join(sanitizedPrefix, sanitizedRelativePath);
+  }
+
+  String? _resolveReceiveRootPrefix(String sharedLabel) {
+    final sanitized = _sanitizeTransferRelativePathPart(sharedLabel.trim());
+    if (sanitized.isEmpty || sanitized == '_') {
+      return null;
+    }
+    return sanitized;
+  }
+
+  String _sharedParentPath(List<String> paths) {
+    if (paths.isEmpty) {
+      return '';
+    }
+
+    final directories = paths
+        .map((path) => p.normalize(p.dirname(path)))
+        .where((path) => path.isNotEmpty)
+        .toList(growable: false);
+    if (directories.isEmpty) {
+      return '';
+    }
+
+    List<String> common = p.split(directories.first);
+    for (final directory in directories.skip(1)) {
+      final next = p.split(directory);
+      var sharedLength = 0;
+      while (sharedLength < common.length &&
+          sharedLength < next.length &&
+          common[sharedLength] == next[sharedLength]) {
+        sharedLength += 1;
+      }
+      common = common.take(sharedLength).toList(growable: false);
+      if (common.isEmpty) {
+        break;
+      }
+    }
+    if (common.isEmpty) {
+      final rootPrefix = p.rootPrefix(paths.first);
+      return rootPrefix.isEmpty ? p.dirname(paths.first) : rootPrefix;
+    }
+    return p.joinAll(common);
   }
 
   Duration? _estimateEta({
@@ -1702,6 +1785,7 @@ class _PendingRemoteDownloadIntent {
     required this.ownerMacAddress,
     required this.cacheId,
     required this.destinationDirectoryPath,
+    required this.preserveSharedRootOnReceive,
     required this.createdAt,
   });
 
@@ -1709,6 +1793,7 @@ class _PendingRemoteDownloadIntent {
   final String? ownerMacAddress;
   final String cacheId;
   final String destinationDirectoryPath;
+  final bool preserveSharedRootOnReceive;
   final DateTime createdAt;
 }
 

@@ -437,7 +437,21 @@ class RemoteShareBrowser extends ChangeNotifier {
   Map<String, Set<String>> buildSelectedRelativePathsByCache() {
     final projection = currentBrowseProjection;
     final selectedByCache = <String, Set<String>>{};
+    final wholeCacheSelections = <String>{};
+    for (final folder in projection.folders) {
+      if (!projection.selectedFolderIds.contains(folder.id)) {
+        continue;
+      }
+      if (folder.folderPath.isNotEmpty) {
+        continue;
+      }
+      wholeCacheSelections.add(folder.cacheId);
+      selectedByCache[folder.cacheId] = <String>{};
+    }
     for (final file in projection.files) {
+      if (wholeCacheSelections.contains(file.cacheId)) {
+        continue;
+      }
       final picked =
           projection.selectedFileIds.contains(file.id) ||
           projection.folderCoveredFileIds.contains(file.id);

@@ -212,6 +212,67 @@ void main() {
   );
 
   test(
+    'root folder selection keeps whole-cache download semantics instead of flattening into explicit file picks',
+    () async {
+      await browser.startBrowse(
+        targets: <DiscoveredDevice>[
+          DiscoveredDevice(
+            ip: '192.168.1.20',
+            isAppDetected: true,
+            lastSeen: DateTime(2026),
+          ),
+        ],
+        receiverMacAddress: '02:00:00:00:00:01',
+        requesterName: 'Receiver',
+        requestId: 'browse-request-1',
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'browse-request-1',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Alias device',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Docs',
+              itemCount: 2,
+              totalBytes: 12,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'a.txt', sizeBytes: 4),
+                SharedCatalogFileItem(relativePath: 'sub/b.txt', sizeBytes: 8),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Alias device',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+      browser.selectOwner('192.168.1.20');
+
+      final projection = browser.currentBrowseProjection;
+      final rootFolderId = projection.folders
+          .firstWhere((folder) => folder.folderPath.isEmpty)
+          .id;
+
+      browser.setSelectedFolderIds(<String>{rootFolderId});
+
+      expect(browser.buildSelectedRelativePathsByCache(), <String, Set<String>>{
+        'remote-cache-1': <String>{},
+      });
+    },
+  );
+
+  test(
     'records preview-path projection updates through owner-backed batch writes',
     () async {
       await browser.startBrowse(
