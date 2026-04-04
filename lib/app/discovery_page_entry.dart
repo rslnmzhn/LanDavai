@@ -60,6 +60,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
           pageDependencies.remoteClipboardProjectionStore,
       desktopWindowService: pageDependencies.desktopWindowService,
       transferStorageService: pageDependencies.transferStorageService,
+      createNearbyTransferSessionStore:
+          pageDependencies.createNearbyTransferSessionStore,
       isBoundaryReady: _isBoundaryReady,
     );
   }

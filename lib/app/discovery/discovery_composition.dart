@@ -29,6 +29,16 @@ import '../../features/discovery/data/network_host_scanner.dart';
 import '../../features/files/application/preview_cache_owner.dart';
 import '../../features/history/application/download_history_boundary.dart';
 import '../../features/history/data/transfer_history_repository.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_candidate_projection.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_capability_service.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_mode_resolver.dart';
+import '../../features/nearby_transfer/application/nearby_transfer_session_store.dart';
+import '../../features/nearby_transfer/data/lan_nearby_transport_adapter.dart';
+import '../../features/nearby_transfer/data/nearby_transfer_file_picker.dart';
+import '../../features/nearby_transfer/data/nearby_transfer_storage_service.dart';
+import '../../features/nearby_transfer/data/qr_payload_codec.dart';
+import '../../features/nearby_transfer/data/wifi_direct_transport_adapter.dart';
 import '../../features/settings/application/settings_store.dart';
 import '../../features/settings/data/app_settings_repository.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
@@ -57,6 +67,7 @@ class DiscoveryPageDependencies {
     required this.remoteClipboardProjectionStore,
     required this.desktopWindowService,
     required this.transferStorageService,
+    required this.createNearbyTransferSessionStore,
   });
 
   final DiscoveryController controller;
@@ -73,6 +84,7 @@ class DiscoveryPageDependencies {
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
+  final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
 }
 
 class DiscoveryCompositionResult {
@@ -204,6 +216,15 @@ class DiscoveryCompositionFactory {
           lanDiscoveryService: lanDiscoveryService,
         );
     final videoLinkShareService = VideoLinkShareService();
+    final nearbyTransferCapabilityService = NearbyTransferCapabilityService(
+      wifiDirectSupported: false,
+    );
+    final nearbyTransferModeResolver = NearbyTransferModeResolver();
+    final nearbyTransferHandshakeService = NearbyTransferHandshakeService();
+    final nearbyTransferFilePicker = NearbyTransferFilePicker();
+    final nearbyTransferStorageService = NearbyTransferStorageService(
+      transferStorageService: resolvedTransferStorageService,
+    );
     late final DiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
@@ -269,6 +290,9 @@ class DiscoveryCompositionFactory {
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
     );
+    final nearbyTransferCandidateProjection = NearbyTransferCandidateProjection(
+      readModel: readModel,
+    );
     final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -291,6 +315,25 @@ class DiscoveryCompositionFactory {
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       desktopWindowService: resolvedDesktopWindowService,
       transferStorageService: resolvedTransferStorageService,
+      createNearbyTransferSessionStore: () {
+        return NearbyTransferSessionStore(
+          capabilityService: nearbyTransferCapabilityService,
+          modeResolver: nearbyTransferModeResolver,
+          handshakeService: nearbyTransferHandshakeService,
+          candidateProjection: nearbyTransferCandidateProjection,
+          qrCodec: const NearbyTransferQrCodec(),
+          wifiDirectTransportAdapter: WifiDirectTransportAdapter(),
+          lanNearbyTransportAdapter: LanNearbyTransportAdapter(
+            fileHashService: fileHashService,
+            fileTransferService: fileTransferService,
+            storageService: nearbyTransferStorageService,
+          ),
+          filePicker: nearbyTransferFilePicker,
+          localDeviceIdProvider: () => controller.localDeviceMac,
+          localDeviceNameProvider: () => readModel.localName,
+          localIpProvider: () => readModel.localIp,
+        );
+      },
     );
 
     return DiscoveryCompositionResult._(

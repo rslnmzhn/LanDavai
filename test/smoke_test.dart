@@ -226,7 +226,7 @@ void main() {
         find.byKey(const Key('discovery-wide-layout-action-bar')),
       );
       final sendButtonRect = tester.getRect(
-        find.widgetWithText(FilledButton, 'Отправить'),
+        find.widgetWithText(FilledButton, 'Подключиться'),
       );
 
       expect(headerRect.top, lessThan(AppSpacing.xl));
@@ -256,6 +256,20 @@ void main() {
       await tester.pump();
     },
   );
+
+  testWidgets('DiscoveryPage send action opens nearby transfer entry sheet', (
+    tester,
+  ) async {
+    _registerWidgetCleanup(tester);
+    await _pumpDiscoveryPage(tester, harness: harness);
+
+    await tester.tap(find.widgetWithText(FilledButton, 'Подключиться'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nearby transfer'), findsOneWidget);
+    expect(find.text('Принять файлы'), findsOneWidget);
+    expect(find.text('Отдать файлы'), findsOneWidget);
+  });
 
   testWidgets('DiscoveryPage menu opens extracted friends sheet flow', (
     tester,
@@ -446,6 +460,8 @@ Future<void> _pumpDiscoveryPage(
         remoteClipboardProjectionStore: harness.remoteClipboardProjectionStore,
         desktopWindowService: desktopWindowService,
         transferStorageService: transferStorageService,
+        createNearbyTransferSessionStore:
+            harness.createNearbyTransferSessionStore,
         isBoundaryReady: isBoundaryReady,
       ),
     ),

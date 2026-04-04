@@ -67,6 +67,11 @@ class FileTransferService {
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
   }) async {
     final server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     final resultCompleter = Completer<FileTransferResult>();
@@ -128,6 +133,7 @@ class FileTransferService {
             expectedItems: expectedItems,
             destinationDirectory: destinationDirectory,
             onProgress: onProgress,
+            destinationPathAllocator: destinationPathAllocator,
           ).then(resultCompleter.complete).catchError((Object error) {
             if (!resultCompleter.isCompleted) {
               resultCompleter.complete(
@@ -251,6 +257,11 @@ class FileTransferService {
     required List<TransferFileManifestItem> expectedItems,
     required Directory destinationDirectory,
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
   }) async {
     final reader = _SocketReader(socket);
     await destinationDirectory.create(recursive: true);
@@ -325,10 +336,15 @@ class FileTransferService {
     String? inProgressPath;
     try {
       for (final file in normalizedActual) {
-        final destinationPath = await _allocateDestinationPath(
-          destinationDirectory: destinationDirectory,
-          relativePath: file.name,
-        );
+        final destinationPath = destinationPathAllocator == null
+            ? await _allocateDestinationPath(
+                destinationDirectory: destinationDirectory,
+                relativePath: file.name,
+              )
+            : await destinationPathAllocator(
+                destinationDirectory: destinationDirectory,
+                relativePath: file.name,
+              );
         inProgressPath = destinationPath;
         final destinationFile = File(destinationPath);
         await destinationFile.parent.create(recursive: true);

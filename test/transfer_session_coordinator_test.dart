@@ -942,6 +942,11 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
   }) async {
     startReceiverCalls += 1;
     lastDestinationDirectoryPath = destinationDirectory.path;

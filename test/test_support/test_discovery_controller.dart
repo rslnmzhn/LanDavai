@@ -26,6 +26,16 @@ import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/history/application/download_history_boundary.dart';
 import 'package:landa/features/history/data/transfer_history_repository.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_candidate_projection.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_capability_service.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_mode_resolver.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_session_store.dart';
+import 'package:landa/features/nearby_transfer/data/lan_nearby_transport_adapter.dart';
+import 'package:landa/features/nearby_transfer/data/nearby_transfer_file_picker.dart';
+import 'package:landa/features/nearby_transfer/data/nearby_transfer_storage_service.dart';
+import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
+import 'package:landa/features/nearby_transfer/data/wifi_direct_transport_adapter.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
@@ -98,7 +108,34 @@ class TestDiscoveryControllerHarness {
         remoteClipboardProjectionStore: remoteClipboardProjectionStore,
         desktopWindowService: desktopWindowService,
         transferStorageService: transferStorageService,
+        createNearbyTransferSessionStore: createNearbyTransferSessionStore,
       ),
+    );
+  }
+
+  NearbyTransferSessionStore createNearbyTransferSessionStore() {
+    return NearbyTransferSessionStore(
+      capabilityService: const NearbyTransferCapabilityService(
+        wifiDirectSupported: false,
+      ),
+      modeResolver: const NearbyTransferModeResolver(),
+      handshakeService: NearbyTransferHandshakeService(),
+      candidateProjection: NearbyTransferCandidateProjection(
+        readModel: readModel,
+      ),
+      qrCodec: const NearbyTransferQrCodec(),
+      wifiDirectTransportAdapter: WifiDirectTransportAdapter(),
+      lanNearbyTransportAdapter: LanNearbyTransportAdapter(
+        fileHashService: FileHashService(),
+        fileTransferService: FileTransferService(),
+        storageService: NearbyTransferStorageService(
+          transferStorageService: TransferStorageService(),
+        ),
+      ),
+      filePicker: NearbyTransferFilePicker(),
+      localDeviceIdProvider: () => controller.localDeviceMac,
+      localDeviceNameProvider: () => readModel.localName,
+      localIpProvider: () => readModel.localIp,
     );
   }
 
