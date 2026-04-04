@@ -1,0 +1,37 @@
+version: 1
+
+script:
+  - rm -rf AppDir
+  - mkdir -p AppDir
+  - cp -r build/linux/x64/release/bundle/* AppDir/
+  - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+  - cp assets/tray/landa_tray.png AppDir/usr/share/icons/hicolor/256x256/apps/landa.png
+  - install -Dm644 .github/appimage/landa.desktop AppDir/usr/share/applications/landa.desktop
+
+AppDir:
+  path: ./AppDir
+  app_info:
+    id: com.example.landa
+    name: Landa
+    icon: landa
+    version: !ENV '${APP_VERSION}'
+    exec: landa
+    exec_args: $@
+  apt:
+    arch: amd64
+    allow_unauthenticated: true
+    sources:
+      - sourceline: deb http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
+      - sourceline: deb http://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
+      - sourceline: deb http://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
+    include:
+      - libgtk-3-0
+      - libayatana-appindicator3-1
+      - libmpv2
+      - libmediainfo0v5
+      - libzen0v5
+      - liblzma5
+
+AppImage:
+  arch: x86_64
+  file_name: !ENV 'landa-v${APP_VERSION}-linux-x86_64.AppImage'

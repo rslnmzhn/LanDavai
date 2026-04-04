@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Landa
+Comment=Peer-to-peer LAN file transfer
+Exec=landa %U
+Icon=landa
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+StartupWMClass=landa
