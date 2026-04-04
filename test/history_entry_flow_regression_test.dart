@@ -102,6 +102,8 @@ Future<void> _pumpDiscoveryPage(
         remoteClipboardProjectionStore: harness.remoteClipboardProjectionStore,
         desktopWindowService: TrackingDesktopWindowService(),
         transferStorageService: transferStorageService,
+        createNearbyTransferSessionStore:
+            harness.createNearbyTransferSessionStore,
         isBoundaryReady: true,
       ),
     ),

@@ -100,7 +100,8 @@ void main() {
         home: FileExplorerPage(
           owner: owner,
           previewCacheOwner: harness.previewCacheOwner,
-          sharedCacheMaintenanceBoundary: harness.sharedCacheMaintenanceBoundary,
+          sharedCacheMaintenanceBoundary:
+              harness.sharedCacheMaintenanceBoundary,
         ),
       ),
     );
@@ -147,6 +148,8 @@ Future<void> _pumpDiscoveryPage(
         remoteClipboardProjectionStore: harness.remoteClipboardProjectionStore,
         desktopWindowService: TrackingDesktopWindowService(),
         transferStorageService: resolvedTransferStorageService,
+        createNearbyTransferSessionStore:
+            harness.createNearbyTransferSessionStore,
         isBoundaryReady: true,
       ),
     ),

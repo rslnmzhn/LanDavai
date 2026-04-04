@@ -85,10 +85,10 @@ class DiscoveryActionBar extends StatelessWidget {
                 Expanded(
                   child: _AdaptiveActionButton.filled(
                     onPressed: isSendingTransfer ? null : onSend,
-                    icon: Icons.arrow_upward,
-                    label: 'Отправить',
-                    compactLabel: 'Отпр.',
-                    tooltip: 'Отправить файлы',
+                    icon: Icons.import_export_rounded,
+                    label: 'Подключиться',
+                    compactLabel: 'Подкл.',
+                    tooltip: 'Открыть nearby transfer',
                     availableWidth: perButtonWidth,
                   ),
                 ),

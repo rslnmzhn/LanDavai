@@ -14,6 +14,8 @@ import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../history/application/download_history_boundary.dart';
+import '../../nearby_transfer/application/nearby_transfer_session_store.dart';
+import '../../nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
@@ -51,6 +53,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.remoteClipboardProjectionStore,
     required this.desktopWindowService,
     required this.transferStorageService,
+    required this.createNearbyTransferSessionStore,
     required this.isBoundaryReady,
     super.key,
   });
@@ -69,6 +72,7 @@ class DiscoveryPage extends StatefulWidget {
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
+  final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
   final bool isBoundaryReady;
 
   @override
@@ -101,6 +105,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
+  NearbyTransferSessionStore Function() get _createNearbyTransferSessionStore =>
+      widget.createNearbyTransferSessionStore;
 
   @override
   void initState() {
@@ -216,7 +222,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           isSendingTransfer: _transferSessionCoordinator.isSendingTransfer,
           onReceive: _openReceivePanel,
           onAdd: _openAddShareMenu,
-          onSend: _controller.sendFilesToSelectedDevice,
+          onSend: _openNearbyTransferSheet,
         );
         final mainContent = DiscoveryDeviceListSection(
           readModel: _readModel,
@@ -454,5 +460,17 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       useStandardAppDownloadFolder:
           _readModel.settings.useStandardAppDownloadFolder,
     );
+  }
+
+  Future<void> _openNearbyTransferSheet() async {
+    final sessionStore = _createNearbyTransferSessionStore();
+    try {
+      await showNearbyTransferEntrySheet(
+        context: context,
+        sessionStore: sessionStore,
+      );
+    } finally {
+      sessionStore.dispose();
+    }
   }
 }

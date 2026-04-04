@@ -29,6 +29,7 @@ Current owner/boundary map:
 - `DiscoveryController`: discovery shell state, device actions, friend flows, settings commands, protocol entry wiring, and discovery-scope restart orchestration only
 - `DiscoveryReadModel`: consumer-facing read projection over discovery shell plus supporting stores
 - `DiscoveryNetworkScopeStore`: session-scoped local network range truth, active discovery scope selection, and grouped local IP sets
+- `NearbyTransferSessionStore`: nearby-transfer session truth, active mode, peer, handshake, transfer progress, and session-local candidate state
 - `LocalPeerIdentityStore`: local peer identity persistence and generation
 - `SharedCacheCatalog`: shared-cache metadata truth
 - `SharedCacheIndexStore`: shared-cache index truth
@@ -59,6 +60,15 @@ Rules:
 - `DiscoveryReadModel` network-scope filtering is projection-only and must
   derive from the same grouped subnet identity used by
   `DiscoveryNetworkScopeStore`.
+- Nearby-transfer flow is a separate feature seam. Do not route new nearby
+  transfer behavior through `DiscoveryController`,
+  `TransferSessionCoordinator`, or the existing LAN transfer protocol.
+- `NearbyTransferSessionStore` must remain a session owner only; it must not
+  absorb QR codec logic, socket transport implementation, picker logic, or
+  storage collision policy.
+- Nearby-transfer candidate devices must come from an honest narrow projection
+  over existing visible peers or transport-local candidates for the active
+  session. Do not create a second canonical LAN discovery truth.
 - `VideoLinkShareService.activeSession` remains a separate seam from
   `TransferSessionCoordinator`; do not silently merge those seams.
 - `SharedCacheCatalogBridge` is deleted and forbidden by guard tests.
@@ -111,6 +121,10 @@ lib/
       application/
       data/
       domain/
+    nearby_transfer/
+      application/
+      data/
+      presentation/
     settings/
       application/
       data/
@@ -200,6 +214,13 @@ Rules:
 - LAN host visibility uses ARP/neighbor table first.
 - TCP probing is fallback-only and disabled by default.
 - Keep manual IP connect as fallback path for edge networks.
+- Nearby transfer v1 is separate from LAN discovery and existing transfer
+  session ownership.
+- `lan_fallback` nearby transport owns direct-socket session transport only.
+  It may reuse visible-peer projection input through a narrow adapter, but it
+  must not create a second discovery protocol.
+- `lan_fallback` QR payloads must carry the direct-socket connect info needed
+  by the receiver: `host/ip`, `port`, and `sessionId`.
 
 ## Device Identity Contract
 - IP is transient; MAC is identity key when available.
