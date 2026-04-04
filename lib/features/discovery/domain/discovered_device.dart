@@ -12,6 +12,8 @@ class DiscoveredDevice {
     this.isTrusted = false,
     this.isNearbyTransferAvailable = false,
     this.nearbyTransferPort,
+    this.appPresenceObservedAt,
+    this.nearbyAvailabilityObservedAt,
     this.isAppDetected = false,
     this.isReachable = false,
   });
@@ -25,6 +27,8 @@ class DiscoveredDevice {
   final bool isTrusted;
   final bool isNearbyTransferAvailable;
   final int? nearbyTransferPort;
+  final DateTime? appPresenceObservedAt;
+  final DateTime? nearbyAvailabilityObservedAt;
   final bool isAppDetected;
   final bool isReachable;
   final DateTime lastSeen;
@@ -40,6 +44,8 @@ class DiscoveredDevice {
     bool? isTrusted,
     bool? isNearbyTransferAvailable,
     Object? nearbyTransferPort = _unset,
+    Object? appPresenceObservedAt = _unset,
+    Object? nearbyAvailabilityObservedAt = _unset,
     bool? isAppDetected,
     bool? isReachable,
     DateTime? lastSeen,
@@ -65,6 +71,13 @@ class DiscoveredDevice {
       nearbyTransferPort: identical(nearbyTransferPort, _unset)
           ? this.nearbyTransferPort
           : nearbyTransferPort as int?,
+      appPresenceObservedAt: identical(appPresenceObservedAt, _unset)
+          ? this.appPresenceObservedAt
+          : appPresenceObservedAt as DateTime?,
+      nearbyAvailabilityObservedAt:
+          identical(nearbyAvailabilityObservedAt, _unset)
+          ? this.nearbyAvailabilityObservedAt
+          : nearbyAvailabilityObservedAt as DateTime?,
       isAppDetected: isAppDetected ?? this.isAppDetected,
       isReachable: isReachable ?? this.isReachable,
       lastSeen: lastSeen ?? this.lastSeen,

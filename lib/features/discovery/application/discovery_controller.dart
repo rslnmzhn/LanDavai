@@ -146,6 +146,10 @@ class DiscoveryController extends ChangeNotifier {
     required PathOpener pathOpener,
     NearbyTransferAvailabilityStore? nearbyTransferAvailabilityStore,
     TransferSessionCoordinator? transferSessionCoordinator,
+    Duration appPresenceTtl = const Duration(seconds: 12),
+    Duration nearbyAvailabilityTtl = const Duration(seconds: 8),
+    Duration presenceExpiryCheckInterval = const Duration(seconds: 2),
+    DateTime Function()? nowProvider,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
        _deviceRegistry = deviceRegistry,
@@ -162,6 +166,10 @@ class DiscoveryController extends ChangeNotifier {
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
        _pathOpener = pathOpener,
+       _appPresenceTtl = appPresenceTtl,
+       _nearbyAvailabilityTtl = nearbyAvailabilityTtl,
+       _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
+       _now = nowProvider ?? DateTime.now,
        _nearbyTransferAvailabilityStore =
            nearbyTransferAvailabilityStore ??
            NearbyTransferAvailabilityStore() {
@@ -235,6 +243,10 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
+  final Duration _appPresenceTtl;
+  final Duration _nearbyAvailabilityTtl;
+  final Duration _presenceExpiryCheckInterval;
+  final DateTime Function() _now;
   final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
@@ -250,6 +262,7 @@ class DiscoveryController extends ChangeNotifier {
       <String, _PendingOutgoingFriendRequest>{};
   Timer? _scanTimer;
   Timer? _clipboardPollTimer;
+  Timer? _presenceExpiryTimer;
   bool _started = false;
   bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
@@ -415,6 +428,7 @@ class DiscoveryController extends ChangeNotifier {
       await _ensureDiscoveryScopeApplied();
       await _refresh(isManual: false, refreshNetworkScope: false);
       _restartAutoRefreshTimer();
+      _restartPresenceExpiryTimer();
       _startClipboardPolling();
     } catch (error) {
       _errorMessage = 'LAN discovery error: $error';
@@ -1221,6 +1235,7 @@ class DiscoveryController extends ChangeNotifier {
               ))) {
         _selectedDeviceIp = null;
       }
+      _expireStalePresence(now: now, notifyListenersWhenChanged: false);
       _log(
         'Device list updated. total=${_devicesByIp.length} '
         'appDetected=$appDetectedCount removed=${staleIps.length}',
@@ -1269,6 +1284,10 @@ class DiscoveryController extends ChangeNotifier {
               macAddress: normalizedMac ?? existing?.macAddress,
               isNearbyTransferAvailable: event.nearbyTransferPort != null,
               nearbyTransferPort: event.nearbyTransferPort,
+              appPresenceObservedAt: event.observedAt,
+              nearbyAvailabilityObservedAt: event.nearbyTransferPort != null
+                  ? event.observedAt
+                  : null,
               isAppDetected: true,
               isReachable: true,
               lastSeen: event.observedAt,
@@ -1504,6 +1523,7 @@ class DiscoveryController extends ChangeNotifier {
               deviceName: trimmedName.isEmpty
                   ? existing?.deviceName
                   : trimmedName,
+              appPresenceObservedAt: observedAt,
               isAppDetected: true,
               isReachable: true,
               lastSeen: observedAt,
@@ -1616,6 +1636,7 @@ class DiscoveryController extends ChangeNotifier {
               deviceName: event.ownerName,
               isReachable: true,
               isAppDetected: true,
+              appPresenceObservedAt: event.observedAt,
               macAddress: ownerMac ?? existing?.macAddress,
               lastSeen: event.observedAt,
             );
@@ -1796,6 +1817,7 @@ class DiscoveryController extends ChangeNotifier {
                 deviceName: event.ownerName,
                 isAppDetected: true,
                 isReachable: true,
+                appPresenceObservedAt: event.observedAt,
                 lastSeen: event.observedAt,
               );
 
@@ -2027,6 +2049,87 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  void _restartPresenceExpiryTimer() {
+    _presenceExpiryTimer?.cancel();
+    _presenceExpiryTimer = Timer.periodic(
+      _presenceExpiryCheckInterval,
+      (_) => _expireStalePresence(),
+    );
+  }
+
+  void _expireStalePresence({
+    DateTime? now,
+    bool notifyListenersWhenChanged = true,
+  }) {
+    final observedNow = now ?? _now();
+    final staleIps = <String>[];
+    var changed = false;
+
+    _devicesByIp.forEach((ip, device) {
+      var nextDevice = device;
+      final appPresenceObservedAt = nextDevice.appPresenceObservedAt;
+      final nearbyAvailabilityObservedAt =
+          nextDevice.nearbyAvailabilityObservedAt;
+
+      if (nextDevice.isNearbyTransferAvailable &&
+          (nearbyAvailabilityObservedAt == null ||
+              observedNow.difference(nearbyAvailabilityObservedAt) >
+                  _nearbyAvailabilityTtl)) {
+        nextDevice = nextDevice.copyWith(
+          isNearbyTransferAvailable: false,
+          nearbyTransferPort: null,
+          nearbyAvailabilityObservedAt: null,
+        );
+      }
+
+      if (nextDevice.isAppDetected &&
+          (appPresenceObservedAt == null ||
+              observedNow.difference(appPresenceObservedAt) >
+                  _appPresenceTtl)) {
+        final hadFreshReachabilitySignal =
+            appPresenceObservedAt != null &&
+            nextDevice.lastSeen.isAfter(appPresenceObservedAt);
+        nextDevice = nextDevice.copyWith(
+          isAppDetected: false,
+          appPresenceObservedAt: null,
+          isNearbyTransferAvailable: false,
+          nearbyTransferPort: null,
+          nearbyAvailabilityObservedAt: null,
+          isReachable: hadFreshReachabilitySignal
+              ? nextDevice.isReachable
+              : false,
+        );
+      }
+
+      if (!nextDevice.isAppDetected && !nextDevice.isReachable) {
+        staleIps.add(ip);
+        if (!identical(nextDevice, device)) {
+          changed = true;
+        }
+        return;
+      }
+
+      if (!identical(nextDevice, device)) {
+        _devicesByIp[ip] = nextDevice;
+        changed = true;
+      }
+    });
+
+    if (staleIps.isNotEmpty) {
+      for (final ip in staleIps) {
+        _devicesByIp.remove(ip);
+      }
+      if (_selectedDeviceIp != null && staleIps.contains(_selectedDeviceIp)) {
+        _selectedDeviceIp = null;
+      }
+      changed = true;
+    }
+
+    if (changed && notifyListenersWhenChanged) {
+      notifyListeners();
+    }
+  }
+
   Duration get _activeAutoRefreshInterval {
     return _currentSettings.backgroundScanInterval.duration;
   }
@@ -2065,6 +2168,7 @@ class DiscoveryController extends ChangeNotifier {
   void dispose() {
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
+    _presenceExpiryTimer?.cancel();
     _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
     _nearbyTransferAvailabilityStore.removeListener(
       _handleNearbyTransferAvailabilityChanged,
