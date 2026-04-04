@@ -86,6 +86,30 @@ class DeviceAliasRepository {
     return lastKnownIps;
   }
 
+  Future<Map<String, String>> loadPeerIdMap() async {
+    final db = await _database.database;
+    final rows = await db.query(
+      AppDatabase.knownDevicesTable,
+      columns: <String>['mac_address', 'peer_id'],
+      where: 'peer_id IS NOT NULL AND LENGTH(TRIM(peer_id)) > 0',
+    );
+
+    final peerIds = <String, String>{};
+    for (final row in rows) {
+      final mac = row['mac_address'] as String?;
+      final peerId = row['peer_id'] as String?;
+      if (mac == null || peerId == null) {
+        continue;
+      }
+      final normalizedPeerId = peerId.trim();
+      if (normalizedPeerId.isEmpty) {
+        continue;
+      }
+      peerIds[mac] = normalizedPeerId;
+    }
+    return peerIds;
+  }
+
   Future<Set<String>> loadTrustedMacs() async {
     final db = await _database.database;
     final rows = await db.query(
@@ -169,6 +193,55 @@ class DeviceAliasRepository {
         ''',
         <Object?>[trustedValue, now, mac],
       );
+    });
+  }
+
+  Future<void> setPeerIdentity({
+    required String macAddress,
+    required String peerId,
+    String? lastKnownIp,
+  }) async {
+    final mac = normalizeMac(macAddress);
+    final normalizedPeerId = peerId.trim();
+    final normalizedIp = lastKnownIp?.trim();
+    if (mac == null) {
+      throw ArgumentError('Invalid MAC address: $macAddress');
+    }
+    if (normalizedPeerId.isEmpty) {
+      throw ArgumentError('peerId is required');
+    }
+
+    final db = await _database.database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    await db.transaction((txn) async {
+      await txn.rawInsert(
+        '''
+          INSERT OR IGNORE INTO ${AppDatabase.knownDevicesTable}
+            (mac_address, peer_id, alias_name, is_trusted, last_known_ip, last_seen_at, updated_at)
+          VALUES (?, ?, NULL, 0, ?, ?, ?)
+        ''',
+        <Object?>[mac, normalizedPeerId, normalizedIp, now, now],
+      );
+      if (normalizedIp != null && normalizedIp.isNotEmpty) {
+        await txn.rawUpdate(
+          '''
+            UPDATE ${AppDatabase.knownDevicesTable}
+            SET peer_id = ?, last_known_ip = ?, last_seen_at = ?, updated_at = ?
+            WHERE mac_address = ?
+          ''',
+          <Object?>[normalizedPeerId, normalizedIp, now, now, mac],
+        );
+      } else {
+        await txn.rawUpdate(
+          '''
+            UPDATE ${AppDatabase.knownDevicesTable}
+            SET peer_id = ?, updated_at = ?
+            WHERE mac_address = ?
+          ''',
+          <Object?>[normalizedPeerId, now, mac],
+        );
+      }
     });
   }
 

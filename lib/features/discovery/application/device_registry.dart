@@ -9,8 +9,10 @@ class DeviceRegistry extends ChangeNotifier {
   final DeviceAliasRepository _deviceAliasRepository;
 
   final Map<String, String> _aliasByMac = <String, String>{};
+  final Map<String, String> _peerIdByMac = <String, String>{};
   final Map<String, String> _lastKnownIpByMac = <String, String>{};
   final Map<String, String> _macByLastKnownIp = <String, String>{};
+  final Map<String, String> _macByPeerId = <String, String>{};
 
   Map<String, String> get aliases =>
       Map<String, String>.unmodifiable(_aliasByMac);
@@ -31,13 +33,31 @@ class DeviceRegistry extends ChangeNotifier {
     return _macByLastKnownIp[normalizedIp];
   }
 
+  String? macForPeerId(String? peerId) {
+    final normalizedPeerId = peerId?.trim();
+    if (normalizedPeerId == null || normalizedPeerId.isEmpty) {
+      return null;
+    }
+    return _macByPeerId[normalizedPeerId];
+  }
+
+  String? peerIdForMac(String? macAddress) {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    if (normalizedMac == null) {
+      return null;
+    }
+    return _peerIdByMac[normalizedMac];
+  }
+
   Future<void> load() async {
     final aliases = await _deviceAliasRepository.loadAliasMap();
+    final peerIds = await _deviceAliasRepository.loadPeerIdMap();
     final lastKnownIps = await _deviceAliasRepository.loadLastKnownIpMap();
 
     _aliasByMac
       ..clear()
       ..addAll(aliases);
+    _replacePeerIdMappings(peerIds);
     _replaceLastKnownIpMappings(lastKnownIps);
     notifyListeners();
   }
@@ -54,6 +74,30 @@ class DeviceRegistry extends ChangeNotifier {
       if (normalizedMac == null || normalizedIp.isEmpty) {
         continue;
       }
+      _setLastKnownIp(normalizedMac, normalizedIp);
+    }
+    notifyListeners();
+  }
+
+  Future<void> recordPeerIdentity({
+    required String macAddress,
+    required String peerId,
+    String? ip,
+  }) async {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    final normalizedPeerId = peerId.trim();
+    final normalizedIp = ip?.trim();
+    if (normalizedMac == null || normalizedPeerId.isEmpty) {
+      return;
+    }
+
+    await _deviceAliasRepository.setPeerIdentity(
+      macAddress: normalizedMac,
+      peerId: normalizedPeerId,
+      lastKnownIp: normalizedIp,
+    );
+    _setPeerId(normalizedMac, normalizedPeerId);
+    if (normalizedIp != null && normalizedIp.isNotEmpty) {
       _setLastKnownIp(normalizedMac, normalizedIp);
     }
     notifyListeners();
@@ -96,6 +140,20 @@ class DeviceRegistry extends ChangeNotifier {
     }
   }
 
+  void _replacePeerIdMappings(Map<String, String> peerIds) {
+    _peerIdByMac.clear();
+    _macByPeerId.clear();
+    for (final entry in peerIds.entries) {
+      final normalizedMac = DeviceAliasRepository.normalizeMac(entry.key);
+      final normalizedPeerId = entry.value.trim();
+      if (normalizedMac == null || normalizedPeerId.isEmpty) {
+        continue;
+      }
+      _peerIdByMac[normalizedMac] = normalizedPeerId;
+      _macByPeerId[normalizedPeerId] = normalizedMac;
+    }
+  }
+
   void _setLastKnownIp(String macAddress, String ip) {
     final previousIp = _lastKnownIpByMac[macAddress];
     if (previousIp != null && previousIp != ip) {
@@ -103,5 +161,14 @@ class DeviceRegistry extends ChangeNotifier {
     }
     _lastKnownIpByMac[macAddress] = ip;
     _macByLastKnownIp[ip] = macAddress;
+  }
+
+  void _setPeerId(String macAddress, String peerId) {
+    final previousPeerId = _peerIdByMac[macAddress];
+    if (previousPeerId != null && previousPeerId != peerId) {
+      _macByPeerId.remove(previousPeerId);
+    }
+    _peerIdByMac[macAddress] = peerId;
+    _macByPeerId[peerId] = macAddress;
   }
 }

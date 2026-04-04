@@ -1262,15 +1262,17 @@ class DiscoveryController extends ChangeNotifier {
   void _onAppDetected(AppPresenceEvent event) {
     _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
+    final normalizedPeerId = _normalizePeerId(event.peerId);
     final normalizedMac = _resolveStableDeviceMac(
       ip: event.ip,
+      peerId: normalizedPeerId,
       observedMac: null,
       existingMac: existing?.macAddress,
     );
     final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
-    final friendName = event.peerId == null
+    final friendName = normalizedPeerId == null
         ? null
-        : _displayNameForPeerId(event.peerId!);
+        : _displayNameForPeerId(normalizedPeerId);
     final detectedCategory = _resolveDeviceCategory(
       deviceType: event.deviceType,
       operatingSystem: detectedOs,
@@ -1278,6 +1280,7 @@ class DiscoveryController extends ChangeNotifier {
     _devicesByIp[event.ip] =
         (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
             .copyWith(
+              peerId: normalizedPeerId ?? existing?.peerId,
               deviceName: friendName ?? event.deviceName,
               operatingSystem: detectedOs ?? existing?.operatingSystem,
               deviceCategory: detectedCategory,
@@ -1292,6 +1295,19 @@ class DiscoveryController extends ChangeNotifier {
               isReachable: true,
               lastSeen: event.observedAt,
             );
+    if (normalizedMac != null && normalizedPeerId != null) {
+      final persistedMac = _deviceRegistry.macForPeerId(normalizedPeerId);
+      final persistedIpMac = _deviceRegistry.macForIp(event.ip);
+      if (persistedMac != normalizedMac || persistedIpMac != normalizedMac) {
+        unawaited(
+          _deviceRegistry.recordPeerIdentity(
+            macAddress: normalizedMac,
+            peerId: normalizedPeerId,
+            ip: event.ip,
+          ),
+        );
+      }
+    }
     notifyListeners();
   }
 
@@ -1507,6 +1523,7 @@ class DiscoveryController extends ChangeNotifier {
     required String macAddress,
     required String deviceName,
     required DateTime observedAt,
+    String? peerId,
   }) async {
     final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
     final trimmedIp = ip.trim();
@@ -1515,10 +1532,13 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final existing = _devicesByIp[trimmedIp];
+    final normalizedPeerId =
+        _normalizePeerId(peerId) ?? _normalizePeerId(existing?.peerId);
     final trimmedName = deviceName.trim();
     _devicesByIp[trimmedIp] =
         (existing ?? DiscoveredDevice(ip: trimmedIp, lastSeen: observedAt))
             .copyWith(
+              peerId: normalizedPeerId ?? existing?.peerId,
               macAddress: normalizedMac,
               deviceName: trimmedName.isEmpty
                   ? existing?.deviceName
@@ -1528,9 +1548,17 @@ class DiscoveryController extends ChangeNotifier {
               isReachable: true,
               lastSeen: observedAt,
             );
-    await _deviceRegistry.recordSeenDevices(<String, String>{
-      normalizedMac: trimmedIp,
-    });
+    if (normalizedPeerId != null) {
+      await _deviceRegistry.recordPeerIdentity(
+        macAddress: normalizedMac,
+        peerId: normalizedPeerId,
+        ip: trimmedIp,
+      );
+    } else {
+      await _deviceRegistry.recordSeenDevices(<String, String>{
+        normalizedMac: trimmedIp,
+      });
+    }
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
@@ -2236,6 +2264,7 @@ class DiscoveryController extends ChangeNotifier {
 
   String? _resolveStableDeviceMac({
     required String ip,
+    String? peerId,
     required String? observedMac,
     required String? existingMac,
   }) {
@@ -2246,12 +2275,28 @@ class DiscoveryController extends ChangeNotifier {
       return normalizedObservedMac;
     }
 
+    final normalizedPeerId = _normalizePeerId(peerId);
+    if (normalizedPeerId != null) {
+      final knownMac = _deviceRegistry.macForPeerId(normalizedPeerId);
+      if (knownMac != null) {
+        return knownMac;
+      }
+    }
+
     final knownMac = _deviceRegistry.macForIp(ip);
     if (knownMac != null) {
       return knownMac;
     }
 
     return DeviceAliasRepository.normalizeMac(existingMac);
+  }
+
+  String? _normalizePeerId(String? peerId) {
+    final normalized = peerId?.trim();
+    if (normalized == null || normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
   }
 
   String? _resolveRemoteOwnerMac({

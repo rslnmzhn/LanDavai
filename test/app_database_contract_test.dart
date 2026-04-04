@@ -20,7 +20,7 @@ void main() {
   test(
     'creates all persistence anchor tables with current key columns',
     () async {
-      expect(AppDatabase.schemaVersion, 6);
+      expect(AppDatabase.schemaVersion, 7);
 
       final tables = await database.rawQuery('''
       SELECT name
@@ -48,6 +48,7 @@ void main() {
         await _columnNames(database, AppDatabase.knownDevicesTable),
         containsAll(<String>[
           'mac_address',
+          'peer_id',
           'alias_name',
           'is_trusted',
           'last_known_ip',
