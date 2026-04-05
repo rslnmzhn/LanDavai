@@ -21,13 +21,17 @@ AppDir:
     arch: amd64
     allow_unauthenticated: true
     sources:
-      - sourceline: deb http://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
-      - sourceline: deb http://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
-      - sourceline: deb http://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
+      - sourceline: deb https://archive.ubuntu.com/ubuntu/ jammy main restricted universe multiverse
+        key_url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x871920D1991BC93C
+      - sourceline: deb https://archive.ubuntu.com/ubuntu/ jammy-updates main restricted universe multiverse
+        key_url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x871920D1991BC93C
+      - sourceline: deb https://security.ubuntu.com/ubuntu/ jammy-security main restricted universe multiverse
+        key_url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x871920D1991BC93C
     include:
       - libgtk-3-0
       - libayatana-appindicator3-1
-      - libmpv2
+      # Ubuntu 22.04/jammy ships the mpv runtime as libmpv1.
+      - libmpv1
       - libmediainfo0v5
       - libzen0v5
       - liblzma5

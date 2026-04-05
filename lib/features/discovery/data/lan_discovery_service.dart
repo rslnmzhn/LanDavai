@@ -69,11 +69,13 @@ class LanDiscoveryService {
   String _localPeerId = '';
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
+  Set<String> _configuredTargetIps = <String>{};
 
   Future<void> start({
     required String deviceName,
     required String localPeerId,
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -93,6 +95,10 @@ class LanDiscoveryService {
     }
     _started = true;
     _localPeerId = localPeerId.trim();
+    _configuredTargetIps = configuredTargetIps
+        .map((ip) => _resolveUnicastTargetIp(ip)?.address)
+        .whereType<String>()
+        .toSet();
 
     try {
       await _transportAdapter.start(
@@ -159,6 +165,7 @@ class LanDiscoveryService {
     _beaconTimer = null;
     await _transportAdapter.stop();
     _started = false;
+    _configuredTargetIps = <String>{};
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
@@ -510,6 +517,20 @@ class LanDiscoveryService {
       );
       _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
     }
+
+    for (final targetIp in _configuredTargetIps) {
+      final address = InternetAddress.tryParse(targetIp);
+      if (address == null || address.type != InternetAddressType.IPv4) {
+        continue;
+      }
+      _transportAdapter.send(
+        bytes: bytes,
+        address: address,
+        port: discoveryPort,
+        context: 'discover-configured-target',
+      );
+      _log('Discover packet sent to configured target $targetIp');
+    }
   }
 
   InternetAddress? _resolveUnicastTargetIp(String rawTargetIp) {
@@ -607,12 +628,16 @@ class LanDiscoveryService {
     }
 
     final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
+    final isAllowedConfiguredTargetSender = _configuredTargetIps.contains(
+      senderIp,
+    );
     final isSenderInLocalSubnet = localIps.any(
       (localIp) => _isSame24Subnet(senderIp, localIp),
     );
     if (localIps.isNotEmpty &&
         !isSenderInLocalSubnet &&
-        !isAllowedInternetSender) {
+        !isAllowedInternetSender &&
+        !isAllowedConfiguredTargetSender) {
       _log('Ignoring packet from foreign subnet: $senderIp');
       return;
     }

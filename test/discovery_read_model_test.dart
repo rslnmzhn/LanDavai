@@ -5,6 +5,7 @@ import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
+import 'package:landa/features/discovery/application/configured_discovery_targets_store.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/internet_peer_endpoint_store.dart';
@@ -14,6 +15,7 @@ import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
+import 'package:landa/features/discovery/data/configured_discovery_targets_repository.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
@@ -43,6 +45,7 @@ void main() {
   late SettingsStore settingsStore;
   late StubDiscoveryNetworkInterfaceCatalog discoveryNetworkInterfaceCatalog;
   late DiscoveryNetworkScopeStore discoveryNetworkScopeStore;
+  late ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   late DiscoveryController controller;
   late DiscoveryReadModel readModel;
 
@@ -68,6 +71,11 @@ void main() {
     discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
       interfaceCatalog: discoveryNetworkInterfaceCatalog,
     );
+    configuredDiscoveryTargetsStore = ConfiguredDiscoveryTargetsStore(
+      repository: ConfiguredDiscoveryTargetsRepository(
+        database: harness.database,
+      ),
+    );
     controller = _buildController(
       database: harness.database,
       deviceRegistry: deviceRegistry,
@@ -75,6 +83,7 @@ void main() {
       trustedLanPeerStore: trustedLanPeerStore,
       settingsStore: settingsStore,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     );
     readModel = DiscoveryReadModel(
       legacyController: controller,
@@ -83,6 +92,7 @@ void main() {
       trustedLanPeerStore: trustedLanPeerStore,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     );
   });
 
@@ -92,6 +102,7 @@ void main() {
     internetPeerEndpointStore.dispose();
     trustedLanPeerStore.dispose();
     deviceRegistry.dispose();
+    configuredDiscoveryTargetsStore.dispose();
     settingsStore.dispose();
     await harness.dispose();
   });
@@ -186,6 +197,7 @@ void main() {
         trustedLanPeerStore: trustedLanPeerStore,
         settingsStore: settingsStore,
         discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+        configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
         hostScanResult: const <String, String?>{
           '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
           '100.90.1.77': '11-22-33-44-55-66',
@@ -198,6 +210,7 @@ void main() {
         trustedLanPeerStore: trustedLanPeerStore,
         discoveryNetworkScopeStore: discoveryNetworkScopeStore,
         settingsStore: settingsStore,
+        configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
       );
 
       await controller.refresh();
@@ -220,6 +233,59 @@ void main() {
       ]);
     },
   );
+
+  test(
+    'keeps configured discovery target visible even outside selected subnet scope',
+    () async {
+      discoveryNetworkInterfaceCatalog.replaceInterfaces(
+        const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'Ethernet',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.10'],
+          ),
+        ],
+      );
+      await configuredDiscoveryTargetsStore.addTarget('100.64.0.8');
+
+      controller.dispose();
+      readModel.dispose();
+      discoveryNetworkScopeStore.dispose();
+
+      discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
+        interfaceCatalog: discoveryNetworkInterfaceCatalog,
+      );
+      controller = _buildController(
+        database: harness.database,
+        deviceRegistry: deviceRegistry,
+        internetPeerEndpointStore: internetPeerEndpointStore,
+        trustedLanPeerStore: trustedLanPeerStore,
+        settingsStore: settingsStore,
+        discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+        configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
+        hostScanResult: const <String, String?>{
+          '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
+          '100.64.0.8': null,
+        },
+      );
+      readModel = DiscoveryReadModel(
+        legacyController: controller,
+        deviceRegistry: deviceRegistry,
+        internetPeerEndpointStore: internetPeerEndpointStore,
+        trustedLanPeerStore: trustedLanPeerStore,
+        discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+        settingsStore: settingsStore,
+        configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
+      );
+
+      await controller.refresh();
+
+      expect(readModel.devices.map((device) => device.ip), <String>[
+        '100.64.0.8',
+        '192.168.1.77',
+      ]);
+    },
+  );
 }
 
 DiscoveryController _buildController({
@@ -229,6 +295,7 @@ DiscoveryController _buildController({
   required TrustedLanPeerStore trustedLanPeerStore,
   required SettingsStore settingsStore,
   required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
+  required ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore,
   Map<String, String?> hostScanResult = const <String, String?>{
     '192.168.1.77': 'AA-BB-CC-DD-EE-FF',
   },
@@ -273,6 +340,7 @@ DiscoveryController _buildController({
     localPeerIdentityStore: localPeerIdentityStore,
     discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     settingsStore: settingsStore,
+    configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
@@ -297,6 +365,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
   @override
   Future<Map<String, String?>> scanActiveHosts({
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
   }) async {
     return result;
   }

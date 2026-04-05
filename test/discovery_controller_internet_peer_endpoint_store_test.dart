@@ -197,6 +197,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
   @override
   Future<Map<String, String?>> scanActiveHosts({
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
   }) async {
     return result;
   }

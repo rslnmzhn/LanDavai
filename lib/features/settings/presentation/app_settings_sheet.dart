@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +12,10 @@ import '../domain/app_settings.dart';
 class AppSettingsSheet extends StatefulWidget {
   const AppSettingsSheet({
     required this.settings,
+    required this.configuredDiscoveryTargets,
+    required this.configuredTargetValidator,
+    required this.onAddConfiguredDiscoveryTarget,
+    required this.onRemoveConfiguredDiscoveryTarget,
     required this.onBackgroundIntervalChanged,
     required this.onDownloadAttemptNotificationsChanged,
     required this.onUseStandardAppDownloadFolderChanged,
@@ -24,6 +30,10 @@ class AppSettingsSheet extends StatefulWidget {
   });
 
   final AppSettings settings;
+  final List<String> configuredDiscoveryTargets;
+  final String? Function(String raw) configuredTargetValidator;
+  final Future<bool> Function(String raw) onAddConfiguredDiscoveryTarget;
+  final Future<void> Function(String value) onRemoveConfiguredDiscoveryTarget;
   final ValueChanged<BackgroundScanIntervalOption> onBackgroundIntervalChanged;
   final ValueChanged<bool> onDownloadAttemptNotificationsChanged;
   final ValueChanged<bool> onUseStandardAppDownloadFolderChanged;
@@ -45,6 +55,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _clipboardLimitController;
   late final TextEditingController _recacheWorkersController;
   late final TextEditingController _videoLinkPasswordController;
+  late final TextEditingController _configuredTargetController;
 
   @override
   void initState() {
@@ -64,6 +75,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     _videoLinkPasswordController = TextEditingController(
       text: widget.settings.videoLinkPassword,
     );
+    _configuredTargetController = TextEditingController();
   }
 
   @override
@@ -104,6 +116,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     _clipboardLimitController.dispose();
     _recacheWorkersController.dispose();
     _videoLinkPasswordController.dispose();
+    _configuredTargetController.dispose();
     super.dispose();
   }
 
@@ -152,6 +165,21 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
 
   void _saveVideoLinkPassword() {
     widget.onVideoLinkPasswordChanged(_videoLinkPasswordController.text.trim());
+  }
+
+  Future<void> _addConfiguredTarget() async {
+    final raw = _configuredTargetController.text;
+    final error = widget.configuredTargetValidator(raw);
+    if (error != null) {
+      _showValidationMessage(error);
+      return;
+    }
+    final added = await widget.onAddConfiguredDiscoveryTarget(raw);
+    if (!added) {
+      _showValidationMessage('Не удалось добавить IP-адрес.');
+      return;
+    }
+    _configuredTargetController.clear();
   }
 
   @override
@@ -209,6 +237,70 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 'Интервал управляет авто-сканированием. Для немедленного обновления используйте кнопку Refresh.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
+              const SizedBox(height: AppSpacing.md),
+              Text(
+                'Явные discovery targets',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Fallback для virtual/routed сетей, где автообнаружение может не сработать. Landa будет отправлять discovery-пакеты только на указанные IPv4-адреса.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _configuredTargetController,
+                      keyboardType: TextInputType.text,
+                      inputFormatters: <TextInputFormatter>[
+                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'IPv4-адрес устройства',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onSubmitted: (_) => unawaited(_addConfiguredTarget()),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: () => unawaited(_addConfiguredTarget()),
+                      child: const Text('Добавить'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (widget.configuredDiscoveryTargets.isEmpty)
+                Text(
+                  'Список пуст. Добавьте IP-адреса устройств виртуальной сети, если они не находятся автоматически.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                )
+              else
+                Column(
+                  children: widget.configuredDiscoveryTargets
+                      .map(
+                        (target) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          dense: true,
+                          title: Text(target),
+                          trailing: IconButton(
+                            tooltip: 'Удалить',
+                            onPressed: () => unawaited(
+                              widget.onRemoveConfiguredDiscoveryTarget(target),
+                            ),
+                            icon: const Icon(Icons.delete_outline_rounded),
+                          ),
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
               const SizedBox(height: AppSpacing.md),
               SwitchListTile.adaptive(
                 value: widget.settings.downloadAttemptNotificationsEnabled,

@@ -5,5 +5,5 @@ Comment=Peer-to-peer LAN file transfer
 Exec=landa %U
 Icon=landa
 Terminal=false
-Categories=Network;FileTransfer;Utility;
+Categories=Network;FileTransfer;
 StartupWMClass=landa
