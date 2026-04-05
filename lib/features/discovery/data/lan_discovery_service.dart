@@ -627,6 +627,12 @@ class LanDiscoveryService {
       return;
     }
 
+    final message = utf8.decode(datagram.data, allowMalformed: true);
+    final packet = _packetCodec.decodeIncomingPacket(message);
+    if (packet == null || packet.instanceId == _instanceId) {
+      return;
+    }
+
     final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
     final isAllowedConfiguredTargetSender = _configuredTargetIps.contains(
       senderIp,
@@ -634,17 +640,15 @@ class LanDiscoveryService {
     final isSenderInLocalSubnet = localIps.any(
       (localIp) => _isSame24Subnet(senderIp, localIp),
     );
-    if (localIps.isNotEmpty &&
-        !isSenderInLocalSubnet &&
-        !isAllowedInternetSender &&
-        !isAllowedConfiguredTargetSender) {
+    if (!_isAllowedSenderForPacket(
+      packet: packet,
+      senderIp: senderIp,
+      localIps: localIps,
+      isSenderInLocalSubnet: isSenderInLocalSubnet,
+      isAllowedInternetSender: isAllowedInternetSender,
+      isAllowedConfiguredTargetSender: isAllowedConfiguredTargetSender,
+    )) {
       _log('Ignoring packet from foreign subnet: $senderIp');
-      return;
-    }
-
-    final message = utf8.decode(datagram.data, allowMalformed: true);
-    final packet = _packetCodec.decodeIncomingPacket(message);
-    if (packet == null || packet.instanceId == _instanceId) {
       return;
     }
     final observedAt = DateTime.now();
@@ -817,5 +821,29 @@ class LanDiscoveryService {
         ),
       );
     }
+  }
+
+  bool _isAllowedSenderForPacket({
+    required LanInboundPacket packet,
+    required String senderIp,
+    required Set<String> localIps,
+    required bool isSenderInLocalSubnet,
+    required bool isAllowedInternetSender,
+    required bool isAllowedConfiguredTargetSender,
+  }) {
+    if (localIps.isEmpty ||
+        isSenderInLocalSubnet ||
+        isAllowedInternetSender ||
+        isAllowedConfiguredTargetSender) {
+      return true;
+    }
+
+    if (packet is LanDiscoveryPresencePacket &&
+        packet.prefix == lanDiscoverPrefix) {
+      _log('Allowing discover request from non-local sender: $senderIp');
+      return true;
+    }
+
+    return false;
   }
 }

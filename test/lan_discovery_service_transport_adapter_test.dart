@@ -183,6 +183,89 @@ void main() {
   );
 
   test(
+    'responds to discover requests from configured peers even when only one side has the target configured',
+    () async {
+      AppPresenceEvent? detectedEvent;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (event) {
+          detectedEvent = event;
+        },
+      );
+      transportAdapter.clearSentPackets();
+
+      final requestMessage = codec.encodeDiscoveryRequest(
+        instanceId: 'remote-instance',
+        deviceName: 'Virtual peer',
+        localPeerId: 'remote-peer',
+      );
+
+      transportAdapter.emitDatagram(
+        bytes: utf8.encode(requestMessage),
+        senderIp: '100.64.0.8',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(detectedEvent, isNotNull);
+      expect(detectedEvent!.ip, '100.64.0.8');
+      expect(detectedEvent!.deviceName, 'Virtual peer');
+      expect(
+        transportAdapter.sentPackets.any(
+          (packet) =>
+              packet.context == 'discover-response' &&
+              packet.address.address == '100.64.0.8',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'keeps non-presence packets from foreign subnets blocked without explicit allowlisting',
+    () async {
+      TransferRequestEvent? transferRequest;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (_) {},
+        onTransferRequest: (event) {
+          transferRequest = event;
+        },
+      );
+
+      final packet = codec.encodeTransferRequest(
+        instanceId: 'remote-instance',
+        requestId: 'request-1',
+        senderName: 'Remote peer',
+        senderMacAddress: 'aa:bb:cc:dd:ee:ff',
+        sharedCacheId: 'cache-1',
+        sharedLabel: 'Docs',
+        items: <TransferAnnouncementItem>[
+          TransferAnnouncementItem(
+            fileName: 'file.txt',
+            sizeBytes: 5,
+            sha256: 'hash',
+          ),
+        ],
+        createdAtMs: 1,
+      );
+
+      transportAdapter.emitDatagram(
+        bytes: packet!.bytes,
+        senderIp: '100.64.0.8',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(transferRequest, isNull);
+    },
+  );
+
+  test(
     'keeps encoded packet send path routed through transport adapter',
     () async {
       await service.start(
