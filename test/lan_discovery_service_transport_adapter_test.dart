@@ -49,6 +49,25 @@ void main() {
     expect(transportAdapter.stopCalls, 1);
   });
 
+  test('sends discovery ping to configured targets', () async {
+    await service.start(
+      deviceName: 'Local workstation',
+      localPeerId: 'local-peer',
+      localSourceIps: const <String>{'192.168.1.10'},
+      configuredTargetIps: const <String>{'100.64.0.8'},
+      onAppDetected: (_) {},
+    );
+
+    expect(
+      transportAdapter.sentPackets.any(
+        (packet) =>
+            packet.context == 'discover-configured-target' &&
+            packet.address.address == '100.64.0.8',
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'keeps discovery response routing unchanged after transport extraction',
     () async {
@@ -127,6 +146,39 @@ void main() {
 
       expect(decoded, isNotNull);
       expect(decoded!.nearbyTransferPort, 47890);
+    },
+  );
+
+  test(
+    'accepts discovery responses from configured targets outside local subnet',
+    () async {
+      AppPresenceEvent? detectedEvent;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        configuredTargetIps: const <String>{'100.64.0.8'},
+        onAppDetected: (event) {
+          detectedEvent = event;
+        },
+      );
+
+      final responseMessage = codec.encodeDiscoveryResponse(
+        instanceId: 'remote-instance',
+        deviceName: 'Overlay peer',
+        localPeerId: 'remote-peer',
+      );
+
+      transportAdapter.emitDatagram(
+        bytes: utf8.encode(responseMessage),
+        senderIp: '100.64.0.8',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(detectedEvent, isNotNull);
+      expect(detectedEvent!.ip, '100.64.0.8');
+      expect(detectedEvent!.deviceName, 'Overlay peer');
     },
   );
 

@@ -46,6 +46,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     return DiscoveryPage(
       controller: pageDependencies.controller,
       readModel: pageDependencies.readModel,
+      configuredDiscoveryTargetsStore:
+          pageDependencies.configuredDiscoveryTargetsStore,
       remoteShareBrowser: pageDependencies.remoteShareBrowser,
       sharedCacheMaintenanceBoundary:
           pageDependencies.sharedCacheMaintenanceBoundary,

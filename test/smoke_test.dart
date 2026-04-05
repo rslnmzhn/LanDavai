@@ -71,7 +71,7 @@ void main() {
   );
 
   testWidgets(
-    'DiscoveryPage network scope selector filters visible devices on the main surface',
+    'DiscoveryPage shows a unified device list without subnet tabs on the main surface',
     (tester) async {
       _registerWidgetCleanup(tester);
       await tester.binding.setSurfaceSize(const Size(320, 900));
@@ -132,58 +132,20 @@ void main() {
 
       await _pumpDiscoveryPage(tester, harness: harness);
 
-      expect(
-        find.byKey(const Key('discovery-network-scope-chip-row')),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: find.byType(DiscoveryPage),
-          matching: find.byType(Wrap),
-        ),
-        findsNothing,
-      );
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('discovery-network-scope-chip-row')),
-          matching: find.byType(Scrollbar),
-        ),
-        findsNothing,
-      );
-      expect(find.text('Все'), findsOneWidget);
-      expect(find.text('Office LAN'), findsOneWidget);
-      expect(find.text('Tailscale'), findsOneWidget);
-      expect(find.text('ZeroTier'), findsOneWidget);
       expect(find.text('Office laptop'), findsOneWidget);
-
-      final lastChipBefore = tester.getRect(
-        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
-      );
-      await tester.drag(
-        find.byKey(const Key('discovery-network-scope-chip-row')),
-        const Offset(-220, 0),
-      );
-      await _pumpForUi(tester, frames: 4);
-      final lastChipAfter = tester.getRect(
-        find.widgetWithText(ChoiceChip, 'Warehouse VLAN'),
-      );
-      expect(lastChipAfter.left, lessThan(lastChipBefore.left));
-
-      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Tailscale'));
-      await _pumpForUi(tester, frames: 4);
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Tailscale'));
-      await _pumpForUi(tester);
-
-      expect(find.text('Office laptop'), findsNothing);
       expect(find.text('Tailscale peer'), findsOneWidget);
       expect(find.text('ZeroTier peer'), findsNothing);
+      expect(
+        find.byKey(const Key('discovery-network-scope-chip-row')),
+        findsNothing,
+      );
+      expect(find.text('Network scope'), findsNothing);
+      expect(find.text('Все'), findsNothing);
+      expect(find.text('Office LAN'), findsNothing);
+      expect(find.text('Tailscale'), findsNothing);
+      expect(find.text('ZeroTier'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Warehouse VLAN'), findsNothing);
 
-      await tester.ensureVisible(find.widgetWithText(ChoiceChip, 'Все'));
-      await _pumpForUi(tester, frames: 4);
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Все'));
-      await _pumpForUi(tester);
-
-      expect(find.text('Office laptop'), findsOneWidget);
       await tester.dragUntilVisible(
         find.text('ZeroTier peer'),
         find.byType(ListView),
@@ -192,6 +154,22 @@ void main() {
       await _pumpForUi(tester, frames: 4);
 
       expect(find.text('ZeroTier peer'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'DiscoveryPage empty state no longer references subnet scope switching',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _pumpDiscoveryPage(tester, harness: harness);
+
+      expect(find.text('No devices found yet'), findsOneWidget);
+      expect(
+        find.text('Make sure you are on the same Wi-Fi / LAN and refresh.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('switch back to'), findsNothing);
+      expect(find.text('No devices found in this network'), findsNothing);
     },
   );
 
@@ -448,6 +426,8 @@ Future<void> _pumpDiscoveryPage(
       home: DiscoveryPage(
         controller: harness.controller,
         readModel: harness.readModel,
+        configuredDiscoveryTargetsStore:
+            harness.configuredDiscoveryTargetsStore,
         remoteShareBrowser: harness.remoteShareBrowser,
         sharedCacheMaintenanceBoundary: harness.sharedCacheMaintenanceBoundary,
         videoLinkSessionBoundary: harness.videoLinkSessionBoundary,

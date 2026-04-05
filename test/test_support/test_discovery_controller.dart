@@ -7,6 +7,7 @@ import 'package:landa/features/clipboard/application/remote_clipboard_projection
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
+import 'package:landa/features/discovery/application/configured_discovery_targets_store.dart';
 import 'package:landa/features/discovery/application/discovery_network_scope_store.dart';
 import 'package:landa/features/discovery/application/discovery_read_model.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
@@ -18,6 +19,7 @@ import 'package:landa/features/discovery/application/shared_cache_maintenance_bo
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/application/video_link_session_boundary.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
+import 'package:landa/features/discovery/data/configured_discovery_targets_repository.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
@@ -57,6 +59,7 @@ class TestDiscoveryControllerHarness {
     required this.databaseHarness,
     required this.controller,
     required this.readModel,
+    required this.configuredDiscoveryTargetsStore,
     required this.discoveryNetworkInterfaceCatalog,
     required this.discoveryNetworkScopeStore,
     required this.remoteShareBrowser,
@@ -75,6 +78,7 @@ class TestDiscoveryControllerHarness {
   final TestAppDatabaseHarness databaseHarness;
   final TrackingDiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   final StubDiscoveryNetworkInterfaceCatalog discoveryNetworkInterfaceCatalog;
   final DiscoveryNetworkScopeStore discoveryNetworkScopeStore;
   final TrackingRemoteShareBrowser remoteShareBrowser;
@@ -97,6 +101,7 @@ class TestDiscoveryControllerHarness {
       pageDependencies: DiscoveryPageDependencies(
         controller: controller,
         readModel: readModel,
+        configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
         remoteShareBrowser: remoteShareBrowser,
         sharedCacheMaintenanceBoundary: sharedCacheMaintenanceBoundary,
         videoLinkSessionBoundary: videoLinkSessionBoundary,
@@ -158,6 +163,9 @@ class TestDiscoveryControllerHarness {
     );
     final settingsStore = SettingsStore(
       appSettingsRepository: AppSettingsRepository(database: database),
+    );
+    final configuredDiscoveryTargetsStore = ConfiguredDiscoveryTargetsStore(
+      repository: ConfiguredDiscoveryTargetsRepository(database: database),
     );
     final deviceRegistry = DeviceRegistry(
       deviceAliasRepository: deviceAliasRepository,
@@ -255,6 +263,7 @@ class TestDiscoveryControllerHarness {
       localPeerIdentityStore: localPeerIdentityStore,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
       appNotificationService: AppNotificationService.instance,
       transferHistoryRepository: transferHistoryRepository,
       downloadHistoryBoundary: downloadHistoryBoundary,
@@ -286,6 +295,7 @@ class TestDiscoveryControllerHarness {
       trustedLanPeerStore: trustedLanPeerStore,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       settingsStore: settingsStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     );
     final sharedCacheMaintenanceBoundary = SharedCacheMaintenanceBoundary(
       sharedCacheCatalog: sharedCacheCatalog,
@@ -299,6 +309,7 @@ class TestDiscoveryControllerHarness {
       databaseHarness: databaseHarness,
       controller: controller,
       readModel: readModel,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
       discoveryNetworkInterfaceCatalog: discoveryNetworkInterfaceCatalog,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
       remoteShareBrowser: remoteShareBrowser,
@@ -338,6 +349,7 @@ class TrackingDiscoveryController extends DiscoveryController {
     required super.localPeerIdentityStore,
     required super.discoveryNetworkScopeStore,
     required super.settingsStore,
+    super.configuredDiscoveryTargetsStore,
     required super.appNotificationService,
     required super.transferHistoryRepository,
     super.downloadHistoryBoundary,

@@ -22,6 +22,7 @@ import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
+import '../application/configured_discovery_targets_store.dart';
 import '../application/discovery_read_model.dart';
 import '../application/remote_share_browser.dart';
 import '../application/shared_cache_maintenance_boundary.dart';
@@ -41,6 +42,7 @@ class DiscoveryPage extends StatefulWidget {
   const DiscoveryPage({
     required this.controller,
     required this.readModel,
+    required this.configuredDiscoveryTargetsStore,
     required this.remoteShareBrowser,
     required this.sharedCacheMaintenanceBoundary,
     required this.videoLinkSessionBoundary,
@@ -60,6 +62,7 @@ class DiscoveryPage extends StatefulWidget {
 
   final DiscoveryController controller;
   final DiscoveryReadModel readModel;
+  final ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   final RemoteShareBrowser remoteShareBrowser;
   final SharedCacheMaintenanceBoundary sharedCacheMaintenanceBoundary;
   final VideoLinkSessionBoundary videoLinkSessionBoundary;
@@ -85,6 +88,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
 
   DiscoveryController get _controller => widget.controller;
   DiscoveryReadModel get _readModel => widget.readModel;
+  ConfiguredDiscoveryTargetsStore get _configuredDiscoveryTargetsStore =>
+      widget.configuredDiscoveryTargetsStore;
   RemoteShareBrowser get _remoteShareBrowser => widget.remoteShareBrowser;
   SharedCacheMaintenanceBoundary get _sharedCacheMaintenanceBoundary =>
       widget.sharedCacheMaintenanceBoundary;
@@ -232,9 +237,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           transferSessionCoordinator: _transferSessionCoordinator,
           onRefresh: _controller.refresh,
           onSelectDeviceByIp: _controller.selectDeviceByIp,
-          onSelectNetworkScope: (scopeId) {
-            unawaited(_controller.selectNetworkScope(scopeId));
-          },
           onOpenDeviceActionsMenu: _openDeviceActionsMenu,
           padding: isWideLayout
               ? const EdgeInsets.fromLTRB(
@@ -339,10 +341,22 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       isScrollControlled: true,
       builder: (context) {
         return AnimatedBuilder(
-          animation: Listenable.merge(<Listenable>[_controller, _readModel]),
+          animation: Listenable.merge(<Listenable>[
+            _controller,
+            _readModel,
+            _configuredDiscoveryTargetsStore,
+          ]),
           builder: (context, _) {
             return AppSettingsSheet(
               settings: _readModel.settings,
+              configuredDiscoveryTargets:
+                  _configuredDiscoveryTargetsStore.targets,
+              configuredTargetValidator:
+                  _configuredDiscoveryTargetsStore.validationErrorFor,
+              onAddConfiguredDiscoveryTarget:
+                  _configuredDiscoveryTargetsStore.addTarget,
+              onRemoveConfiguredDiscoveryTarget:
+                  _configuredDiscoveryTargetsStore.removeTarget,
               onBackgroundIntervalChanged: (interval) {
                 unawaited(_controller.updateBackgroundScanInterval(interval));
               },

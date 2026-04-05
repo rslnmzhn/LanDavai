@@ -90,6 +90,8 @@ Future<void> _pumpDiscoveryPage(
       home: DiscoveryPage(
         controller: harness.controller,
         readModel: harness.readModel,
+        configuredDiscoveryTargetsStore:
+            harness.configuredDiscoveryTargetsStore,
         remoteShareBrowser: harness.remoteShareBrowser,
         sharedCacheMaintenanceBoundary: harness.sharedCacheMaintenanceBoundary,
         videoLinkSessionBoundary: harness.videoLinkSessionBoundary,

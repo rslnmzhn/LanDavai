@@ -4,6 +4,7 @@ import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
 import 'package:landa/features/clipboard/data/clipboard_history_repository.dart';
+import 'package:landa/features/discovery/application/configured_discovery_targets_store.dart';
 import 'package:landa/features/discovery/application/device_registry.dart';
 import 'package:landa/features/discovery/application/discovery_controller.dart';
 import 'package:landa/features/discovery/application/discovery_network_scope_store.dart';
@@ -13,6 +14,7 @@ import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/application/remote_share_media_projection_boundary.dart';
 import 'package:landa/features/discovery/application/trusted_lan_peer_store.dart';
 import 'package:landa/features/discovery/data/device_alias_repository.dart';
+import 'package:landa/features/discovery/data/configured_discovery_targets_repository.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/friend_repository.dart';
 import 'package:landa/features/discovery/data/lan_discovery_service.dart';
@@ -39,6 +41,7 @@ void main() {
   late RecordingNetworkHostScanner networkHostScanner;
   late StubDiscoveryNetworkInterfaceCatalog interfaceCatalog;
   late DiscoveryNetworkScopeStore discoveryNetworkScopeStore;
+  late ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   late DiscoveryController controller;
 
   setUp(() async {
@@ -64,16 +67,23 @@ void main() {
     discoveryNetworkScopeStore = buildTestDiscoveryNetworkScopeStore(
       interfaceCatalog: interfaceCatalog,
     );
+    configuredDiscoveryTargetsStore = ConfiguredDiscoveryTargetsStore(
+      repository: ConfiguredDiscoveryTargetsRepository(
+        database: harness.database,
+      ),
+    );
     controller = _buildController(
       database: harness.database,
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: networkHostScanner,
       discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     );
   });
 
   tearDown(() async {
     controller.dispose();
+    configuredDiscoveryTargetsStore.dispose();
     discoveryNetworkScopeStore.dispose();
     await harness.dispose();
   });
@@ -140,6 +150,37 @@ void main() {
       expect(networkHostScanner.localSourceIpsCalls, hasLength(2));
     },
   );
+
+  test('applies configured discovery targets to runtime and scanner', () async {
+    await configuredDiscoveryTargetsStore.addTarget('100.64.0.8');
+    await configuredDiscoveryTargetsStore.addTarget('100.64.0.9');
+
+    await controller.start();
+
+    expect(lanDiscoveryService.startConfiguredTargetIps.single, <String>{
+      '100.64.0.8',
+      '100.64.0.9',
+    });
+    expect(networkHostScanner.configuredTargetIpsCalls.single, <String>{
+      '100.64.0.8',
+      '100.64.0.9',
+    });
+
+    await configuredDiscoveryTargetsStore.addTarget('100.64.0.10');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(lanDiscoveryService.startConfiguredTargetIps.last, <String>{
+      '100.64.0.8',
+      '100.64.0.9',
+      '100.64.0.10',
+    });
+    expect(networkHostScanner.configuredTargetIpsCalls.last, <String>{
+      '100.64.0.8',
+      '100.64.0.9',
+      '100.64.0.10',
+    });
+    expect(lanDiscoveryService.stopCalls, 1);
+  });
 }
 
 DiscoveryController _buildController({
@@ -147,6 +188,7 @@ DiscoveryController _buildController({
   required RecordingLanDiscoveryService lanDiscoveryService,
   required RecordingNetworkHostScanner networkHostScanner,
   required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
+  required ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore,
 }) {
   final deviceAliasRepository = DeviceAliasRepository(database: database);
   final deviceRegistry = DeviceRegistry(
@@ -201,6 +243,7 @@ DiscoveryController _buildController({
     localPeerIdentityStore: localPeerIdentityStore,
     discoveryNetworkScopeStore: discoveryNetworkScopeStore,
     settingsStore: settingsStore,
+    configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
     appNotificationService: AppNotificationService.instance,
     transferHistoryRepository: TransferHistoryRepository(database: database),
     clipboardHistoryRepository: ClipboardHistoryRepository(database: database),
@@ -219,6 +262,7 @@ DiscoveryController _buildController({
 
 class RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<Set<String>> startLocalSourceIps = <Set<String>>[];
+  final List<Set<String>> startConfiguredTargetIps = <Set<String>>[];
   int startCalls = 0;
   int stopCalls = 0;
 
@@ -227,6 +271,7 @@ class RecordingLanDiscoveryService extends LanDiscoveryService {
     required String deviceName,
     required String localPeerId,
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -242,6 +287,7 @@ class RecordingLanDiscoveryService extends LanDiscoveryService {
   }) async {
     startCalls += 1;
     startLocalSourceIps.add(Set<String>.from(localSourceIps));
+    startConfiguredTargetIps.add(Set<String>.from(configuredTargetIps));
   }
 
   @override
@@ -254,12 +300,15 @@ class RecordingNetworkHostScanner extends NetworkHostScanner {
   RecordingNetworkHostScanner() : super(allowTcpFallback: false);
 
   final List<Set<String>> localSourceIpsCalls = <Set<String>>[];
+  final List<Set<String>> configuredTargetIpsCalls = <Set<String>>[];
 
   @override
   Future<Map<String, String?>> scanActiveHosts({
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
   }) async {
     localSourceIpsCalls.add(Set<String>.from(localSourceIps));
+    configuredTargetIpsCalls.add(Set<String>.from(configuredTargetIps));
     return const <String, String?>{};
   }
 }

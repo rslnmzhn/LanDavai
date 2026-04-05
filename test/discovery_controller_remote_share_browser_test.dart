@@ -380,6 +380,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     required String deviceName,
     required String localPeerId,
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
     required void Function(AppPresenceEvent event) onAppDetected,
     void Function(TransferRequestEvent event)? onTransferRequest,
     void Function(TransferDecisionEvent event)? onTransferDecision,
@@ -410,6 +411,7 @@ class StubNetworkHostScanner extends NetworkHostScanner {
   @override
   Future<Map<String, String?>> scanActiveHosts({
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
   }) async {
     return result;
   }
