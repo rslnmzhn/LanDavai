@@ -314,14 +314,20 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${{ needs.resolve_release.outputs.release_version }}"
+          WINDOWS_ROOT_DIR="landa-v${VERSION}-windows-x64"
 
           cp "release_assets/android-apk-release/app-release.apk" \
             "release_assets/landa-v${VERSION}-android.apk"
           cp "release_assets/linux-appimage-release/landa-v${VERSION}-linux-x86_64.AppImage" \
             "release_assets/landa-v${VERSION}-linux-x86_64.AppImage"
+          rm -rf "release_assets/${WINDOWS_ROOT_DIR}" \
+            "release_assets/landa-v${VERSION}-windows-x64.zip"
+          mkdir -p "release_assets/${WINDOWS_ROOT_DIR}"
+          cp -R "release_assets/windows-bundle-release/." \
+            "release_assets/${WINDOWS_ROOT_DIR}/"
           (
-            cd "release_assets/windows-bundle-release"
-            zip -r "../landa-v${VERSION}-windows-x64.zip" .
+            cd "release_assets"
+            zip -r "landa-v${VERSION}-windows-x64.zip" "${WINDOWS_ROOT_DIR}"
           )
 
       - name: Create or update release
