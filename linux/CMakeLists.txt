@@ -70,6 +70,14 @@ endif()
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+set(LINUX_BUNDLE_LAUNCHER_SCRIPT
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/${BINARY_NAME}_launcher.sh")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/runner/landa_launcher.sh.in"
+  "${LINUX_BUNDLE_LAUNCHER_SCRIPT}"
+  @ONLY
+)
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
@@ -105,6 +113,19 @@ set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+install(CODE "
+  if(EXISTS \"${CMAKE_INSTALL_PREFIX}/${BINARY_NAME}\")
+    file(RENAME
+      \"${CMAKE_INSTALL_PREFIX}/${BINARY_NAME}\"
+      \"${CMAKE_INSTALL_PREFIX}/${BINARY_NAME}-bin\")
+  endif()
+  " COMPONENT Runtime)
+
+install(PROGRAMS "${LINUX_BUNDLE_LAUNCHER_SCRIPT}"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  RENAME "${BINARY_NAME}"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

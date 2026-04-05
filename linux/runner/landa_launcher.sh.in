@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAL_BINARY="${BUNDLE_DIR}/@BINARY_NAME@-bin"
+
+show_message() {
+  local title="$1"
+  local body="$2"
+
+  if command -v zenity >/dev/null 2>&1; then
+    zenity --error --title="$title" --width=460 --text="$body" >/dev/null 2>&1 || true
+    return
+  fi
+
+  if command -v kdialog >/dev/null 2>&1; then
+    kdialog --error "$body" --title "$title" >/dev/null 2>&1 || true
+    return
+  fi
+
+  if command -v xmessage >/dev/null 2>&1; then
+    xmessage -center "$title"$'\n\n'"$body" >/dev/null 2>&1 || true
+    return
+  fi
+
+  printf '\n%s\n\n%s\n\n' "$title" "$body" >&2
+}
+
+detect_package_manager() {
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "apt"
+    return
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    echo "dnf"
+    return
+  fi
+  if command -v zypper >/dev/null 2>&1; then
+    echo "zypper"
+    return
+  fi
+  if command -v pacman >/dev/null 2>&1; then
+    echo "pacman"
+    return
+  fi
+  echo "unknown"
+}
+
+detect_os_label() {
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    if [[ -n "${PRETTY_NAME:-}" ]]; then
+      printf '%s' "${PRETTY_NAME}"
+      return
+    fi
+  fi
+  printf '%s' "Linux"
+}
+
+command_for_missing_library() {
+  local missing_lib="$1"
+  local package_manager="$2"
+
+  case "${missing_lib}" in
+    libmpv.so.1)
+      case "${package_manager}" in
+        apt)
+          printf '%s' "sudo apt-get update && sudo apt-get install -y libmpv1"
+          ;;
+        dnf)
+          printf '%s' "sudo dnf provides '*/libmpv.so*' && sudo dnf install mpv-libs"
+          ;;
+        zypper)
+          printf '%s' "zypper search --provides libmpv.so.1 && sudo zypper install libmpv1"
+          ;;
+        pacman)
+          printf '%s' "pacman -F libmpv.so.1 && sudo pacman -S <package-that-provides-libmpv.so.1>"
+          ;;
+        *)
+          printf '%s' "Install a package that provides libmpv.so.1"
+          ;;
+      esac
+      ;;
+    *)
+      printf '%s' "Install a package that provides ${missing_lib}"
+      ;;
+  esac
+}
+
+collect_missing_libraries() {
+  if ! command -v ldd >/dev/null 2>&1; then
+    return
+  fi
+  ldd "${REAL_BINARY}" 2>/dev/null | awk '/=> not found/ { print $1 }'
+}
+
+if [[ ! -x "${REAL_BINARY}" ]]; then
+  show_message \
+    "Landa launch failed" \
+    "The bundled launcher could not find the real executable:\n${REAL_BINARY}"
+  exit 1
+fi
+
+mapfile -t missing_libraries < <(collect_missing_libraries)
+
+if (( ${#missing_libraries[@]} > 0 )); then
+  package_manager="$(detect_package_manager)"
+  os_label="$(detect_os_label)"
+  primary_missing_lib="${missing_libraries[0]}"
+  install_command="$(command_for_missing_library "${primary_missing_lib}" "${package_manager}")"
+  missing_list="$(printf '%s\n' "${missing_libraries[@]}")"
+
+  show_message \
+    "Landa needs an extra Linux library" \
+    "Landa cannot start because this Linux system is missing required runtime libraries.\n\nDetected system: ${os_label}\nPackage manager: ${package_manager}\n\nMissing libraries:\n${missing_list}\nSuggested command:\n${install_command}\n\nAutomatic installation is not started silently. Run the command above with your package manager, then launch Landa again."
+  exit 1
+fi
+
+exec "${REAL_BINARY}" "$@"

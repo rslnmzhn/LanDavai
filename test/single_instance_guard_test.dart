@@ -5,10 +5,6 @@ import 'package:landa/core/utils/single_instance_guard.dart';
 
 void main() {
   test('prevents acquiring the same desktop lock twice concurrently', () async {
-    if (!Platform.isWindows && !Platform.isLinux) {
-      return;
-    }
-
     final tempDirectory = await Directory.systemTemp.createTemp(
       'landa_single_instance_guard_',
     );
@@ -18,15 +14,30 @@ void main() {
       } catch (_) {}
     });
 
-    final guard = const SingleInstanceGuard();
+    final guard = SingleInstanceGuard(desktopPlatformResolver: () => true);
     final first = await guard.acquire(lockDirectory: tempDirectory);
     addTearDown(first.dispose);
 
     expect(first.acquired, isTrue);
+    expect(first.shouldBlockStartup, isFalse);
 
     final second = await guard.acquire(lockDirectory: tempDirectory);
     addTearDown(second.dispose);
 
     expect(second.acquired, isFalse);
+    expect(second.shouldBlockStartup, isTrue);
   });
+
+  test(
+    'does not block startup when guard is not enforced on android-like path',
+    () async {
+      final guard = SingleInstanceGuard(desktopPlatformResolver: () => false);
+
+      final handle = await guard.acquire();
+      addTearDown(handle.dispose);
+
+      expect(handle.acquired, isFalse);
+      expect(handle.shouldBlockStartup, isFalse);
+    },
+  );
 }

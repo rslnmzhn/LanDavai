@@ -12,7 +12,7 @@ Future<void> main() async {
   await AppNotificationService.instance.initialize();
 
   final singleInstanceGuardHandle = await const SingleInstanceGuard().acquire();
-  if (!singleInstanceGuardHandle.acquired) {
+  if (singleInstanceGuardHandle.shouldBlockStartup) {
     runApp(const DuplicateInstanceNoticeApp());
     return;
   }
