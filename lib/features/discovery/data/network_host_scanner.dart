@@ -13,6 +13,7 @@ class NetworkHostScanner {
 
   Future<Map<String, String?>> scanActiveHosts({
     required Set<String> localSourceIps,
+    Set<String> configuredTargetIps = const <String>{},
   }) async {
     final localIps = localSourceIps.where(_isValidIpv4).toSet();
     final candidates = <String>{};
@@ -20,6 +21,7 @@ class NetworkHostScanner {
     for (final ip in localIps) {
       candidates.addAll(_buildSubnetCandidates(ip));
     }
+    candidates.addAll(configuredTargetIps.where(_isValidIpv4));
 
     candidates.removeAll(localIps);
     if (candidates.isEmpty) {

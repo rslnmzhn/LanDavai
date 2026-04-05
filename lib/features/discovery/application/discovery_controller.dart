@@ -34,6 +34,7 @@ import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
+import 'configured_discovery_targets_store.dart';
 import 'device_registry.dart';
 import 'internet_peer_endpoint_store.dart';
 import 'local_peer_identity_store.dart';
@@ -137,6 +138,7 @@ class DiscoveryController extends ChangeNotifier {
     required LocalPeerIdentityStore localPeerIdentityStore,
     required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
     required SettingsStore settingsStore,
+    ConfiguredDiscoveryTargetsStore? configuredDiscoveryTargetsStore,
     required AppNotificationService appNotificationService,
     required TransferHistoryRepository transferHistoryRepository,
     DownloadHistoryBoundary? downloadHistoryBoundary,
@@ -168,6 +170,9 @@ class DiscoveryController extends ChangeNotifier {
        _localPeerIdentityStore = localPeerIdentityStore,
        _discoveryNetworkScopeStore = discoveryNetworkScopeStore,
        _settingsStore = settingsStore,
+       _configuredDiscoveryTargetsStore =
+           configuredDiscoveryTargetsStore ??
+           ConfiguredDiscoveryTargetsStore.inMemory(),
        _appNotificationService = appNotificationService,
        _remoteShareBrowser = remoteShareBrowser,
        _remoteShareMediaProjectionBoundary = remoteShareMediaProjectionBoundary,
@@ -220,6 +225,9 @@ class DiscoveryController extends ChangeNotifier {
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
         );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
+    _configuredDiscoveryTargetsStore.addListener(
+      _handleConfiguredDiscoveryTargetsChanged,
+    );
     _nearbyTransferAvailabilityStore.addListener(
       _handleNearbyTransferAvailabilityChanged,
     );
@@ -245,6 +253,7 @@ class DiscoveryController extends ChangeNotifier {
   final LocalPeerIdentityStore _localPeerIdentityStore;
   final DiscoveryNetworkScopeStore _discoveryNetworkScopeStore;
   final SettingsStore _settingsStore;
+  final ConfiguredDiscoveryTargetsStore _configuredDiscoveryTargetsStore;
   final AppNotificationService _appNotificationService;
   final RemoteShareBrowser _remoteShareBrowser;
   final RemoteShareMediaProjectionBoundary _remoteShareMediaProjectionBoundary;
@@ -277,6 +286,7 @@ class DiscoveryController extends ChangeNotifier {
   bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
   bool _isRefreshInProgress = false;
+  bool _isDisposed = false;
   bool _isManualRefreshInProgress = false;
   bool _isAddingShare = false;
   SharedFolderIndexingProgress? _sharedFolderIndexingProgress;
@@ -294,6 +304,7 @@ class DiscoveryController extends ChangeNotifier {
   String? _errorMessage;
   String? _infoMessage;
   Set<String> _activeDiscoveryLocalIps = <String>{};
+  Set<String> _activeDiscoveryConfiguredTargetIps = <String>{};
 
   DiscoveryFlowState get state => _state;
   bool get isManualRefreshInProgress => _isManualRefreshInProgress;
@@ -318,6 +329,8 @@ class DiscoveryController extends ChangeNotifier {
       List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
   String get selectedNetworkScopeId =>
       _discoveryNetworkScopeStore.selectedScopeId;
+  List<String> get configuredDiscoveryTargets =>
+      _configuredDiscoveryTargetsStore.targets;
 
   AppSettings get _currentSettings => _settingsStore.settings;
 
@@ -381,12 +394,10 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> start() async {
-    if (_started) {
+    if (_started || _isDisposed) {
       _log('start() ignored: controller already started');
       return;
     }
-
-    _started = true;
 
     _localPeerId = await _localPeerIdentityStore.loadOrCreateLocalPeerId();
     await _discoveryNetworkScopeStore.refresh();
@@ -407,6 +418,11 @@ class DiscoveryController extends ChangeNotifier {
       _log('Failed to load trusted devices from store: $error');
     }
     try {
+      await _configuredDiscoveryTargetsStore.load();
+    } catch (error) {
+      _log('Failed to load configured discovery targets: $error');
+    }
+    try {
       await _settingsStore.load();
       final settings = _currentSettings;
       _log(
@@ -416,7 +432,8 @@ class DiscoveryController extends ChangeNotifier {
         'previewMaxSizeGb=${settings.previewCacheMaxSizeGb}, '
         'previewMaxAgeDays=${settings.previewCacheMaxAgeDays}, '
         'clipboardMaxEntries=${settings.clipboardHistoryMaxEntries}, '
-        'recacheWorkers=${settings.recacheParallelWorkers}',
+        'recacheWorkers=${settings.recacheParallelWorkers}, '
+        'configuredTargets=${_configuredDiscoveryTargetsStore.targets.length}',
       );
       unawaited(_cleanupPreviewCacheBySettings());
       unawaited(_trimClipboardHistoryToSettingsLimit());
@@ -433,6 +450,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     try {
+      _started = true;
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
       _syncInternetPeers();
       await _ensureDiscoveryScopeApplied();
@@ -441,6 +459,7 @@ class DiscoveryController extends ChangeNotifier {
       _restartPresenceExpiryTimer();
       _startClipboardPolling();
     } catch (error) {
+      _started = false;
       _errorMessage = 'LAN discovery error: $error';
       _log(_errorMessage!);
       notifyListeners();
@@ -1189,7 +1208,11 @@ class DiscoveryController extends ChangeNotifier {
       _log('${isManual ? "Manual" : "Auto"} refresh scan started');
       final hosts = await _networkHostScanner.scanActiveHosts(
         localSourceIps: _discoveryNetworkScopeStore.activeLocalIps,
+        configuredTargetIps: _configuredDiscoveryTargetsStore.targetSet,
       );
+      if (_isDisposed) {
+        return;
+      }
       final now = DateTime.now();
       _log(
         '${isManual ? "Manual" : "Auto"} refresh scan finished. hosts=${hosts.length}',
@@ -1204,6 +1227,9 @@ class DiscoveryController extends ChangeNotifier {
       }
       if (seenMacToIp.isNotEmpty) {
         await _deviceRegistry.recordSeenDevices(seenMacToIp);
+        if (_isDisposed) {
+          return;
+        }
       }
 
       for (final host in hosts.entries) {
@@ -1240,9 +1266,7 @@ class DiscoveryController extends ChangeNotifier {
       }
       if (_selectedDeviceIp != null &&
           (!_devicesByIp.containsKey(_selectedDeviceIp) ||
-              !_discoveryNetworkScopeStore.matchesSelectedScope(
-                _selectedDeviceIp!,
-              ))) {
+              !_isDeviceVisibleInSelectedProjection(_selectedDeviceIp!))) {
         _selectedDeviceIp = null;
       }
       _expireStalePresence(now: now, notifyListenersWhenChanged: false);
@@ -1253,18 +1277,23 @@ class DiscoveryController extends ChangeNotifier {
 
       _errorMessage = null;
     } catch (error) {
+      if (_isDisposed) {
+        return;
+      }
       _errorMessage = 'Host scan failed: $error';
       _log(_errorMessage!);
     } finally {
-      _isRefreshInProgress = false;
-      if (isManual) {
-        _isManualRefreshInProgress = false;
-        _state = DiscoveryFlowState.idle;
-      }
-      notifyListeners();
-      if (_pendingScopeReconfigureAfterRefresh) {
-        _pendingScopeReconfigureAfterRefresh = false;
-        unawaited(_refresh(isManual: false, refreshNetworkScope: false));
+      if (!_isDisposed) {
+        _isRefreshInProgress = false;
+        if (isManual) {
+          _isManualRefreshInProgress = false;
+          _state = DiscoveryFlowState.idle;
+        }
+        notifyListeners();
+        if (_pendingScopeReconfigureAfterRefresh) {
+          _pendingScopeReconfigureAfterRefresh = false;
+          unawaited(_refresh(isManual: false, refreshNetworkScope: false));
+        }
       }
     }
   }
@@ -1328,6 +1357,17 @@ class DiscoveryController extends ChangeNotifier {
     unawaited(
       _lanDiscoveryService.broadcastPresenceNow(deviceName: _localName),
     );
+  }
+
+  void _handleConfiguredDiscoveryTargetsChanged() {
+    if (_started) {
+      if (_isRefreshInProgress) {
+        _pendingScopeReconfigureAfterRefresh = true;
+      } else {
+        unawaited(_refresh(isManual: false, refreshNetworkScope: false));
+      }
+    }
+    notifyListeners();
   }
 
   String? _normalizeOperatingSystemName(String? raw) {
@@ -1970,21 +2010,31 @@ class DiscoveryController extends ChangeNotifier {
       changed = true;
     }
     if (_selectedDeviceIp != null &&
-        !_discoveryNetworkScopeStore.matchesSelectedScope(_selectedDeviceIp!)) {
+        !_isDeviceVisibleInSelectedProjection(_selectedDeviceIp!)) {
       _selectedDeviceIp = null;
       changed = true;
     }
     return changed;
   }
 
+  bool _isDeviceVisibleInSelectedProjection(String ip) {
+    return _discoveryNetworkScopeStore.matchesSelectedScope(ip) ||
+        _configuredDiscoveryTargetsStore.containsIp(ip);
+  }
+
   Future<void> _ensureDiscoveryScopeApplied() async {
     final desiredLocalIps = _discoveryNetworkScopeStore.activeLocalIps;
+    final desiredConfiguredTargets = _configuredDiscoveryTargetsStore.targetSet;
     _consumeNetworkScopeState();
     if (!_started) {
       return;
     }
     if (_isDiscoveryServiceRunning &&
-        setEquals(_activeDiscoveryLocalIps, desiredLocalIps)) {
+        setEquals(_activeDiscoveryLocalIps, desiredLocalIps) &&
+        setEquals(
+          _activeDiscoveryConfiguredTargetIps,
+          desiredConfiguredTargets,
+        )) {
       return;
     }
     if (_isDiscoveryServiceRunning) {
@@ -1996,6 +2046,7 @@ class DiscoveryController extends ChangeNotifier {
       deviceName: _localName,
       localPeerId: _localPeerId,
       localSourceIps: desiredLocalIps,
+      configuredTargetIps: desiredConfiguredTargets,
       onAppDetected: _onAppDetected,
       onTransferRequest: _onTransferRequest,
       onTransferDecision: _onTransferDecision,
@@ -2010,11 +2061,15 @@ class DiscoveryController extends ChangeNotifier {
       onClipboardCatalog: _onClipboardCatalog,
     );
     _activeDiscoveryLocalIps = Set<String>.from(desiredLocalIps);
+    _activeDiscoveryConfiguredTargetIps = Set<String>.from(
+      desiredConfiguredTargets,
+    );
     _isDiscoveryServiceRunning = true;
     _log(
       'Applied discovery network scope. '
       'scope=${_discoveryNetworkScopeStore.selectedScopeId} '
-      'localIps=$_activeDiscoveryLocalIps',
+      'localIps=$_activeDiscoveryLocalIps '
+      'configuredTargets=$_activeDiscoveryConfiguredTargetIps',
     );
   }
 
@@ -2216,10 +2271,18 @@ class DiscoveryController extends ChangeNotifier {
 
   @override
   void dispose() {
+    if (_isDisposed) {
+      return;
+    }
+    _isDisposed = true;
+    _started = false;
     _scanTimer?.cancel();
     _clipboardPollTimer?.cancel();
     _presenceExpiryTimer?.cancel();
     _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
+    _configuredDiscoveryTargetsStore.removeListener(
+      _handleConfiguredDiscoveryTargetsChanged,
+    );
     _nearbyTransferAvailabilityStore.removeListener(
       _handleNearbyTransferAvailabilityChanged,
     );
@@ -2232,6 +2295,7 @@ class DiscoveryController extends ChangeNotifier {
     _transferSessionCoordinator.dispose();
     _isDiscoveryServiceRunning = false;
     _activeDiscoveryLocalIps = <String>{};
+    _activeDiscoveryConfiguredTargetIps = <String>{};
     _lanDiscoveryService.stop();
     super.dispose();
   }
