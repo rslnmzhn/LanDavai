@@ -62,6 +62,7 @@ class LanDiscoveryService {
   final LanShareProtocolHandler _shareProtocolHandler;
   final LanClipboardProtocolHandler _clipboardProtocolHandler;
   final int? Function()? _nearbyTransferPortProvider;
+  static const Duration _presenceAllowedSenderTtl = Duration(seconds: 20);
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -70,6 +71,7 @@ class LanDiscoveryService {
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
   Set<String> _configuredTargetIps = <String>{};
+  final Map<String, DateTime> _presenceAllowedSenders = <String, DateTime>{};
 
   Future<void> start({
     required String deviceName,
@@ -166,6 +168,7 @@ class LanDiscoveryService {
     await _transportAdapter.stop();
     _started = false;
     _configuredTargetIps = <String>{};
+    _presenceAllowedSenders.clear();
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
@@ -654,6 +657,7 @@ class LanDiscoveryService {
     final observedAt = DateTime.now();
 
     if (packet is LanDiscoveryPresencePacket) {
+      _markPresenceAllowedSender(senderIp, observedAt);
       final result = _presenceProtocolHandler.handlePresencePacket(
         packet: packet,
         senderIp: senderIp,
@@ -831,10 +835,12 @@ class LanDiscoveryService {
     required bool isAllowedInternetSender,
     required bool isAllowedConfiguredTargetSender,
   }) {
+    _prunePresenceAllowedSenders();
     if (localIps.isEmpty ||
         isSenderInLocalSubnet ||
         isAllowedInternetSender ||
-        isAllowedConfiguredTargetSender) {
+        isAllowedConfiguredTargetSender ||
+        _presenceAllowedSenders.containsKey(senderIp)) {
       return true;
     }
 
@@ -845,5 +851,17 @@ class LanDiscoveryService {
     }
 
     return false;
+  }
+
+  void _markPresenceAllowedSender(String senderIp, DateTime observedAt) {
+    _presenceAllowedSenders[senderIp] = observedAt;
+  }
+
+  void _prunePresenceAllowedSenders([DateTime? now]) {
+    final observedNow = now ?? DateTime.now();
+    _presenceAllowedSenders.removeWhere(
+      (_, observedAt) =>
+          observedNow.difference(observedAt) > _presenceAllowedSenderTtl,
+    );
   }
 }

@@ -266,6 +266,51 @@ void main() {
   );
 
   test(
+    'allows app feature packets from a foreign virtual-LAN peer after successful presence handshake',
+    () async {
+      ShareQueryEvent? shareQuery;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (_) {},
+        onShareQuery: (event) {
+          shareQuery = event;
+        },
+      );
+
+      final discoverMessage = codec.encodeDiscoveryRequest(
+        instanceId: 'remote-instance',
+        deviceName: 'Virtual peer',
+        localPeerId: 'remote-peer',
+      );
+      transportAdapter.emitDatagram(
+        bytes: utf8.encode(discoverMessage),
+        senderIp: '100.64.0.8',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      final shareQueryPacket = codec.encodeShareQuery(
+        instanceId: 'remote-instance',
+        requestId: 'share-query-1',
+        requesterName: 'Virtual peer',
+        createdAtMs: 1,
+      );
+
+      transportAdapter.emitDatagram(
+        bytes: shareQueryPacket!.bytes,
+        senderIp: '100.64.0.8',
+        senderPort: LanDiscoveryService.discoveryPort,
+      );
+
+      expect(shareQuery, isNotNull);
+      expect(shareQuery!.requesterIp, '100.64.0.8');
+      expect(shareQuery!.requesterName, 'Virtual peer');
+    },
+  );
+
+  test(
     'keeps encoded packet send path routed through transport adapter',
     () async {
       await service.start(
