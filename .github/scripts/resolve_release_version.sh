@@ -56,7 +56,7 @@ if [[ ! -f "${PUBSPEC_PATH}" ]]; then
 fi
 
 PUBSPEC_VERSION="$(
-  sed -n -E 's/^version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)(\+[0-9]+)?$/\1/p' "${PUBSPEC_PATH}" \
+  sed -n -E 's/^[[:space:]]*version:[[:space:]]*([0-9]+\.[0-9]+\.[0-9]+)(\+[0-9]+)?[[:space:]]*\r?$/\1/p' "${PUBSPEC_PATH}" \
     | head -n 1
 )"
 

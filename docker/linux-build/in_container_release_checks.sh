@@ -18,6 +18,8 @@ rsync -a --delete \
   --exclude .dart_tool \
   "${ROOT_DIR}/" "${WORK_DIR}/"
 
+git config --global --add safe.directory "${WORK_DIR}"
+
 cd "${WORK_DIR}"
 
 flutter config --enable-linux-desktop
