@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 class SingleInstanceGuardHandle {
   SingleInstanceGuardHandle._({
     required this.acquired,
+    required this.shouldBlockStartup,
     String? lockKey,
     RandomAccessFile? lockFile,
   }) : _lockKey = lockKey,
@@ -16,16 +17,28 @@ class SingleInstanceGuardHandle {
   }) {
     return SingleInstanceGuardHandle._(
       acquired: true,
+      shouldBlockStartup: false,
       lockKey: lockKey,
       lockFile: lockFile,
     );
   }
 
-  factory SingleInstanceGuardHandle.skipped() {
-    return SingleInstanceGuardHandle._(acquired: false);
+  factory SingleInstanceGuardHandle.notEnforced() {
+    return SingleInstanceGuardHandle._(
+      acquired: false,
+      shouldBlockStartup: false,
+    );
+  }
+
+  factory SingleInstanceGuardHandle.blocked() {
+    return SingleInstanceGuardHandle._(
+      acquired: false,
+      shouldBlockStartup: true,
+    );
   }
 
   final bool acquired;
+  final bool shouldBlockStartup;
   final String? _lockKey;
   final RandomAccessFile? _lockFile;
   bool _disposed = false;
@@ -56,17 +69,19 @@ class SingleInstanceGuardHandle {
 }
 
 class SingleInstanceGuard {
-  const SingleInstanceGuard();
+  const SingleInstanceGuard({bool Function()? desktopPlatformResolver})
+    : _desktopPlatformResolver = desktopPlatformResolver;
 
   static const String defaultLockFileName = 'landa_single_instance.lock';
   static final Set<String> _heldLockKeys = <String>{};
+  final bool Function()? _desktopPlatformResolver;
 
   Future<SingleInstanceGuardHandle> acquire({
     Directory? lockDirectory,
     String lockFileName = defaultLockFileName,
   }) async {
     if (!_isDesktopPlatform) {
-      return SingleInstanceGuardHandle.skipped();
+      return SingleInstanceGuardHandle.notEnforced();
     }
 
     final directory = lockDirectory ?? Directory.systemTemp;
@@ -74,7 +89,7 @@ class SingleInstanceGuard {
     await file.parent.create(recursive: true);
     final lockKey = _normalizeLockKey(file.path);
     if (!_tryAcquireInProcessLock(lockKey)) {
-      return SingleInstanceGuardHandle.skipped();
+      return SingleInstanceGuardHandle.blocked();
     }
     final handle = await file.open(mode: FileMode.append);
     try {
@@ -86,11 +101,13 @@ class SingleInstanceGuard {
     } on FileSystemException {
       await handle.close();
       _releaseInProcessLock(lockKey);
-      return SingleInstanceGuardHandle.skipped();
+      return SingleInstanceGuardHandle.blocked();
     }
   }
 
-  bool get _isDesktopPlatform => Platform.isWindows || Platform.isLinux;
+  bool get _isDesktopPlatform =>
+      _desktopPlatformResolver?.call() ??
+      (Platform.isWindows || Platform.isLinux);
 
   static bool _tryAcquireInProcessLock(String lockKey) {
     if (_heldLockKeys.contains(lockKey)) {
