@@ -49,7 +49,11 @@ fi
 TEMP_FILE="${PUBSPEC_PATH}.tmp"
 awk -v version="${RELEASE_VERSION}" -v version_code="${RELEASE_VERSION_CODE}" '
   BEGIN { updated = 0 }
-  /^version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$/ && updated == 0 {
+  {
+    line = $0
+    sub(/\r$/, "", line)
+  }
+  line ~ /^[[:space:]]*version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?[[:space:]]*$/ && updated == 0 {
     print "version: " version "+" version_code
     updated = 1
     next

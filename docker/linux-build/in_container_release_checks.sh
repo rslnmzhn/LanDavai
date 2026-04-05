@@ -43,6 +43,7 @@ bash .github/scripts/apply_release_version.sh \
   --version-code "${RELEASE_VERSION_CODE}"
 
 flutter pub get
+bash docker/linux-build/prefetch_linux_build_artifacts.sh "${WORK_DIR}"
 CXXFLAGS="-Wno-error=unused-but-set-variable" flutter build linux --release -v
 APP_VERSION="${RELEASE_VERSION}" bash .github/scripts/package_linux_appimage.sh
 

@@ -14,6 +14,7 @@ ENV PATH=/opt/flutter/bin:/root/.local/bin:${PATH}
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     binutils \
+    build-essential \
     ca-certificates \
     clang \
     cmake \
@@ -30,6 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmediainfo-dev \
     libmpv-dev \
     libzen-dev \
+    lld-14 \
+    llvm-14 \
     ninja-build \
     patchelf \
     pkg-config \
@@ -55,7 +58,9 @@ RUN git clone https://github.com/flutter/flutter.git --branch stable --depth 1 "
     flutter config --enable-linux-desktop && \
     flutter precache --linux
 
-RUN python3 -m pip install --no-cache-dir --user "appimage-builder==${APPIMAGE_BUILDER_VERSION}"
+RUN python3 -m pip install --no-cache-dir --user \
+    "packaging==21.3" \
+    "appimage-builder==${APPIMAGE_BUILDER_VERSION}"
 
 WORKDIR /workspace
 
