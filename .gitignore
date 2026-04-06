@@ -34,6 +34,12 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/AppDir/
+/appimage-build/
+/.appimage-builder-cache/
+/.appimage-builder-libs/
+/landa-v*-linux-x86_64.AppImage
+/landa-v*-linux-x86_64.AppImage.zsync
 
 # Symbolication related
 app.*.symbols
