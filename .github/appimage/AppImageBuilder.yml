@@ -15,7 +15,7 @@ AppDir:
     name: Landa
     icon: landa
     version: !ENV '${APP_VERSION}'
-    exec: landa
+    exec: landa-bin
     exec_args: $@
   apt:
     arch: amd64

@@ -7,6 +7,14 @@ RECIPE_PATH="${ROOT_DIR}/.github/appimage/AppImageBuilder.yml"
 DESKTOP_FILE="${ROOT_DIR}/.github/appimage/landa.desktop"
 APP_VERSION="${APP_VERSION:-}"
 
+cleanup_packaging_workspace() {
+  rm -rf \
+    "${ROOT_DIR}/AppDir" \
+    "${ROOT_DIR}/appimage-build" \
+    "${ROOT_DIR}/.appimage-builder-cache" \
+    "${ROOT_DIR}/.appimage-builder-libs"
+}
+
 usage() {
   cat <<'EOF'
 Usage: APP_VERSION=X.Y.Z package_linux_appimage.sh
@@ -47,7 +55,8 @@ fi
 desktop-file-validate "${DESKTOP_FILE}"
 
 cd "${ROOT_DIR}"
-rm -rf AppDir .appimage-builder-cache .appimage-builder-libs
+trap cleanup_packaging_workspace EXIT
+cleanup_packaging_workspace
 rm -f "landa-v${APP_VERSION}-linux-x86_64.AppImage" "landa-v${APP_VERSION}-linux-x86_64.AppImage.zsync"
 
 APP_VERSION="${APP_VERSION}" appimage-builder --recipe "${RECIPE_PATH}"

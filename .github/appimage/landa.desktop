@@ -2,7 +2,7 @@
 Type=Application
 Name=Landa
 Comment=Peer-to-peer LAN file transfer
-Exec=landa %U
+Exec=landa-bin %U
 Icon=landa
 Terminal=false
 Categories=Network;FileTransfer;
