@@ -287,7 +287,8 @@ void main() {
     await _pumpForUi(tester);
 
     expect(find.text('Настройки'), findsOneWidget);
-    expect(find.text('Пароль веб-ссылки'), findsOneWidget);
+    expect(find.text('Сеть'), findsOneWidget);
+    expect(find.text('Фоновое сканирование сети'), findsOneWidget);
   });
 
   testWidgets(
