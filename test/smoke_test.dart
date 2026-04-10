@@ -256,7 +256,7 @@ void main() {
     await _pumpDiscoveryPage(tester, harness: harness);
 
     await _openMenu(tester);
-    expect(find.byType(Drawer), findsNothing);
+    expect(find.byType(Drawer), findsOneWidget);
     expect(
       find.byKey(const Key('discovery-menu-action-friends')),
       findsOneWidget,
@@ -287,7 +287,8 @@ void main() {
     await _pumpForUi(tester);
 
     expect(find.text('Настройки'), findsOneWidget);
-    expect(find.text('Пароль веб-ссылки'), findsOneWidget);
+    expect(find.text('Сеть'), findsOneWidget);
+    expect(find.text('Фоновое сканирование сети'), findsOneWidget);
   });
 
   testWidgets(

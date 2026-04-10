@@ -1,13 +1,12 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../domain/app_settings.dart';
+import 'app_settings_tab_sections.dart';
 
 class AppSettingsSheet extends StatefulWidget {
   const AppSettingsSheet({
@@ -184,324 +183,94 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.md,
-          AppSpacing.md,
-          AppSpacing.lg,
-        ),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Настройки', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Фоновое сканирование сети',
-                style: Theme.of(context).textTheme.titleMedium,
+    return DefaultTabController(
+      length: 4,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.sm,
+            ),
+            child: Text(
+              'Настройки',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+            child: Container(
+              decoration: BoxDecoration(
+                color: AppColors.surfaceSoft,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+                border: Border.all(color: AppColors.mutedBorder),
               ),
-              const SizedBox(height: AppSpacing.xs),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
-                decoration: BoxDecoration(
-                  color: AppColors.surfaceSoft,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  border: Border.all(color: AppColors.mutedBorder),
+              child: const TabBar(
+                isScrollable: true,
+                tabAlignment: TabAlignment.start,
+                dividerColor: Colors.transparent,
+                labelColor: AppColors.brandPrimaryDark,
+                unselectedLabelColor: AppColors.textSecondary,
+                indicatorSize: TabBarIndicatorSize.tab,
+                indicator: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.all(Radius.circular(AppRadius.md)),
                 ),
-                child: DropdownButtonHideUnderline(
-                  child: DropdownButton<BackgroundScanIntervalOption>(
-                    isExpanded: true,
-                    value: widget.settings.backgroundScanInterval,
-                    items: BackgroundScanIntervalOption.values
-                        .map(
-                          (option) => DropdownMenuItem(
-                            value: option,
-                            child: Text(option.label),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (next) {
-                      if (next == null) {
-                        return;
-                      }
-                      widget.onBackgroundIntervalChanged(next);
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Интервал управляет авто-сканированием. Для немедленного обновления используйте кнопку Refresh.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                'Явные discovery targets',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Fallback для virtual/routed сетей, где автообнаружение может не сработать. Landa будет отправлять discovery-пакеты только на указанные IPv4-адреса.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _configuredTargetController,
-                      keyboardType: TextInputType.text,
-                      inputFormatters: <TextInputFormatter>[
-                        FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                      ],
-                      decoration: const InputDecoration(
-                        labelText: 'IPv4-адрес устройства',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      onSubmitted: (_) => unawaited(_addConfiguredTarget()),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.sm),
-                  SizedBox(
-                    height: 48,
-                    child: FilledButton(
-                      onPressed: () => unawaited(_addConfiguredTarget()),
-                      child: const Text('Добавить'),
-                    ),
-                  ),
+                padding: EdgeInsets.all(AppSpacing.xs),
+                tabs: [
+                  Tab(text: 'Сеть'),
+                  Tab(text: 'Интерфейс'),
+                  Tab(text: 'Хранилище'),
+                  Tab(text: 'Доступ'),
                 ],
               ),
-              const SizedBox(height: AppSpacing.sm),
-              if (widget.configuredDiscoveryTargets.isEmpty)
-                Text(
-                  'Список пуст. Добавьте IP-адреса устройств виртуальной сети, если они не находятся автоматически.',
-                  style: Theme.of(context).textTheme.bodySmall,
-                )
-              else
-                Column(
-                  children: widget.configuredDiscoveryTargets
-                      .map(
-                        (target) => ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          dense: true,
-                          title: Text(target),
-                          trailing: IconButton(
-                            tooltip: 'Удалить',
-                            onPressed: () => unawaited(
-                              widget.onRemoveConfiguredDiscoveryTarget(target),
-                            ),
-                            icon: const Icon(Icons.delete_outline_rounded),
-                          ),
-                        ),
-                      )
-                      .toList(growable: false),
-                ),
-              const SizedBox(height: AppSpacing.md),
-              SwitchListTile.adaptive(
-                value: widget.settings.downloadAttemptNotificationsEnabled,
-                title: const Text('Уведомлять о попытках скачивания'),
-                subtitle: const Text(
-                  'Показывать системное уведомление, когда устройство просит ваши файлы.',
-                ),
-                contentPadding: EdgeInsets.zero,
-                onChanged: widget.onDownloadAttemptNotificationsChanged,
-              ),
-              if (defaultTargetPlatform == TargetPlatform.windows ||
-                  defaultTargetPlatform == TargetPlatform.linux)
-                SwitchListTile.adaptive(
-                  value: widget.settings.useStandardAppDownloadFolder,
-                  title: const Text('Скачивать в стандартную папку Landa'),
-                  subtitle: const Text(
-                    'Если выключено, Windows/Linux будут спрашивать папку назначения перед скачиванием из общих папок.',
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: widget.onUseStandardAppDownloadFolderChanged,
-                ),
-              if (defaultTargetPlatform == TargetPlatform.windows ||
-                  defaultTargetPlatform == TargetPlatform.linux)
-                SwitchListTile.adaptive(
-                  value: widget.settings.minimizeToTrayOnClose,
-                  title: const Text('Сворачивать в трей при закрытии'),
-                  subtitle: const Text(
-                    'Окно скрывается в трей, приложение продолжает работу в фоне.',
-                  ),
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: widget.onMinimizeToTrayChanged,
-                ),
-              SwitchListTile.adaptive(
-                value: widget.settings.isLeftHandedMode,
-                title: const Text('Режим для левшей'),
-                subtitle: const Text(
-                  'Меню с тремя полосками и боковая панель переедут на левую сторону.',
-                ),
-                contentPadding: EdgeInsets.zero,
-                onChanged: widget.onLeftHandedModeChanged,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Ограничения preview-кэша',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                '0 = без ограничений. Если срок = 0, файлы живут бессрочно и удаляются только по лимиту размера.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _IntegerSettingField(
-                controller: _cacheSizeController,
-                label: 'Максимальный размер кэша (ГБ)',
-                onSave: _saveCacheSize,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _IntegerSettingField(
-                controller: _cacheAgeController,
-                label: 'Максимальный срок хранения (дни)',
-                onSave: _saveCacheAge,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                'История буфера обмена',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Максимум записей в локальной истории. 0 = без ограничений.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _IntegerSettingField(
-                controller: _clipboardLimitController,
-                label: 'Максимум записей истории',
-                onSave: _saveClipboardLimit,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                'Ускорение re-cache',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Число воркеров для пересборки кэша. 0 = авто (по CPU).',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _IntegerSettingField(
-                controller: _recacheWorkersController,
-                label: 'Параллельные воркеры re-cache',
-                onSave: _saveRecacheParallelWorkers,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                'Пароль веб-ссылки',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'Используется для доступа к видео по ссылке из меню.',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              _TextSettingField(
-                controller: _videoLinkPasswordController,
-                label: 'Пароль для веб-сервера',
-                obscureText: true,
-                onSave: _saveVideoLinkPassword,
-              ),
-            ],
+            ),
           ),
-        ),
+          const SizedBox(height: AppSpacing.sm),
+          Expanded(
+            child: TabBarView(
+              children: [
+                AppSettingsNetworkTab(
+                  settings: widget.settings,
+                  configuredDiscoveryTargets: widget.configuredDiscoveryTargets,
+                  configuredTargetController: _configuredTargetController,
+                  onAddConfiguredTarget: _addConfiguredTarget,
+                  onRemoveConfiguredTarget:
+                      widget.onRemoveConfiguredDiscoveryTarget,
+                  onBackgroundIntervalChanged:
+                      widget.onBackgroundIntervalChanged,
+                  onDownloadAttemptNotificationsChanged:
+                      widget.onDownloadAttemptNotificationsChanged,
+                ),
+                AppSettingsDesktopTab(
+                  settings: widget.settings,
+                  onUseStandardAppDownloadFolderChanged:
+                      widget.onUseStandardAppDownloadFolderChanged,
+                  onMinimizeToTrayChanged: widget.onMinimizeToTrayChanged,
+                  onLeftHandedModeChanged: widget.onLeftHandedModeChanged,
+                ),
+                AppSettingsStorageTab(
+                  cacheSizeController: _cacheSizeController,
+                  cacheAgeController: _cacheAgeController,
+                  clipboardLimitController: _clipboardLimitController,
+                  recacheWorkersController: _recacheWorkersController,
+                  onSaveCacheSize: _saveCacheSize,
+                  onSaveCacheAge: _saveCacheAge,
+                  onSaveClipboardLimit: _saveClipboardLimit,
+                  onSaveRecacheParallelWorkers: _saveRecacheParallelWorkers,
+                ),
+                AppSettingsAccessTab(
+                  videoLinkPasswordController: _videoLinkPasswordController,
+                  onSaveVideoLinkPassword: _saveVideoLinkPassword,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
-    );
-  }
-}
-
-class _IntegerSettingField extends StatelessWidget {
-  const _IntegerSettingField({
-    required this.controller,
-    required this.label,
-    required this.onSave,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final VoidCallback onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: InputDecoration(
-              labelText: label,
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-            onSubmitted: (_) => onSave(),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: onSave,
-            child: const Text('Сохранить'),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _TextSettingField extends StatelessWidget {
-  const _TextSettingField({
-    required this.controller,
-    required this.label,
-    required this.onSave,
-    this.obscureText = false,
-  });
-
-  final TextEditingController controller;
-  final String label;
-  final VoidCallback onSave;
-  final bool obscureText;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: TextField(
-            controller: controller,
-            obscureText: obscureText,
-            decoration: InputDecoration(
-              labelText: label,
-              border: const OutlineInputBorder(),
-              isDense: true,
-            ),
-            onSubmitted: (_) => onSave(),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: onSave,
-            child: const Text('Сохранить'),
-          ),
-        ),
-      ],
     );
   }
 }

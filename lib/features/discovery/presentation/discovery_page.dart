@@ -169,6 +169,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         final isLeftHanded = _readModel.settings.isLeftHandedMode;
         final isWideLayout = MediaQuery.sizeOf(context).width >= 900;
 
+        final drawerSurface = Drawer(
+          child: ColoredBox(
+            color: AppColors.surface,
+            child: _buildSideMenuSurface(closeOnTap: true),
+          ),
+        );
         final panelSurface = SizedBox(
           width: 296,
           child: ColoredBox(
@@ -214,10 +220,13 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   automaticallyImplyLeading: false,
                   leading: isLeftHanded
                       ? Builder(
-                          builder: (_) {
+                          builder: (buttonContext) {
                             return IconButton(
                               tooltip: 'Menu',
-                              onPressed: _openMenuPage,
+                              onPressed: () {
+                                _requestVideoSurfaceReload();
+                                Scaffold.of(buttonContext).openDrawer();
+                              },
                               icon: const Icon(Icons.menu_rounded),
                             );
                           },
@@ -227,16 +236,23 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   actions: [
                     if (!isLeftHanded)
                       Builder(
-                        builder: (_) {
+                        builder: (buttonContext) {
                           return IconButton(
                             tooltip: 'Menu',
-                            onPressed: _openMenuPage,
+                            onPressed: () {
+                              _requestVideoSurfaceReload();
+                              Scaffold.of(buttonContext).openEndDrawer();
+                            },
                             icon: const Icon(Icons.menu_rounded),
                           );
                         },
                       ),
                   ],
                 ),
+          drawer: !isWideLayout && isLeftHanded ? drawerSurface : null,
+          endDrawer: !isWideLayout && !isLeftHanded ? drawerSurface : null,
+          drawerEnableOpenDragGesture: !isWideLayout && isLeftHanded,
+          endDrawerEnableOpenDragGesture: !isWideLayout && !isLeftHanded,
           body: isWideLayout
               ? DiscoveryWideLayoutSurface(
                   title: 'Landa devices',
@@ -270,20 +286,6 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       isBoundaryReady: widget.isBoundaryReady,
       reloadVersion: _videoSurfaceReloadVersion,
       closeOnTap: closeOnTap,
-    );
-  }
-
-  Future<void> _openMenuPage() async {
-    _requestVideoSurfaceReload();
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DiscoveryMenuPage(
-          child: ColoredBox(
-            color: AppColors.surface,
-            child: _buildSideMenuSurface(closeOnTap: true),
-          ),
-        ),
-      ),
     );
   }
 
