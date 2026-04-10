@@ -53,11 +53,10 @@ void main() {
     });
 
     await _pumpDiscoveryPage(tester, harness: harness);
-    await _openMenu(
-      tester,
-      isLeftHanded: harness.readModel.settings.isLeftHandedMode,
+    await _openMenu(tester);
+    await tester.tap(
+      find.byKey(const Key('discovery-menu-action-download-history')),
     );
-    await tester.tap(find.widgetWithText(ListTile, 'Download history'));
     await _pumpForUi(tester, frames: 20);
 
     expect(find.text('История загрузок'), findsOneWidget);
@@ -114,16 +113,8 @@ Future<void> _pumpDiscoveryPage(
   await _pumpForUi(tester, frames: 20);
 }
 
-Future<void> _openMenu(
-  WidgetTester tester, {
-  required bool isLeftHanded,
-}) async {
-  final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold));
-  if (isLeftHanded) {
-    scaffoldState.openDrawer();
-  } else {
-    scaffoldState.openEndDrawer();
-  }
+Future<void> _openMenu(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Menu'));
   await _pumpForUi(tester, frames: 20);
 }
 

@@ -4,26 +4,6 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_spacing.dart';
 import '../../history/application/download_history_boundary.dart';
 
-Future<void> showDiscoveryHistorySheet({
-  required BuildContext context,
-  required DownloadHistoryBoundary downloadHistoryBoundary,
-  required Future<void> Function(String path) onOpenPath,
-}) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (context) {
-      return FractionallySizedBox(
-        heightFactor: 0.85,
-        child: DiscoveryHistorySheet(
-          downloadHistoryBoundary: downloadHistoryBoundary,
-          onOpenPath: onOpenPath,
-        ),
-      );
-    },
-  );
-}
-
 class DiscoveryHistorySheet extends StatelessWidget {
   const DiscoveryHistorySheet({
     required this.downloadHistoryBoundary,

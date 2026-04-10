@@ -7,29 +7,6 @@ import '../../../app/theme/app_spacing.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
 
-Future<void> showDiscoveryFriendsSheet({
-  required BuildContext context,
-  required DiscoveryController controller,
-  required DiscoveryReadModel readModel,
-}) async {
-  await showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (context) {
-      return FractionallySizedBox(
-        heightFactor: 0.84,
-        child: DefaultTabController(
-          length: 2,
-          child: DiscoveryFriendsSheet(
-            controller: controller,
-            readModel: readModel,
-          ),
-        ),
-      );
-    },
-  );
-}
-
 class DiscoveryFriendsSheet extends StatelessWidget {
   const DiscoveryFriendsSheet({
     required this.controller,

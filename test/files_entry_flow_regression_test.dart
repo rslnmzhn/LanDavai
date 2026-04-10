@@ -5,7 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:landa/features/discovery/presentation/discovery_page.dart';
-import 'package:landa/features/discovery/presentation/discovery_side_menu_surface.dart';
 import 'package:landa/features/files/application/file_explorer_contract.dart';
 import 'package:landa/features/files/application/files_feature_state_owner.dart';
 import 'package:landa/features/files/presentation/file_explorer/local_file_viewer.dart';
@@ -35,22 +34,15 @@ void main() {
       transferStorageService: transferStorageService,
     );
 
-    await _openMenu(
-      tester,
-      isLeftHanded: harness.readModel.settings.isLeftHandedMode,
+    await _openMenu(tester);
+    expect(find.text('Menu'), findsWidgets);
+    expect(
+      find.byKey(const Key('discovery-menu-action-files')),
+      findsOneWidget,
     );
-    expect(find.text('Menu'), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Files'), findsOneWidget);
-    final menuSurface = tester.widget<DiscoverySideMenuSurface>(
-      find.byType(DiscoverySideMenuSurface).first,
-    );
-    final openFuture = menuSurface.onOpenFiles();
-    Navigator.of(tester.element(find.text('Menu'))).pop();
-    await _pumpForUi(tester, frames: 4);
+    await tester.tap(find.byKey(const Key('discovery-menu-action-files')));
+    await _pumpForUi(tester, frames: 8);
     expect(transferStorageService.resolveReceiveCalls, greaterThan(0));
-    await tester.pump();
-    final openError = tester.takeException();
-    expect(openError, isNull);
     final navigator = tester.state<NavigatorState>(find.byType(Navigator));
     expect(navigator.canPop(), isTrue);
     await _pumpUntilFound(
@@ -62,7 +54,6 @@ void main() {
     expect(find.text('Files'), findsWidgets);
     await _closeCurrentRoute(tester, find.byType(FileExplorerPage).first);
     await _pumpForUi(tester, frames: 12);
-    await openFuture;
     await _flushDbTimers(tester);
   });
 
@@ -160,16 +151,8 @@ Future<void> _pumpDiscoveryPage(
   await _pumpForUi(tester, frames: 20);
 }
 
-Future<void> _openMenu(
-  WidgetTester tester, {
-  required bool isLeftHanded,
-}) async {
-  final scaffoldState = tester.state<ScaffoldState>(find.byType(Scaffold));
-  if (isLeftHanded) {
-    scaffoldState.openDrawer();
-  } else {
-    scaffoldState.openEndDrawer();
-  }
+Future<void> _openMenu(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('Menu'));
   await _pumpForUi(tester, frames: 20);
 }
 

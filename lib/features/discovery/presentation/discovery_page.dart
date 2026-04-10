@@ -8,15 +8,12 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
-import '../../clipboard/application/clipboard_source_scope_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
-import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../files/application/preview_cache_owner.dart';
 import '../../files/presentation/file_explorer_page.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../nearby_transfer/application/nearby_transfer_session_store.dart';
 import '../../nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
-import '../../settings/presentation/app_settings_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
@@ -30,10 +27,9 @@ import '../application/video_link_session_boundary.dart';
 import '../domain/discovered_device.dart';
 import 'discovery_action_bar.dart';
 import 'discovery_add_share_sheet.dart';
+import 'discovery_destination_pages.dart';
 import 'discovery_device_actions.dart';
 import 'discovery_device_list_section.dart';
-import 'discovery_friends_sheet.dart';
-import 'discovery_history_sheet.dart';
 import 'discovery_receive_panel_sheet.dart';
 import 'discovery_side_menu_surface.dart';
 import 'discovery_wide_layout_surface.dart';
@@ -173,48 +169,11 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         final isLeftHanded = _readModel.settings.isLeftHandedMode;
         final isWideLayout = MediaQuery.sizeOf(context).width >= 900;
 
-        final drawerSurface = Drawer(
-          child: DiscoverySideMenuSurface(
-            onOpenFriends: _openFriendsSheet,
-            onOpenSettings: _openSettingsSheet,
-            onOpenClipboard: _openClipboardSheet,
-            onOpenHistory: _openHistorySheet,
-            onOpenFiles: _openFileExplorer,
-            onRefresh: _controller.isManualRefreshInProgress
-                ? null
-                : _controller.refresh,
-            videoLinkSessionBoundary: _videoLinkSessionBoundary,
-            sharedCacheCatalog: _sharedCacheCatalog,
-            sharedCacheIndexStore: _sharedCacheIndexStore,
-            settings: _readModel.settings,
-            ownerMacAddress: _controller.localDeviceMac,
-            isBoundaryReady: widget.isBoundaryReady,
-            reloadVersion: _videoSurfaceReloadVersion,
-            closeOnTap: true,
-          ),
-        );
         final panelSurface = SizedBox(
           width: 296,
           child: ColoredBox(
             color: AppColors.surface,
-            child: DiscoverySideMenuSurface(
-              onOpenFriends: _openFriendsSheet,
-              onOpenSettings: _openSettingsSheet,
-              onOpenClipboard: _openClipboardSheet,
-              onOpenHistory: _openHistorySheet,
-              onOpenFiles: _openFileExplorer,
-              onRefresh: _controller.isManualRefreshInProgress
-                  ? null
-                  : _controller.refresh,
-              videoLinkSessionBoundary: _videoLinkSessionBoundary,
-              sharedCacheCatalog: _sharedCacheCatalog,
-              sharedCacheIndexStore: _sharedCacheIndexStore,
-              settings: _readModel.settings,
-              ownerMacAddress: _controller.localDeviceMac,
-              isBoundaryReady: widget.isBoundaryReady,
-              reloadVersion: _videoSurfaceReloadVersion,
-              closeOnTap: false,
-            ),
+            child: _buildSideMenuSurface(closeOnTap: false),
           ),
         );
         final actionBar = DiscoveryActionBar(
@@ -255,13 +214,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   automaticallyImplyLeading: false,
                   leading: isLeftHanded
                       ? Builder(
-                          builder: (buttonContext) {
+                          builder: (_) {
                             return IconButton(
                               tooltip: 'Menu',
-                              onPressed: () {
-                                _requestVideoSurfaceReload();
-                                Scaffold.of(buttonContext).openDrawer();
-                              },
+                              onPressed: _openMenuPage,
                               icon: const Icon(Icons.menu_rounded),
                             );
                           },
@@ -271,23 +227,16 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                   actions: [
                     if (!isLeftHanded)
                       Builder(
-                        builder: (buttonContext) {
+                        builder: (_) {
                           return IconButton(
                             tooltip: 'Menu',
-                            onPressed: () {
-                              _requestVideoSurfaceReload();
-                              Scaffold.of(buttonContext).openEndDrawer();
-                            },
+                            onPressed: _openMenuPage,
                             icon: const Icon(Icons.menu_rounded),
                           );
                         },
                       ),
                   ],
                 ),
-          drawer: !isWideLayout && isLeftHanded ? drawerSurface : null,
-          endDrawer: !isWideLayout && !isLeftHanded ? drawerSurface : null,
-          drawerEnableOpenDragGesture: !isWideLayout && isLeftHanded,
-          endDrawerEnableOpenDragGesture: !isWideLayout && !isLeftHanded,
           body: isWideLayout
               ? DiscoveryWideLayoutSurface(
                   title: 'Landa devices',
@@ -303,107 +252,86 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     );
   }
 
-  Future<void> _openFriendsSheet() async {
-    await showDiscoveryFriendsSheet(
-      context: context,
-      controller: _controller,
-      readModel: _readModel,
+  Widget _buildSideMenuSurface({required bool closeOnTap}) {
+    return DiscoverySideMenuSurface(
+      onOpenFriends: _openFriendsPage,
+      onOpenSettings: _openSettingsPage,
+      onOpenClipboard: _openClipboardPage,
+      onOpenHistory: _openHistoryPage,
+      onOpenFiles: _openFileExplorer,
+      onRefresh: _controller.isManualRefreshInProgress
+          ? null
+          : _controller.refresh,
+      videoLinkSessionBoundary: _videoLinkSessionBoundary,
+      sharedCacheCatalog: _sharedCacheCatalog,
+      sharedCacheIndexStore: _sharedCacheIndexStore,
+      settings: _readModel.settings,
+      ownerMacAddress: _controller.localDeviceMac,
+      isBoundaryReady: widget.isBoundaryReady,
+      reloadVersion: _videoSurfaceReloadVersion,
+      closeOnTap: closeOnTap,
     );
   }
 
-  Future<void> _openClipboardSheet() async {
-    final clipboardSourceScopeStore = ClipboardSourceScopeStore();
-    try {
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) {
-          return FractionallySizedBox(
-            heightFactor: 0.9,
-            child: ClipboardSheet(
-              controller: _controller,
-              readModel: _readModel,
-              clipboardHistoryStore: _clipboardHistoryStore,
-              remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
-              clipboardSourceScopeStore: clipboardSourceScopeStore,
-            ),
-          );
-        },
-      );
-    } finally {
-      clipboardSourceScopeStore.dispose();
-    }
-  }
-
-  Future<void> _openSettingsSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return AnimatedBuilder(
-          animation: Listenable.merge(<Listenable>[
-            _controller,
-            _readModel,
-            _configuredDiscoveryTargetsStore,
-          ]),
-          builder: (context, _) {
-            return AppSettingsSheet(
-              settings: _readModel.settings,
-              configuredDiscoveryTargets:
-                  _configuredDiscoveryTargetsStore.targets,
-              configuredTargetValidator:
-                  _configuredDiscoveryTargetsStore.validationErrorFor,
-              onAddConfiguredDiscoveryTarget:
-                  _configuredDiscoveryTargetsStore.addTarget,
-              onRemoveConfiguredDiscoveryTarget:
-                  _configuredDiscoveryTargetsStore.removeTarget,
-              onBackgroundIntervalChanged: (interval) {
-                unawaited(_controller.updateBackgroundScanInterval(interval));
-              },
-              onDownloadAttemptNotificationsChanged: (enabled) {
-                unawaited(
-                  _controller.setDownloadAttemptNotificationsEnabled(enabled),
-                );
-              },
-              onUseStandardAppDownloadFolderChanged: (enabled) {
-                unawaited(_controller.setUseStandardAppDownloadFolder(enabled));
-              },
-              onMinimizeToTrayChanged: (enabled) {
-                unawaited(_controller.setMinimizeToTrayOnClose(enabled));
-                unawaited(
-                  _desktopWindowService.setMinimizeToTrayEnabled(enabled),
-                );
-              },
-              onLeftHandedModeChanged: (enabled) {
-                unawaited(_controller.setLeftHandedMode(enabled));
-              },
-              onVideoLinkPasswordChanged: (value) {
-                unawaited(_controller.setVideoLinkPassword(value));
-              },
-              onPreviewCacheMaxSizeGbChanged: (value) {
-                unawaited(_controller.setPreviewCacheMaxSizeGb(value));
-              },
-              onPreviewCacheMaxAgeDaysChanged: (value) {
-                unawaited(_controller.setPreviewCacheMaxAgeDays(value));
-              },
-              onClipboardHistoryMaxEntriesChanged: (value) {
-                unawaited(_controller.setClipboardHistoryMaxEntries(value));
-              },
-              onRecacheParallelWorkersChanged: (value) {
-                unawaited(_controller.setRecacheParallelWorkers(value));
-              },
-            );
-          },
-        );
-      },
+  Future<void> _openMenuPage() async {
+    _requestVideoSurfaceReload();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoveryMenuPage(
+          child: ColoredBox(
+            color: AppColors.surface,
+            child: _buildSideMenuSurface(closeOnTap: true),
+          ),
+        ),
+      ),
     );
   }
 
-  Future<void> _openHistorySheet() async {
-    await showDiscoveryHistorySheet(
-      context: context,
-      downloadHistoryBoundary: _downloadHistoryBoundary,
-      onOpenPath: (path) => _controller.openHistoryPath(path),
+  Future<void> _openFriendsPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoveryFriendsPage(
+          controller: _controller,
+          readModel: _readModel,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openClipboardPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoveryClipboardPage(
+          controller: _controller,
+          readModel: _readModel,
+          clipboardHistoryStore: _clipboardHistoryStore,
+          remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openSettingsPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoverySettingsPage(
+          controller: _controller,
+          readModel: _readModel,
+          configuredDiscoveryTargetsStore: _configuredDiscoveryTargetsStore,
+          desktopWindowService: _desktopWindowService,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openHistoryPage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DiscoveryHistoryPage(
+          downloadHistoryBoundary: _downloadHistoryBoundary,
+          onOpenPath: _controller.openHistoryPath,
+        ),
+      ),
     );
   }
 

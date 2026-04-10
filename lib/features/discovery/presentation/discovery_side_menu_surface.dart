@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
+import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
@@ -179,18 +180,81 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
     required String title,
     required Future<void> Function()? onTap,
   }) {
-    return ListTile(
-      leading: Icon(icon),
-      title: Text(title),
-      enabled: onTap != null,
-      onTap: onTap == null
-          ? null
-          : () {
-              if (widget.closeOnTap) {
-                Navigator.of(context).pop();
-              }
-              unawaited(onTap());
-            },
+    final isEnabled = onTap != null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        0,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
+      child: Material(
+        color: isEnabled ? AppColors.surfaceSoft : AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        child: InkWell(
+          key: Key(
+            'discovery-menu-action-${title.toLowerCase().replaceAll(' ', '-')}',
+          ),
+          borderRadius: BorderRadius.circular(AppRadius.lg),
+          onTap: !isEnabled
+              ? null
+              : () {
+                  if (widget.closeOnTap) {
+                    Navigator.of(context).pop();
+                  }
+                  unawaited(onTap());
+                },
+          child: Ink(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppRadius.lg),
+              border: Border.all(
+                color: isEnabled
+                    ? AppColors.mutedBorder
+                    : AppColors.mutedBorder.withValues(alpha: 0.6),
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: isEnabled
+                        ? AppColors.brandAccent.withValues(alpha: 0.24)
+                        : AppColors.surface,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    icon,
+                    color: isEnabled
+                        ? AppColors.brandPrimaryDark
+                        : AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      color: isEnabled
+                          ? AppColors.textPrimary
+                          : AppColors.textMuted,
+                    ),
+                  ),
+                ),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: isEnabled
+                      ? AppColors.textSecondary
+                      : AppColors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

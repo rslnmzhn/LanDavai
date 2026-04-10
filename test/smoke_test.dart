@@ -249,39 +249,49 @@ void main() {
     expect(find.text('Отдать файлы'), findsOneWidget);
   });
 
-  testWidgets('DiscoveryPage menu opens extracted friends sheet flow', (
+  testWidgets('DiscoveryPage menu opens a dedicated friends screen', (
     tester,
   ) async {
     _registerWidgetCleanup(tester);
     await _pumpDiscoveryPage(tester, harness: harness);
 
     await _openMenu(tester);
-    await tester.tap(find.widgetWithText(ListTile, 'Friends'));
+    expect(find.byType(Drawer), findsNothing);
+    expect(
+      find.byKey(const Key('discovery-menu-action-friends')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const Key('discovery-menu-action-friends')));
     await _pumpForUi(tester);
 
+    expect(find.text('Menu'), findsNothing);
     expect(
       find.text('Friendship requires confirmation from both devices.'),
       findsOneWidget,
     );
   });
 
+  testWidgets('DiscoveryPage menu opens settings on a dedicated screen', (
+    tester,
+  ) async {
+    _registerWidgetCleanup(tester);
+    await _pumpDiscoveryPage(tester, harness: harness);
+
+    await _openMenu(tester);
+    expect(
+      find.byKey(const Key('discovery-menu-action-settings')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('discovery-menu-action-settings')));
+    await _pumpForUi(tester);
+
+    expect(find.text('Настройки'), findsOneWidget);
+    expect(find.text('Пароль веб-ссылки'), findsOneWidget);
+  });
+
   testWidgets(
-    'DiscoveryPage menu opens settings sheet after the surface split',
-    (tester) async {
-      _registerWidgetCleanup(tester);
-      await _pumpDiscoveryPage(tester, harness: harness);
-
-      await _openMenu(tester);
-      await tester.tap(find.widgetWithText(ListTile, 'Settings'));
-      await _pumpForUi(tester);
-
-      expect(find.text('Настройки'), findsOneWidget);
-      expect(find.text('Пароль веб-ссылки'), findsOneWidget);
-    },
-  );
-
-  testWidgets(
-    'DiscoveryPage menu opens clipboard sheet with remote projection still visible',
+    'DiscoveryPage menu opens clipboard on a dedicated screen with remote projection still visible',
     (tester) async {
       _registerWidgetCleanup(tester);
       harness.controller.setTestDevices(<DiscoveredDevice>[
@@ -323,7 +333,9 @@ void main() {
       await _pumpDiscoveryPage(tester, harness: harness);
 
       await _openMenu(tester);
-      await tester.tap(find.widgetWithText(ListTile, 'Clipboard'));
+      await tester.tap(
+        find.byKey(const Key('discovery-menu-action-clipboard')),
+      );
       await _pumpForUi(tester);
 
       expect(find.text('Clipboard'), findsOneWidget);
@@ -349,20 +361,21 @@ void main() {
     },
   );
 
-  testWidgets(
-    'DiscoveryPage menu opens history sheet and keeps the surface visible',
-    (tester) async {
-      _registerWidgetCleanup(tester);
-      await _pumpDiscoveryPage(tester, harness: harness);
+  testWidgets('DiscoveryPage menu opens history on a dedicated screen', (
+    tester,
+  ) async {
+    _registerWidgetCleanup(tester);
+    await _pumpDiscoveryPage(tester, harness: harness);
 
-      await _openMenu(tester);
-      await tester.tap(find.widgetWithText(ListTile, 'Download history'));
-      await _pumpForUi(tester);
+    await _openMenu(tester);
+    await tester.tap(
+      find.byKey(const Key('discovery-menu-action-download-history')),
+    );
+    await _pumpForUi(tester);
 
-      expect(find.text('История загрузок'), findsOneWidget);
-      expect(find.text('История загрузок пока пустая'), findsOneWidget);
-    },
-  );
+    expect(find.text('История загрузок'), findsOneWidget);
+    expect(find.text('История загрузок пока пустая'), findsOneWidget);
+  });
 
   testWidgets(
     'DiscoveryPage device actions menu still opens rename and friend actions for visible devices',
@@ -394,7 +407,7 @@ void main() {
   );
 
   testWidgets(
-    'DiscoveryPage side menu keeps the video-link surface reachable',
+    'DiscoveryPage side menu keeps the video-link surface reachable as container actions',
     (tester) async {
       _registerWidgetCleanup(tester);
       await _pumpDiscoveryPage(tester, harness: harness, isBoundaryReady: true);
@@ -402,6 +415,16 @@ void main() {
       await _openMenu(tester);
       await _pumpForUi(tester, frames: 16);
 
+      expect(
+        find.byKey(const Key('discovery-menu-action-files')),
+        findsOneWidget,
+      );
+      await tester.dragUntilVisible(
+        find.text('Web server for video'),
+        find.byType(ListView).last,
+        const Offset(0, -240),
+      );
+      await _pumpForUi(tester, frames: 8);
       expect(find.text('Web server for video'), findsOneWidget);
       expect(find.text('Video from shared files'), findsOneWidget);
       expect(find.byType(Switch), findsWidgets);
