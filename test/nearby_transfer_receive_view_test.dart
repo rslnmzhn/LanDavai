@@ -91,12 +91,12 @@ void main() {
       await _pumpForUi(tester);
       lanAdapter.emit(
         const NearbyTransferHandshakeOfferEvent(
-          emojiSequence: <String>['😀', '😎', '🤖', '🚀', '🌈'],
+          verificationCode: <String>['1', '2', '3', '4', '5', '6'],
         ),
       );
       await _pumpForUi(tester);
 
-      expect(find.text('Выберите совпадающий набор эмодзи'), findsOneWidget);
+      expect(find.text('Выберите совпадающий цифровой код'), findsOneWidget);
       expect(find.byType(OutlinedButton), findsAtLeastNWidgets(3));
 
       lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());

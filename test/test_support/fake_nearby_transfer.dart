@@ -41,7 +41,7 @@ class FakeNearbyTransferTransportAdapter
   String? lastConnectHost;
   int? lastConnectPort;
   String? lastExpectedSessionId;
-  List<String>? lastHandshakeOffer;
+  List<String>? lastVerificationCode;
   NearbyTransferSelection? lastSelection;
   String? lastPreviewRequestId;
   String? lastPreviewFileId;
@@ -91,9 +91,9 @@ class FakeNearbyTransferTransportAdapter
   }
 
   @override
-  Future<void> sendHandshakeOffer(List<String> emojiSequence) async {
+  Future<void> sendHandshakeOffer(List<String> verificationCode) async {
     sendHandshakeOfferCalls += 1;
-    lastHandshakeOffer = List<String>.unmodifiable(emojiSequence);
+    lastVerificationCode = List<String>.unmodifiable(verificationCode);
   }
 
   @override

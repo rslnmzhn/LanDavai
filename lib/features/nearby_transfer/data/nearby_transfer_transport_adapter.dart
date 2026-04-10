@@ -144,9 +144,9 @@ class NearbyTransferDisconnectedEvent extends NearbyTransferTransportEvent {
 }
 
 class NearbyTransferHandshakeOfferEvent extends NearbyTransferTransportEvent {
-  const NearbyTransferHandshakeOfferEvent({required this.emojiSequence});
+  const NearbyTransferHandshakeOfferEvent({required this.verificationCode});
 
-  final List<String> emojiSequence;
+  final List<String> verificationCode;
 }
 
 class NearbyTransferHandshakeAcceptedEvent
@@ -226,7 +226,7 @@ abstract class NearbyTransferTransportAdapter {
     String? expectedSessionId,
   });
 
-  Future<void> sendHandshakeOffer(List<String> emojiSequence);
+  Future<void> sendHandshakeOffer(List<String> verificationCode);
 
   Future<void> sendHandshakeAccepted();
 

@@ -12,46 +12,30 @@ class NearbyTransferHandshakeService {
 
   final Random _random;
 
-  static const List<String> _emojiPool = <String>[
-    '😀',
-    '😎',
-    '🤖',
-    '🛰️',
-    '🚀',
-    '🌈',
-    '🍀',
-    '🔥',
-    '🎯',
-    '🧩',
-    '🌙',
-    '⚡',
-    '🐳',
-    '🦊',
-    '🍉',
-    '🎧',
-    '📦',
-    '🔒',
-    '🌊',
-    '🪐',
-    '🎲',
-    '🫧',
-    '🌻',
-    '☁️',
+  static const List<String> _digitPool = <String>[
+    '0',
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8',
+    '9',
   ];
 
-  List<String> createEmojiSequence() {
-    final pool = List<String>.from(_emojiPool);
+  List<String> createVerificationCode() {
+    final pool = List<String>.from(_digitPool);
     pool.shuffle(_random);
-    return List<String>.unmodifiable(pool.take(5));
+    return List<String>.unmodifiable(pool.take(6));
   }
 
-  NearbyTransferHandshakeChallenge buildChallenge(
-    List<String> correctSequence,
-  ) {
-    final normalizedCorrect = List<String>.unmodifiable(correctSequence);
+  NearbyTransferHandshakeChallenge buildChallenge(List<String> correctCode) {
+    final normalizedCorrect = List<String>.unmodifiable(correctCode);
     final choices = <List<String>>[normalizedCorrect];
     while (choices.length < 3) {
-      final candidate = createEmojiSequence();
+      final candidate = createVerificationCode();
       if (_sameSequence(candidate, normalizedCorrect)) {
         continue;
       }
@@ -69,10 +53,10 @@ class NearbyTransferHandshakeService {
   }
 
   bool isValidChoice({
-    required List<String> expectedSequence,
+    required List<String> expectedCode,
     required List<String> selectedChoice,
   }) {
-    return _sameSequence(expectedSequence, selectedChoice);
+    return _sameSequence(expectedCode, selectedChoice);
   }
 
   bool _sameSequence(List<String> left, List<String> right) {

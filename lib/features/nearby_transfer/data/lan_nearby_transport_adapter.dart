@@ -110,10 +110,10 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
   }
 
   @override
-  Future<void> sendHandshakeOffer(List<String> emojiSequence) async {
+  Future<void> sendHandshakeOffer(List<String> verificationCode) async {
     await _sendControlMessage(<String, Object?>{
       'type': 'handshakeOffer',
-      'emojiSequence': emojiSequence,
+      'verificationCode': verificationCode,
     });
   }
 
@@ -361,11 +361,13 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       return;
     }
     if (type == 'handshakeOffer') {
-      final sequence = (json['emojiSequence'] as List<dynamic>?)
+      final sequence = (json['verificationCode'] as List<dynamic>?)
           ?.whereType<String>()
           .toList(growable: false);
       if (sequence != null && sequence.isNotEmpty) {
-        _events.add(NearbyTransferHandshakeOfferEvent(emojiSequence: sequence));
+        _events.add(
+          NearbyTransferHandshakeOfferEvent(verificationCode: sequence),
+        );
       }
       return;
     }

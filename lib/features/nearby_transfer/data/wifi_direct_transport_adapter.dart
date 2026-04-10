@@ -36,7 +36,7 @@ class WifiDirectTransportAdapter implements NearbyTransferTransportAdapter {
   }
 
   @override
-  Future<void> sendHandshakeOffer(List<String> emojiSequence) async {
+  Future<void> sendHandshakeOffer(List<String> verificationCode) async {
     throw UnsupportedError('Wi-Fi Direct transport is not available in v1.');
   }
 

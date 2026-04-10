@@ -24,14 +24,14 @@ void main() {
       final sendCompleted = Completer<void>();
       final receivedOffer = Completer<List<String>>();
       Object? sendError;
-      const emojiSequence = <String>['🔥', '🌊', '🛰️', '🪵', '🎯'];
+      const verificationCode = <String>['1', '2', '3', '4', '5', '6'];
 
       final senderSubscription = sender.events.listen((event) {
         if (event is NearbyTransferConnectedEvent &&
             !sendCompleted.isCompleted) {
           unawaited(
             sender
-                .sendHandshakeOffer(emojiSequence)
+                .sendHandshakeOffer(verificationCode)
                 .then((_) {
                   if (!sendCompleted.isCompleted) {
                     sendCompleted.complete();
@@ -49,7 +49,7 @@ void main() {
       final receiverSubscription = receiver.events.listen((event) {
         if (event is NearbyTransferHandshakeOfferEvent &&
             !receivedOffer.isCompleted) {
-          receivedOffer.complete(event.emojiSequence);
+          receivedOffer.complete(event.verificationCode);
         }
       });
       addTearDown(senderSubscription.cancel);
@@ -70,7 +70,7 @@ void main() {
 
       expect(
         await receivedOffer.future.timeout(const Duration(seconds: 5)),
-        emojiSequence,
+        verificationCode,
       );
       await sendCompleted.future.timeout(const Duration(seconds: 5));
       expect(sendError, isNull);
@@ -87,7 +87,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-1',
-        emojiSequence: const <String>['😀', '🚀', '🌿', '🎧', '📦'],
+        verificationCode: const <String>['1', '3', '5', '7', '8', '9'],
       );
 
       await sender.disconnect();
@@ -96,7 +96,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-2',
-        emojiSequence: const <String>['🍀', '🛰️', '🎲', '🛟', '🧭'],
+        verificationCode: const <String>['0', '2', '4', '6', '8', '9'],
       );
     },
   );
@@ -279,7 +279,7 @@ Future<void> _expectHandshakeRound({
   required LanNearbyTransportAdapter sender,
   required LanNearbyTransportAdapter receiver,
   required String sessionId,
-  required List<String> emojiSequence,
+  required List<String> verificationCode,
 }) async {
   addTearDown(receiver.dispose);
 
@@ -291,7 +291,7 @@ Future<void> _expectHandshakeRound({
     if (event is NearbyTransferConnectedEvent && !sendCompleted.isCompleted) {
       unawaited(
         sender
-            .sendHandshakeOffer(emojiSequence)
+            .sendHandshakeOffer(verificationCode)
             .then((_) {
               if (!sendCompleted.isCompleted) {
                 sendCompleted.complete();
@@ -309,7 +309,7 @@ Future<void> _expectHandshakeRound({
   final receiverSubscription = receiver.events.listen((event) {
     if (event is NearbyTransferHandshakeOfferEvent &&
         !receivedOffer.isCompleted) {
-      receivedOffer.complete(event.emojiSequence);
+      receivedOffer.complete(event.verificationCode);
     }
   });
   addTearDown(senderSubscription.cancel);
@@ -330,7 +330,7 @@ Future<void> _expectHandshakeRound({
 
   expect(
     await receivedOffer.future.timeout(const Duration(seconds: 5)),
-    emojiSequence,
+    verificationCode,
   );
   await sendCompleted.future.timeout(const Duration(seconds: 5));
   expect(sendError, isNull);

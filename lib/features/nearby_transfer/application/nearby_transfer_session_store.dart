@@ -80,7 +80,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   bool _bannerIsError = false;
   String? _qrPayloadText;
   String? _sessionId;
-  List<String> _emojiSequence = const <String>[];
+  List<String> _verificationCode = const <String>[];
   NearbyTransferHandshakeChallenge? _handshakeChallenge;
   int _transferCompletedBytes = 0;
   int _transferTotalBytes = 0;
@@ -113,7 +113,8 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   String? get qrPayloadText => _qrPayloadText;
 
-  List<String> get emojiSequence => List<String>.unmodifiable(_emojiSequence);
+  List<String> get verificationCode =>
+      List<String>.unmodifiable(_verificationCode);
 
   NearbyTransferHandshakeChallenge? get handshakeChallenge =>
       _handshakeChallenge;
@@ -289,16 +290,16 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   Future<void> selectHandshakeChoice(List<String> choice) async {
-    final expectedSequence = _emojiSequence;
-    if (expectedSequence.isEmpty) {
+    final expectedCode = _verificationCode;
+    if (expectedCode.isEmpty) {
       return;
     }
     final isValid = _handshakeService.isValidChoice(
-      expectedSequence: expectedSequence,
+      expectedCode: expectedCode,
       selectedChoice: choice,
     );
     if (!isValid) {
-      _setBanner('Эмодзи не совпали. Попробуйте ещё раз.', isError: true);
+      _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
       return;
     }
 
@@ -454,19 +455,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _sessionId = event.sessionId;
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
       if (_role == NearbyTransferRole.send) {
-        await _activeAdapter?.sendHandshakeOffer(_emojiSequence);
-        _setBanner('Подтвердите эмодзи на втором устройстве.');
+        await _activeAdapter?.sendHandshakeOffer(_verificationCode);
+        _setBanner('Подтвердите цифровой код на втором устройстве.');
       }
       notifyListeners();
       return;
     }
     if (event is NearbyTransferHandshakeOfferEvent) {
-      _emojiSequence = List<String>.unmodifiable(event.emojiSequence);
+      _verificationCode = List<String>.unmodifiable(event.verificationCode);
       _handshakeChallenge = _handshakeService.buildChallenge(
-        event.emojiSequence,
+        event.verificationCode,
       );
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
-      _setBanner('Выберите совпадающий набор эмодзи.');
+      _setBanner('Выберите совпадающий цифровой код.');
       notifyListeners();
       return;
     }
@@ -555,7 +556,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   void _resetSessionIdentity() {
     _sessionId = 'nearby-${DateTime.now().microsecondsSinceEpoch}';
-    _emojiSequence = _handshakeService.createEmojiSequence();
+    _verificationCode = _handshakeService.createVerificationCode();
     _handshakeChallenge = null;
     _qrPayloadText = null;
     _hasCompletedOutgoingTransfer = false;
