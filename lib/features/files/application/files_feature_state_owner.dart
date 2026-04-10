@@ -28,6 +28,7 @@ class FilesFeatureEntry {
     required this.changedAt,
     this.filePath,
     this.virtualFolderPath,
+    this.sourceToken,
     this.removableSharedCacheId,
   });
 
@@ -39,6 +40,7 @@ class FilesFeatureEntry {
   final DateTime changedAt;
   final String? filePath;
   final String? virtualFolderPath;
+  final String? sourceToken;
   final String? removableSharedCacheId;
 
   static FilesFeatureEntry fromReal({
@@ -59,6 +61,7 @@ class FilesFeatureEntry {
   static FilesFeatureEntry virtualFolder({
     required String name,
     required String folderPath,
+    String? sourceToken,
     String? removableSharedCacheId,
   }) {
     return FilesFeatureEntry(
@@ -69,6 +72,7 @@ class FilesFeatureEntry {
       modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
       changedAt: DateTime.fromMillisecondsSinceEpoch(0),
       virtualFolderPath: folderPath,
+      sourceToken: sourceToken,
       removableSharedCacheId: removableSharedCacheId,
     );
   }
@@ -96,6 +100,7 @@ class FilesFeatureEntry {
     required int sizeBytes,
     required DateTime modifiedAt,
     required DateTime changedAt,
+    String? sourceToken,
   }) {
     return FilesFeatureEntry(
       isDirectory: false,
@@ -105,6 +110,7 @@ class FilesFeatureEntry {
       modifiedAt: modifiedAt,
       changedAt: changedAt,
       filePath: filePath,
+      sourceToken: sourceToken,
     );
   }
 }
@@ -451,6 +457,7 @@ class FilesFeatureStateOwner extends ChangeNotifier {
           FilesFeatureEntry.virtualFolder(
             name: virtualFolder.name,
             folderPath: _normalizeVirtualFolder(virtualFolder.folderPath),
+            sourceToken: virtualFolder.sourceToken,
             removableSharedCacheId: virtualFolder.removableSharedCacheId,
           ),
         );
@@ -515,6 +522,7 @@ class FilesFeatureStateOwner extends ChangeNotifier {
         sizeBytes: sizeBytes,
         modifiedAt: modifiedAt,
         changedAt: changedAt,
+        sourceToken: virtualFile.sourceToken,
       );
     }
 

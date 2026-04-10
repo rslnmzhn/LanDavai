@@ -5,7 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
-import 'package:landa/features/discovery/presentation/discovery_receive_panel_sheet.dart';
+import 'package:landa/features/discovery/domain/discovered_device.dart';
+import 'package:landa/features/discovery/presentation/remote_download_browser_page.dart';
 import 'package:landa/features/files/presentation/file_explorer/local_file_viewer.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
@@ -28,7 +29,9 @@ void main() {
     });
   });
 
-  testWidgets('Remote-share preview opens LocalFileViewerPage', (tester) async {
+  testWidgets('Remote-share preview opens LocalFileViewerPage on simple tap', (
+    tester,
+  ) async {
     _registerWidgetCleanup(tester);
     final previewFile = File(
       '${harness.databaseHarness.rootDirectory.path}/remote-preview.txt',
@@ -37,37 +40,14 @@ void main() {
       await previewFile.writeAsString('preview');
     });
 
-    final remoteShareBrowser = harness.remoteShareBrowser;
-    final ownerIp = '192.168.1.44';
-    final requestId = 'request-1';
-    final entry = SharedCatalogEntryItem(
+    await _seedCatalog(
+      browser: harness.remoteShareBrowser,
+      ownerIp: '192.168.1.44',
+      ownerName: 'Remote device',
       cacheId: 'cache-1',
       displayName: 'Shared docs',
-      itemCount: 1,
-      totalBytes: 12,
-      files: <SharedCatalogFileItem>[
-        SharedCatalogFileItem(
-          relativePath: 'remote-preview.txt',
-          sizeBytes: 12,
-          thumbnailId: 'thumb-1',
-        ),
-      ],
+      filePath: 'remote-preview.txt',
     );
-
-    await remoteShareBrowser.applyRemoteCatalog(
-      event: ShareCatalogEvent(
-        requestId: requestId,
-        ownerIp: ownerIp,
-        ownerName: 'Remote device',
-        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
-        entries: <SharedCatalogEntryItem>[entry],
-        removedCacheIds: const <String>[],
-        observedAt: DateTime(2026, 1, 2),
-      ),
-      ownerDisplayName: 'Remote device',
-      ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
-    );
-    remoteShareBrowser.selectOwner(ownerIp);
 
     final coordinator = _TestTransferSessionCoordinator(
       previewPathProvider: () async => previewFile.path,
@@ -81,14 +61,12 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: DiscoveryReceivePanelSheet(
-            onRefreshRemoteShares: () async {},
-            remoteShareBrowser: remoteShareBrowser,
-            previewCacheOwner: harness.previewCacheOwner,
-            transferSessionCoordinator: coordinator,
-            useStandardAppDownloadFolder: true,
-          ),
+        home: RemoteDownloadBrowserPage(
+          onRefreshRemoteShares: () async {},
+          remoteShareBrowser: harness.remoteShareBrowser,
+          previewCacheOwner: harness.previewCacheOwner,
+          transferSessionCoordinator: coordinator,
+          useStandardAppDownloadFolder: true,
         ),
       ),
     );
@@ -96,18 +74,206 @@ void main() {
     await _pumpForUi(tester, frames: 20);
 
     expect(find.text('remote-preview.txt'), findsOneWidget);
-    await tester.tap(find.byTooltip('Preview before download'));
+    await tester.tap(find.text('remote-preview.txt'));
     await _pumpUntilFound(
       tester,
       find.byType(LocalFileViewerPage, skipOffstage: false),
       failureMessage: 'Remote-share preview did not open the file viewer.',
     );
-    final viewerFinder = find.byType(LocalFileViewerPage, skipOffstage: false);
-    expect(viewerFinder, findsOneWidget);
-    await _pumpForUi(tester, frames: 4);
-    await _closeCurrentRoute(tester, viewerFinder.first);
-    await _flushDbTimers(tester);
+    expect(
+      find.byType(LocalFileViewerPage, skipOffstage: false),
+      findsOneWidget,
+    );
   });
+
+  testWidgets(
+    'selection survives filter switch and is pruned on invalidation',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'report.txt',
+      );
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.55',
+        ownerName: 'Remote B',
+        cacheId: 'cache-b',
+        displayName: 'Docs',
+        filePath: 'notes.txt',
+        requestId: 'request-2',
+        startBrowse: false,
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      await tester.tap(
+        find.descendant(
+          of: find.ancestor(
+            of: find.text('report.txt'),
+            matching: find.byType(ListTile),
+          ),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Remote A'));
+      await _pumpForUi(tester, frames: 8);
+      expect(find.text('Скачать выбранные (1)'), findsOneWidget);
+
+      await harness.remoteShareBrowser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-1',
+          ownerIp: '192.168.1.44',
+          ownerName: 'Remote A',
+          ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+          entries: const <SharedCatalogEntryItem>[],
+          removedCacheIds: const <String>[],
+          observedAt: DateTime(2026, 1, 3),
+        ),
+        ownerDisplayName: 'Remote A',
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+      );
+      await _pumpForUi(tester, frames: 12);
+
+      expect(find.text('Скачать выбранные (1)'), findsNothing);
+    },
+  );
+
+  testWidgets('download starts only for explicitly selected files', (
+    tester,
+  ) async {
+    _registerWidgetCleanup(tester);
+    await _seedCatalog(
+      browser: harness.remoteShareBrowser,
+      ownerIp: '192.168.1.44',
+      ownerName: 'Remote A',
+      cacheId: 'cache-a',
+      displayName: 'Docs',
+      filePath: 'report.txt',
+    );
+
+    final coordinator = _TestTransferSessionCoordinator(
+      previewPathProvider: () async => null,
+      sharedCacheCatalog: harness.sharedCacheCatalog,
+      sharedCacheIndexStore: harness.sharedCacheIndexStore,
+      previewCacheOwner: harness.previewCacheOwner,
+      downloadHistoryBoundary: harness.downloadHistoryBoundary,
+      settings: harness.readModel.settings,
+    );
+    addTearDown(coordinator.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RemoteDownloadBrowserPage(
+          onRefreshRemoteShares: () async {},
+          remoteShareBrowser: harness.remoteShareBrowser,
+          previewCacheOwner: harness.previewCacheOwner,
+          transferSessionCoordinator: coordinator,
+          useStandardAppDownloadFolder: true,
+        ),
+      ),
+    );
+    await _pumpForUi(tester, frames: 20);
+
+    expect(find.text('Скачать выбранные (1)'), findsNothing);
+    expect(coordinator.downloadCalls, 0);
+
+    await tester.tap(
+      find.descendant(
+        of: find.ancestor(
+          of: find.text('report.txt'),
+          matching: find.byType(ListTile),
+        ),
+        matching: find.byType(Checkbox),
+      ),
+    );
+    await _pumpForUi(tester, frames: 4);
+    await tester.tap(find.text('Скачать выбранные (1)'));
+    await _pumpForUi(tester, frames: 8);
+
+    expect(coordinator.downloadCalls, 1);
+    expect(coordinator.lastSelectedByCache, <String, Set<String>>{
+      'cache-a': <String>{'report.txt'},
+    });
+  });
+}
+
+Future<void> _seedCatalog({
+  required TrackingRemoteShareBrowser browser,
+  required String ownerIp,
+  required String ownerName,
+  required String cacheId,
+  required String displayName,
+  required String filePath,
+  String requestId = 'request-1',
+  bool startBrowse = true,
+}) async {
+  if (startBrowse) {
+    await browser.startBrowse(
+      targets: const <DiscoveredDevice>[],
+      receiverMacAddress: 'aa:bb:cc:dd:ee:ff',
+      requesterName: 'Receiver',
+      requestId: requestId,
+      responseWindow: Duration.zero,
+      sendShareQuery:
+          ({
+            required String targetIp,
+            required String requestId,
+            required String requesterName,
+          }) async {},
+    );
+  }
+  await browser.applyRemoteCatalog(
+    event: ShareCatalogEvent(
+      requestId: requestId,
+      ownerIp: ownerIp,
+      ownerName: ownerName,
+      ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+      entries: <SharedCatalogEntryItem>[
+        SharedCatalogEntryItem(
+          cacheId: cacheId,
+          displayName: displayName,
+          itemCount: 1,
+          totalBytes: 12,
+          files: <SharedCatalogFileItem>[
+            SharedCatalogFileItem(relativePath: filePath, sizeBytes: 12),
+          ],
+        ),
+      ],
+      removedCacheIds: const <String>[],
+      observedAt: DateTime(2026, 1, 2),
+    ),
+    ownerDisplayName: ownerName,
+    ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+  );
 }
 
 Future<void> _pumpForUi(WidgetTester tester, {int frames = 12}) async {
@@ -140,17 +306,6 @@ void _registerWidgetCleanup(WidgetTester tester) {
   });
 }
 
-Future<void> _closeCurrentRoute(WidgetTester tester, Finder anchor) async {
-  final context = tester.element(anchor);
-  Navigator.of(context).pop();
-  await _pumpForUi(tester, frames: 8);
-}
-
-Future<void> _flushDbTimers(WidgetTester tester) async {
-  await tester.pump(const Duration(seconds: 11));
-  await _pumpForUi(tester, frames: 4);
-}
-
 class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
   _TestTransferSessionCoordinator({
     required Future<String?> Function() previewPathProvider,
@@ -174,6 +329,8 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
        );
 
   final Future<String?> Function() _previewPathProvider;
+  int downloadCalls = 0;
+  Map<String, Set<String>>? lastSelectedByCache;
 
   @override
   List<IncomingTransferRequest> get incomingRequests =>
@@ -187,5 +344,16 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
     required String relativePath,
   }) async {
     return _previewPathProvider();
+  }
+
+  @override
+  Future<void> requestDownloadFromRemoteFiles({
+    required String ownerIp,
+    required String ownerName,
+    required Map<String, Set<String>> selectedRelativePathsByCache,
+    required bool useStandardAppDownloadFolder,
+  }) async {
+    downloadCalls += 1;
+    lastSelectedByCache = selectedRelativePathsByCache;
   }
 }

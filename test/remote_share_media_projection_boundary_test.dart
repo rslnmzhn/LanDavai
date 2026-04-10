@@ -235,7 +235,6 @@ Future<void> _seedRemoteCatalog({
     ownerDisplayName: 'Remote device',
     ownerMacAddress: '11-22-33-44-55-66',
   );
-  browser.selectOwner('192.168.1.40');
 }
 
 ShareCatalogEvent _remoteCatalogEvent() {

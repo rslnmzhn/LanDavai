@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import '../../files/application/file_explorer_contract.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import '../data/device_alias_repository.dart';
@@ -55,35 +56,10 @@ class RemoteBrowsePreviewPathUpdate {
 }
 
 class RemoteBrowseProjection {
-  const RemoteBrowseProjection({
-    required this.options,
-    required this.owners,
-    required this.selectedOwnerIp,
-    required this.selectedOwner,
-    required this.files,
-    required this.folders,
-    required this.selectedFileIds,
-    required this.selectedFolderIds,
-    required this.effectiveSelectedFileIds,
-    required this.folderCoveredFileIds,
-    required this.isFileListCapped,
-    required this.hiddenFilesCount,
-  });
+  const RemoteBrowseProjection({required this.options, required this.owners});
 
   final List<RemoteShareOption> options;
   final List<RemoteBrowseOwnerChoice> owners;
-  final String? selectedOwnerIp;
-  final RemoteBrowseOwnerChoice? selectedOwner;
-  final List<RemoteBrowseFileChoice> files;
-  final List<RemoteBrowseFolderChoice> folders;
-  final Set<String> selectedFileIds;
-  final Set<String> selectedFolderIds;
-  final Set<String> effectiveSelectedFileIds;
-  final Set<String> folderCoveredFileIds;
-  final bool isFileListCapped;
-  final int hiddenFilesCount;
-
-  int get selectedCount => effectiveSelectedFileIds.length;
 }
 
 class RemoteBrowseOwnerChoice {
@@ -129,6 +105,22 @@ class RemoteBrowseFolderChoice {
   String get displayLabel => folderPath.isEmpty
       ? '$cacheDisplayName (вся расшаренная папка)'
       : '$cacheDisplayName / $folderPath';
+}
+
+class RemoteBrowseExplorerDirectory {
+  const RemoteBrowseExplorerDirectory({
+    required this.entries,
+    required this.totalFiles,
+    required this.totalFolders,
+    required this.hiddenFilesCount,
+    required this.isFileListCapped,
+  });
+
+  final FileExplorerVirtualDirectory entries;
+  final int totalFiles;
+  final int totalFolders;
+  final int hiddenFilesCount;
+  final bool isFileListCapped;
 }
 
 enum RemoteBrowseMediaKind { image, video, other }
@@ -211,12 +203,46 @@ class RemoteBrowseFileChoice {
   }
 }
 
+class RemoteBrowseResolvedFile {
+  const RemoteBrowseResolvedFile({
+    required this.token,
+    required this.ownerIp,
+    required this.ownerName,
+    required this.cacheId,
+    required this.cacheDisplayName,
+    required this.relativePath,
+    required this.displayPath,
+    required this.sizeBytes,
+    required this.mediaKind,
+    required this.previewLabel,
+    this.previewPath,
+    this.thumbnailId,
+    this.hasReceiverCacheSnapshot = false,
+  });
+
+  final String token;
+  final String ownerIp;
+  final String ownerName;
+  final String cacheId;
+  final String cacheDisplayName;
+  final String relativePath;
+  final String displayPath;
+  final int sizeBytes;
+  final RemoteBrowseMediaKind mediaKind;
+  final String previewLabel;
+  final String? previewPath;
+  final String? thumbnailId;
+  final bool hasReceiverCacheSnapshot;
+}
+
 class RemoteShareBrowser extends ChangeNotifier {
   RemoteShareBrowser({
     required SharedCacheCatalog sharedCacheCatalog,
     this.maxFilesPerCacheForUi = 4000,
     this.maxVisibleFiles = 2500,
   }) : _sharedCacheCatalog = sharedCacheCatalog;
+
+  static const String allDevicesFilterKey = '__all_devices__';
 
   final SharedCacheCatalog _sharedCacheCatalog;
   final int maxFilesPerCacheForUi;
@@ -226,68 +252,17 @@ class RemoteShareBrowser extends ChangeNotifier {
   final Map<String, String> _previewPathsByFileKey = <String, String>{};
   final Map<String, SharedFolderCacheRecord> _receiverSnapshotsByRemoteCacheId =
       <String, SharedFolderCacheRecord>{};
-  final Set<String> _selectedFileIds = <String>{};
-  final Set<String> _selectedFolderIds = <String>{};
 
   bool _isLoading = false;
-  String? _selectedOwnerIp;
   String? _activeRequestId;
   String? _receiverMacAddress;
 
   bool get isLoading => _isLoading;
 
   RemoteBrowseProjection get currentBrowseProjection {
-    final owners = _buildOwnerChoices();
-    final selectedOwner = _selectedOwnerIp == null
-        ? null
-        : _findOwnerByIp(owners, _selectedOwnerIp!);
-    final files = selectedOwner == null
-        ? const <RemoteBrowseFileChoice>[]
-        : _buildFileChoices(ownerIp: selectedOwner.ip);
-    final folders = selectedOwner == null
-        ? const <RemoteBrowseFolderChoice>[]
-        : _buildFolderChoices(files);
-    final selectedFolderPathsByCache = _buildSelectedFolderPathsByCache(
-      folders: folders,
-    );
-    final effectiveSelectedFileIds = <String>{};
-    final folderCoveredFileIds = <String>{};
-    for (final file in files) {
-      if (_selectedFileIds.contains(file.id)) {
-        effectiveSelectedFileIds.add(file.id);
-        continue;
-      }
-      final cacheKey = _cacheSelectionKey(
-        ownerIp: file.ownerIp,
-        cacheId: file.cacheId,
-      );
-      if (_matchesFolderSelection(
-        relativePath: file.relativePath,
-        selectedFolderPaths: selectedFolderPathsByCache[cacheKey],
-      )) {
-        effectiveSelectedFileIds.add(file.id);
-        folderCoveredFileIds.add(file.id);
-      }
-    }
-    final hiddenFilesCount =
-        selectedOwner == null || files.length >= selectedOwner.fileCount
-        ? 0
-        : selectedOwner.fileCount - files.length;
     return RemoteBrowseProjection(
       options: List<RemoteShareOption>.unmodifiable(_options),
-      owners: owners,
-      selectedOwnerIp: _selectedOwnerIp,
-      selectedOwner: selectedOwner,
-      files: files,
-      folders: folders,
-      selectedFileIds: Set<String>.unmodifiable(_selectedFileIds),
-      selectedFolderIds: Set<String>.unmodifiable(_selectedFolderIds),
-      effectiveSelectedFileIds: Set<String>.unmodifiable(
-        effectiveSelectedFileIds,
-      ),
-      folderCoveredFileIds: Set<String>.unmodifiable(folderCoveredFileIds),
-      isFileListCapped: hiddenFilesCount > 0,
-      hiddenFilesCount: hiddenFilesCount,
+      owners: _buildOwnerChoices(),
     );
   }
 
@@ -310,9 +285,6 @@ class RemoteShareBrowser extends ChangeNotifier {
     );
     _options.clear();
     _previewPathsByFileKey.clear();
-    _selectedOwnerIp = null;
-    _selectedFileIds.clear();
-    _selectedFolderIds.clear();
     await _refreshReceiverSnapshots();
     if (targets.isEmpty) {
       _isLoading = false;
@@ -383,97 +355,74 @@ class RemoteShareBrowser extends ChangeNotifier {
         b.entry.displayName.toLowerCase(),
       );
     });
-    _reconcileSelection();
     notifyListeners();
   }
 
-  void selectOwner(String? ownerIp) {
-    if (_selectedOwnerIp == ownerIp) {
-      return;
+  RemoteBrowseExplorerDirectory buildExplorerDirectory({
+    required String filterKey,
+    required String folderPath,
+  }) {
+    final ownerIp = filterKey == allDevicesFilterKey ? null : filterKey;
+    if (ownerIp == null) {
+      return _buildAggregatedExplorerDirectory();
     }
-    _selectedOwnerIp = ownerIp;
-    _selectedFileIds.clear();
-    _selectedFolderIds.clear();
-    _reconcileSelection();
-    notifyListeners();
+    return _buildOwnerExplorerDirectory(
+      ownerIp: ownerIp,
+      folderPath: folderPath,
+    );
   }
 
-  void selectVisibleFiles(Iterable<String> fileIds) {
-    _selectedFolderIds.clear();
-    _selectedFileIds
-      ..clear()
-      ..addAll(fileIds);
-    _reconcileSelection();
-    notifyListeners();
-  }
-
-  void setSelectedFolderIds(Set<String> folderIds) {
-    _selectedFolderIds
-      ..clear()
-      ..addAll(folderIds);
-    _reconcileSelection();
-    notifyListeners();
-  }
-
-  void setFileSelected({required String fileId, required bool isSelected}) {
-    if (isSelected) {
-      _selectedFileIds.add(fileId);
-    } else {
-      _selectedFileIds.remove(fileId);
+  String rootLabelForFilter(String filterKey) {
+    if (filterKey == allDevicesFilterKey) {
+      return 'Все устройства';
     }
-    _reconcileSelection();
-    notifyListeners();
+    return ownerChoiceForIp(filterKey)?.name ?? filterKey;
   }
 
-  void clearSelections() {
-    if (_selectedFileIds.isEmpty && _selectedFolderIds.isEmpty) {
-      return;
-    }
-    _selectedFileIds.clear();
-    _selectedFolderIds.clear();
-    notifyListeners();
-  }
-
-  Map<String, Set<String>> buildSelectedRelativePathsByCache() {
-    final projection = currentBrowseProjection;
-    final selectedByCache = <String, Set<String>>{};
-    final wholeCacheSelections = <String>{};
-    for (final folder in projection.folders) {
-      if (!projection.selectedFolderIds.contains(folder.id)) {
-        continue;
+  RemoteBrowseOwnerChoice? ownerChoiceForIp(String ownerIp) {
+    final owners = _buildOwnerChoices();
+    for (final owner in owners) {
+      if (owner.ip == ownerIp) {
+        return owner;
       }
-      if (folder.folderPath.isNotEmpty) {
-        continue;
-      }
-      wholeCacheSelections.add(folder.cacheId);
-      selectedByCache[folder.cacheId] = <String>{};
     }
-    for (final file in projection.files) {
-      if (wholeCacheSelections.contains(file.cacheId)) {
-        continue;
-      }
-      final picked =
-          projection.selectedFileIds.contains(file.id) ||
-          projection.folderCoveredFileIds.contains(file.id);
-      if (!picked) {
-        continue;
-      }
-      selectedByCache
-          .putIfAbsent(file.cacheId, () => <String>{})
-          .add(file.relativePath);
-    }
-    return selectedByCache;
+    return null;
   }
 
-  Map<String, Set<String>> buildDownloadAllRequestForOwner(String ownerIp) {
-    final selectedByCache = <String, Set<String>>{};
+  RemoteBrowseResolvedFile? resolveFileToken(String token) {
     for (final option in _options) {
-      if (option.ownerIp != ownerIp) {
-        continue;
+      final entry = option.entry;
+      for (final file in entry.files) {
+        final resolved = _toResolvedFile(
+          option: option,
+          file: file,
+          includeSourceInPath: false,
+        );
+        if (resolved.token == token) {
+          return resolved;
+        }
       }
-      selectedByCache[option.entry.cacheId] = <String>{};
     }
-    return selectedByCache;
+    return null;
+  }
+
+  bool containsFileToken(String token) => resolveFileToken(token) != null;
+
+  Set<String> currentFileTokens() {
+    final tokens = <String>{};
+    for (final option in _options) {
+      final entry = option.entry;
+      for (final file in entry.files) {
+        tokens.add(
+          _fileToken(
+            ownerIp: option.ownerIp,
+            cacheId: entry.cacheId,
+            relativePath: file.relativePath,
+          ),
+        );
+      }
+    }
+    return tokens;
   }
 
   String? ownerMacForCache({required String ownerIp, required String cacheId}) {
@@ -640,27 +589,6 @@ class RemoteShareBrowser extends ChangeNotifier {
     return true;
   }
 
-  void _reconcileSelection() {
-    final owners = _buildOwnerChoices();
-    final selectedOwner = _selectedOwnerIp == null
-        ? null
-        : _findOwnerByIp(owners, _selectedOwnerIp!);
-    if (selectedOwner == null) {
-      _selectedOwnerIp = null;
-      _selectedFileIds.clear();
-      _selectedFolderIds.clear();
-      return;
-    }
-
-    final files = _buildFileChoices(ownerIp: selectedOwner.ip);
-    final validFileIds = files.map((file) => file.id).toSet();
-    _selectedFileIds.removeWhere((id) => !validFileIds.contains(id));
-
-    final folders = _buildFolderChoices(files);
-    final validFolderIds = folders.map((folder) => folder.id).toSet();
-    _selectedFolderIds.removeWhere((id) => !validFolderIds.contains(id));
-  }
-
   List<RemoteBrowseOwnerChoice> _buildOwnerChoices() {
     final ownersByIp = <String, _RemoteOwnerDraft>{};
     for (final option in _options) {
@@ -695,43 +623,18 @@ class RemoteShareBrowser extends ChangeNotifier {
     return list;
   }
 
-  RemoteBrowseOwnerChoice? _findOwnerByIp(
-    List<RemoteBrowseOwnerChoice> owners,
-    String ip,
-  ) {
-    for (final owner in owners) {
-      if (owner.ip == ip) {
-        return owner;
-      }
-    }
-    return null;
-  }
-
-  List<RemoteBrowseFileChoice> _buildFileChoices({required String ownerIp}) {
-    final files = <RemoteBrowseFileChoice>[];
+  RemoteBrowseExplorerDirectory _buildAggregatedExplorerDirectory() {
+    final files = <RemoteBrowseResolvedFile>[];
     for (final option in _options) {
-      if (option.ownerIp != ownerIp) {
-        continue;
-      }
       for (final file in option.entry.files) {
         if (files.length >= maxVisibleFiles) {
           break;
         }
         files.add(
-          RemoteBrowseFileChoice(
-            ownerIp: option.ownerIp,
-            ownerName: option.ownerName,
-            cacheId: option.entry.cacheId,
-            cacheDisplayName: option.entry.displayName,
-            relativePath: file.relativePath,
-            sizeBytes: file.sizeBytes,
-            thumbnailId: file.thumbnailId,
-            previewPath: previewPathFor(
-              ownerIp: option.ownerIp,
-              cacheId: option.entry.cacheId,
-              relativePath: file.relativePath,
-            ),
-            hasReceiverCacheSnapshot: option.hasReceiverCacheSnapshot,
+          _toResolvedFile(
+            option: option,
+            file: file,
+            includeSourceInPath: true,
           ),
         );
       }
@@ -739,115 +642,121 @@ class RemoteShareBrowser extends ChangeNotifier {
         break;
       }
     }
-    files.sort((a, b) {
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      return a.relativePath.toLowerCase().compareTo(
-        b.relativePath.toLowerCase(),
-      );
-    });
-    return files;
-  }
-
-  List<RemoteBrowseFolderChoice> _buildFolderChoices(
-    List<RemoteBrowseFileChoice> files,
-  ) {
-    final byId = <String, _RemoteFolderDraft>{};
-    for (final file in files) {
-      final folderPaths = <String>[
-        '',
-        ..._extractFolderPaths(file.relativePath),
-      ];
-      for (final folderPath in folderPaths) {
-        final id = _folderId(
-          ownerIp: file.ownerIp,
-          cacheId: file.cacheId,
-          folderPath: folderPath,
-        );
-        final draft = byId.putIfAbsent(
-          id,
-          () => _RemoteFolderDraft(
-            ownerIp: file.ownerIp,
-            cacheId: file.cacheId,
-            cacheDisplayName: file.cacheDisplayName,
-            folderPath: folderPath,
-          ),
-        );
-        if (draft.fileIds.add(file.id)) {
-          draft.fileCount += 1;
-          draft.totalBytes += file.sizeBytes;
-        }
-      }
-    }
-
-    final folders = byId.values
+    files.sort(_compareResolvedFiles);
+    final entries = files
         .map(
-          (draft) => RemoteBrowseFolderChoice(
-            ownerIp: draft.ownerIp,
-            cacheId: draft.cacheId,
-            cacheDisplayName: draft.cacheDisplayName,
-            folderPath: draft.folderPath,
-            fileCount: draft.fileCount,
-            totalBytes: draft.totalBytes,
+          (file) => FileExplorerVirtualFile(
+            path: 'remote://${file.token}',
+            virtualPath: file.displayPath,
+            sourceToken: file.token,
+            subtitle:
+                '${file.ownerName} • ${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}',
+            sizeBytes: file.sizeBytes,
+            modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            changedAt: DateTime.fromMillisecondsSinceEpoch(0),
           ),
         )
         .toList(growable: false);
-    folders.sort((a, b) {
-      final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
-        b.cacheDisplayName.toLowerCase(),
-      );
-      if (cacheCmp != 0) {
-        return cacheCmp;
-      }
-      final depthCmp = a.depth.compareTo(b.depth);
-      if (depthCmp != 0) {
-        return depthCmp;
-      }
-      return a.folderPath.toLowerCase().compareTo(b.folderPath.toLowerCase());
-    });
-    return folders;
+    final totalFiles = _countFiles();
+    final hiddenFilesCount = totalFiles > files.length
+        ? totalFiles - files.length
+        : 0;
+    return RemoteBrowseExplorerDirectory(
+      entries: FileExplorerVirtualDirectory(files: entries),
+      totalFiles: totalFiles,
+      totalFolders: 0,
+      hiddenFilesCount: hiddenFilesCount,
+      isFileListCapped: hiddenFilesCount > 0,
+    );
   }
 
-  Map<String, Set<String>> _buildSelectedFolderPathsByCache({
-    required List<RemoteBrowseFolderChoice> folders,
+  RemoteBrowseExplorerDirectory _buildOwnerExplorerDirectory({
+    required String ownerIp,
+    required String folderPath,
   }) {
-    final byCache = <String, Set<String>>{};
-    for (final folder in folders) {
-      if (!_selectedFolderIds.contains(folder.id)) {
+    final normalizedFolder = _normalizeRelativePath(folderPath);
+    final folders = <String, FileExplorerVirtualFolder>{};
+    final files = <FileExplorerVirtualFile>[];
+    var visibleFiles = 0;
+    var totalFiles = 0;
+    for (final option in _options) {
+      if (option.ownerIp != ownerIp) {
         continue;
       }
-      final cacheKey = _cacheSelectionKey(
-        ownerIp: folder.ownerIp,
-        cacheId: folder.cacheId,
-      );
-      byCache.putIfAbsent(cacheKey, () => <String>{}).add(folder.folderPath);
+      final shareFolderName = _shareFolderName(option.entry);
+      for (final file in option.entry.files) {
+        totalFiles += 1;
+        if (visibleFiles >= maxVisibleFiles) {
+          continue;
+        }
+        final normalizedRelativePath = _normalizeRelativePath(
+          file.relativePath,
+        );
+        final browserPath = normalizedRelativePath.isEmpty
+            ? shareFolderName
+            : '$shareFolderName/$normalizedRelativePath';
+        final rest = _relativeRestForFolder(
+          folder: normalizedFolder,
+          targetPath: browserPath,
+        );
+        if (rest == null || rest.isEmpty) {
+          continue;
+        }
+        final slashIndex = rest.indexOf('/');
+        if (slashIndex != -1) {
+          final nextFolder = rest.substring(0, slashIndex);
+          final nextFolderPath = normalizedFolder.isEmpty
+              ? nextFolder
+              : '$normalizedFolder/$nextFolder';
+          folders.putIfAbsent(
+            nextFolderPath,
+            () => FileExplorerVirtualFolder(
+              name: nextFolder,
+              folderPath: nextFolderPath,
+            ),
+          );
+          continue;
+        }
+        final resolved = _toResolvedFile(
+          option: option,
+          file: file,
+          includeSourceInPath: false,
+        );
+        files.add(
+          FileExplorerVirtualFile(
+            path: 'remote://${resolved.token}',
+            virtualPath: browserPath,
+            sourceToken: resolved.token,
+            subtitle:
+                '${option.entry.displayName} • ${_formatBytes(file.sizeBytes)}',
+            sizeBytes: file.sizeBytes,
+            modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            changedAt: DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+        visibleFiles += 1;
+      }
     }
-    return byCache;
-  }
 
-  bool _matchesFolderSelection({
-    required String relativePath,
-    required Set<String>? selectedFolderPaths,
-  }) {
-    if (selectedFolderPaths == null || selectedFolderPaths.isEmpty) {
-      return false;
-    }
-    final normalizedPath = _normalizeRelativePath(relativePath);
-    for (final folderPath in selectedFolderPaths) {
-      final normalizedFolder = _normalizeRelativePath(folderPath);
-      if (normalizedFolder.isEmpty) {
-        return true;
-      }
-      if (normalizedPath == normalizedFolder ||
-          normalizedPath.startsWith('$normalizedFolder/')) {
-        return true;
-      }
-    }
-    return false;
+    final sortedFolders = folders.values.toList(growable: false)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    files.sort(
+      (a, b) =>
+          a.virtualPath.toLowerCase().compareTo(b.virtualPath.toLowerCase()),
+    );
+    final hiddenFilesCount = totalFiles > visibleFiles
+        ? totalFiles - visibleFiles
+        : 0;
+    return RemoteBrowseExplorerDirectory(
+      entries: FileExplorerVirtualDirectory(
+        folders: sortedFolders,
+        files: files,
+      ),
+      totalFiles: totalFiles,
+      totalFolders: sortedFolders.length,
+      hiddenFilesCount: hiddenFilesCount,
+      isFileListCapped: hiddenFilesCount > 0,
+    );
   }
 
   SharedCatalogEntryItem _trimRemoteShareEntryForProjection(
@@ -865,19 +774,81 @@ class RemoteShareBrowser extends ChangeNotifier {
     );
   }
 
-  String _cacheSelectionKey({
-    required String ownerIp,
-    required String cacheId,
+  RemoteBrowseResolvedFile _toResolvedFile({
+    required RemoteShareOption option,
+    required SharedCatalogFileItem file,
+    required bool includeSourceInPath,
   }) {
-    return '$ownerIp|$cacheId';
+    final normalizedRelativePath = _normalizeRelativePath(file.relativePath);
+    final displayPath = includeSourceInPath
+        ? '${option.ownerName} (${option.ownerIp})/${option.entry.displayName}/$normalizedRelativePath'
+        : normalizedRelativePath;
+    return RemoteBrowseResolvedFile(
+      token: _fileToken(
+        ownerIp: option.ownerIp,
+        cacheId: option.entry.cacheId,
+        relativePath: file.relativePath,
+      ),
+      ownerIp: option.ownerIp,
+      ownerName: option.ownerName,
+      cacheId: option.entry.cacheId,
+      cacheDisplayName: option.entry.displayName,
+      relativePath: normalizedRelativePath,
+      displayPath: displayPath,
+      sizeBytes: file.sizeBytes,
+      mediaKind: _mediaKindForRelativePath(file.relativePath),
+      previewLabel: _previewLabelForRelativePath(file.relativePath),
+      previewPath: previewPathFor(
+        ownerIp: option.ownerIp,
+        cacheId: option.entry.cacheId,
+        relativePath: file.relativePath,
+      ),
+      thumbnailId: file.thumbnailId,
+      hasReceiverCacheSnapshot: option.hasReceiverCacheSnapshot,
+    );
   }
 
-  String _folderId({
+  int _compareResolvedFiles(
+    RemoteBrowseResolvedFile a,
+    RemoteBrowseResolvedFile b,
+  ) {
+    final ownerCmp = a.ownerName.toLowerCase().compareTo(
+      b.ownerName.toLowerCase(),
+    );
+    if (ownerCmp != 0) {
+      return ownerCmp;
+    }
+    final cacheCmp = a.cacheDisplayName.toLowerCase().compareTo(
+      b.cacheDisplayName.toLowerCase(),
+    );
+    if (cacheCmp != 0) {
+      return cacheCmp;
+    }
+    return a.relativePath.toLowerCase().compareTo(b.relativePath.toLowerCase());
+  }
+
+  int _countFiles() {
+    var total = 0;
+    for (final option in _options) {
+      total += option.entry.files.length;
+    }
+    return total;
+  }
+
+  String _shareFolderName(SharedCatalogEntryItem entry) {
+    final trimmed = entry.displayName.trim();
+    if (trimmed.isEmpty) {
+      return 'Share ${entry.cacheId.substring(0, 6)}';
+    }
+    return '$trimmed · ${entry.cacheId.substring(0, 6)}';
+  }
+
+  String _fileToken({
     required String ownerIp,
     required String cacheId,
-    required String folderPath,
+    required String relativePath,
   }) {
-    return '$ownerIp|$cacheId|$folderPath';
+    return '$ownerIp|$cacheId|${_normalizeRelativePath(relativePath).toLowerCase()}';
   }
 
   String _previewKey({
@@ -889,25 +860,66 @@ class RemoteShareBrowser extends ChangeNotifier {
     return '$ownerIp|$cacheId|$normalizedPath';
   }
 
-  List<String> _extractFolderPaths(String relativePath) {
-    final normalized = _normalizeRelativePath(relativePath);
-    final parts = normalized
-        .split('/')
-        .where((part) => part.isNotEmpty)
-        .toList(growable: false);
-    if (parts.length < 2) {
-      return const <String>[];
-    }
-
-    final folders = <String>[];
-    for (var i = 1; i < parts.length; i++) {
-      folders.add(parts.take(i).join('/'));
-    }
-    return folders;
-  }
-
   String _normalizeRelativePath(String value) {
     return value.replaceAll('\\', '/').trim();
+  }
+
+  String? _relativeRestForFolder({
+    required String folder,
+    required String targetPath,
+  }) {
+    if (folder.isEmpty) {
+      return targetPath;
+    }
+    if (targetPath == folder) {
+      return '';
+    }
+    if (!targetPath.startsWith('$folder/')) {
+      return null;
+    }
+    return targetPath.substring(folder.length + 1);
+  }
+
+  RemoteBrowseMediaKind _mediaKindForRelativePath(String relativePath) {
+    final extension = p.extension(relativePath).toLowerCase();
+    if (RemoteBrowseFileChoice._imageExtensions.contains(extension)) {
+      return RemoteBrowseMediaKind.image;
+    }
+    if (RemoteBrowseFileChoice._videoExtensions.contains(extension)) {
+      return RemoteBrowseMediaKind.video;
+    }
+    return RemoteBrowseMediaKind.other;
+  }
+
+  String _previewLabelForRelativePath(String relativePath) {
+    final extension = p.extension(relativePath).toLowerCase();
+    if (extension.isNotEmpty) {
+      return extension.substring(1).toUpperCase();
+    }
+    switch (_mediaKindForRelativePath(relativePath)) {
+      case RemoteBrowseMediaKind.image:
+        return 'IMG';
+      case RemoteBrowseMediaKind.video:
+        return 'VID';
+      case RemoteBrowseMediaKind.other:
+        return 'FILE';
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(2)} GB';
   }
 }
 
@@ -924,21 +936,4 @@ class _RemoteOwnerDraft {
   int shareCount = 0;
   int fileCount = 0;
   int cachedShareCount = 0;
-}
-
-class _RemoteFolderDraft {
-  _RemoteFolderDraft({
-    required this.ownerIp,
-    required this.cacheId,
-    required this.cacheDisplayName,
-    required this.folderPath,
-  });
-
-  final String ownerIp;
-  final String cacheId;
-  final String cacheDisplayName;
-  final String folderPath;
-  int fileCount = 0;
-  int totalBytes = 0;
-  final Set<String> fileIds = <String>{};
 }

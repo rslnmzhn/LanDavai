@@ -221,14 +221,18 @@ void main() {
       _registerWidgetCleanup(tester);
       await _pumpDiscoveryPage(tester, harness: harness);
 
-      await tester.tap(find.widgetWithText(FilledButton, 'Принять'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Скачать'));
       await tester.pump();
       await _pumpForUi(tester);
 
       expect(harness.remoteShareBrowser.startBrowseCalls, 1);
-      expect(find.text('Выбор файлов из LAN'), findsOneWidget);
+      expect(find.text('Скачать из сети'), findsOneWidget);
+      expect(
+        find.byKey(const Key('remote-download-device-filter-bar')),
+        findsOneWidget,
+      );
 
-      await _closeCurrentRoute(tester, find.text('Выбор файлов из LAN'));
+      await _closeCurrentRoute(tester, find.text('Скачать из сети'));
       await (harness.controller.lastLoadRemoteShareOptionsFuture ??
           Future<void>.value());
       await tester.pump();
