@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
@@ -183,6 +184,7 @@ void main() {
       final directory = browser.buildExplorerDirectory(
         filterKey: RemoteShareBrowser.allDevicesFilterKey,
         folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.flat,
       );
 
       expect(directory.entries.folders, isEmpty);
@@ -192,10 +194,10 @@ void main() {
         hasLength(2),
       );
       expect(
-        directory.entries.files.map((file) => file.virtualPath),
+        directory.entries.files.map((file) => file.subtitle),
         containsAll(<String>[
-          'Device A (192.168.1.20)/Docs/report.txt',
-          'Device B (192.168.1.30)/Docs/report.txt',
+          'Device A • Docs • 4 B',
+          'Device B • Docs • 8 B',
         ]),
       );
     },
@@ -209,6 +211,7 @@ void main() {
       final directory = browser.buildExplorerDirectory(
         filterKey: '192.168.1.20',
         folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
       );
       expect(directory.entries.folders, isNotEmpty);
 
@@ -218,6 +221,7 @@ void main() {
       final docsDirectory = browser.buildExplorerDirectory(
         filterKey: '192.168.1.20',
         folderPath: docsFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
       );
       final file = docsDirectory.entries.files.single;
       final resolved = browser.resolveFileToken(file.sourceToken!);
@@ -295,6 +299,84 @@ void main() {
       expect(resolved?.previewPath, 'C:/tmp/thumb-1.jpg');
     },
   );
+
+  test('structured aggregated mode keeps honest nested paths', () async {
+    await _seedCatalogs(browser);
+
+    final root = browser.buildExplorerDirectory(
+      filterKey: RemoteShareBrowser.allDevicesFilterKey,
+      folderPath: '',
+      viewMode: RemoteBrowseExplorerViewMode.structured,
+    );
+
+    expect(
+      root.entries.folders.map((folder) => folder.name),
+      contains('Device A (192.168.1.20)'),
+    );
+
+    final deviceDirectory = browser.buildExplorerDirectory(
+      filterKey: RemoteShareBrowser.allDevicesFilterKey,
+      folderPath: 'Device A (192.168.1.20)',
+      viewMode: RemoteBrowseExplorerViewMode.structured,
+    );
+    expect(
+      deviceDirectory.entries.folders.map((folder) => folder.name).first,
+      startsWith('Docs'),
+    );
+  });
+
+  test('flat mode orders media before documents and documents before other files',
+      () async {
+    await browser.startBrowse(
+      targets: const <DiscoveredDevice>[],
+      receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+      requesterName: 'Receiver',
+      requestId: 'request-media',
+      responseWindow: Duration.zero,
+      sendShareQuery:
+          ({
+            required String targetIp,
+            required String requestId,
+            required String requesterName,
+          }) async {},
+    );
+    await browser.applyRemoteCatalog(
+      event: ShareCatalogEvent(
+        requestId: 'request-media',
+        ownerIp: '192.168.1.20',
+        ownerName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+        observedAt: DateTime(2026),
+        removedCacheIds: const <String>[],
+        entries: <SharedCatalogEntryItem>[
+          SharedCatalogEntryItem(
+            cacheId: 'remote-cache-1',
+            displayName: 'Mixed',
+            itemCount: 3,
+            totalBytes: 12,
+            files: <SharedCatalogFileItem>[
+              SharedCatalogFileItem(relativePath: 'readme.pdf', sizeBytes: 2),
+              SharedCatalogFileItem(relativePath: 'song.mp3', sizeBytes: 3),
+              SharedCatalogFileItem(relativePath: 'archive.zip', sizeBytes: 7),
+            ],
+          ),
+        ],
+      ),
+      ownerDisplayName: 'Device A',
+      ownerMacAddress: '11:22:33:44:55:66',
+    );
+
+    final directory = browser.buildExplorerDirectory(
+      filterKey: RemoteShareBrowser.allDevicesFilterKey,
+      folderPath: '',
+      viewMode: RemoteBrowseExplorerViewMode.flat,
+    );
+
+    expect(
+      directory.entries.files.map((file) => p.basename(file.virtualPath)).toList(),
+      <String>['song.mp3', 'readme.pdf', 'archive.zip'],
+    );
+  });
 }
 
 Future<void> _seedCatalogs(RemoteShareBrowser browser) async {

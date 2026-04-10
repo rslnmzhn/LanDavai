@@ -123,6 +123,8 @@ class RemoteBrowseExplorerDirectory {
   final bool isFileListCapped;
 }
 
+enum RemoteBrowseExplorerViewMode { structured, flat }
+
 enum RemoteBrowseMediaKind { image, video, other }
 
 class RemoteBrowseFileChoice {
@@ -361,10 +363,14 @@ class RemoteShareBrowser extends ChangeNotifier {
   RemoteBrowseExplorerDirectory buildExplorerDirectory({
     required String filterKey,
     required String folderPath,
+    required RemoteBrowseExplorerViewMode viewMode,
   }) {
+    if (viewMode == RemoteBrowseExplorerViewMode.flat) {
+      return _buildFlatExplorerDirectory(filterKey: filterKey);
+    }
     final ownerIp = filterKey == allDevicesFilterKey ? null : filterKey;
     if (ownerIp == null) {
-      return _buildAggregatedExplorerDirectory();
+      return _buildStructuredAggregatedExplorerDirectory(folderPath: folderPath);
     }
     return _buildOwnerExplorerDirectory(
       ownerIp: ownerIp,
@@ -623,9 +629,14 @@ class RemoteShareBrowser extends ChangeNotifier {
     return list;
   }
 
-  RemoteBrowseExplorerDirectory _buildAggregatedExplorerDirectory() {
+  RemoteBrowseExplorerDirectory _buildFlatExplorerDirectory({
+    required String filterKey,
+  }) {
     final files = <RemoteBrowseResolvedFile>[];
     for (final option in _options) {
+      if (filterKey != allDevicesFilterKey && option.ownerIp != filterKey) {
+        continue;
+      }
       for (final file in option.entry.files) {
         if (files.length >= maxVisibleFiles) {
           break;
@@ -642,12 +653,12 @@ class RemoteShareBrowser extends ChangeNotifier {
         break;
       }
     }
-    files.sort(_compareResolvedFiles);
+    files.sort(_compareFlatResolvedFiles);
     final entries = files
         .map(
           (file) => FileExplorerVirtualFile(
             path: 'remote://${file.token}',
-            virtualPath: file.displayPath,
+            virtualPath: file.relativePath,
             sourceToken: file.token,
             subtitle:
                 '${file.ownerName} • ${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}',
@@ -657,7 +668,7 @@ class RemoteShareBrowser extends ChangeNotifier {
           ),
         )
         .toList(growable: false);
-    final totalFiles = _countFiles();
+    final totalFiles = _countFiles(filterKey: filterKey);
     final hiddenFilesCount = totalFiles > files.length
         ? totalFiles - files.length
         : 0;
@@ -665,6 +676,90 @@ class RemoteShareBrowser extends ChangeNotifier {
       entries: FileExplorerVirtualDirectory(files: entries),
       totalFiles: totalFiles,
       totalFolders: 0,
+      hiddenFilesCount: hiddenFilesCount,
+      isFileListCapped: hiddenFilesCount > 0,
+    );
+  }
+
+  RemoteBrowseExplorerDirectory _buildStructuredAggregatedExplorerDirectory({
+    required String folderPath,
+  }) {
+    final normalizedFolder = _normalizeRelativePath(folderPath);
+    final folders = <String, FileExplorerVirtualFolder>{};
+    final files = <FileExplorerVirtualFile>[];
+    var visibleFiles = 0;
+    final totalFiles = _countFiles(filterKey: allDevicesFilterKey);
+
+    for (final option in _options) {
+      final deviceFolderName = _deviceFolderName(option);
+      final shareFolderName = _shareFolderName(option.entry);
+      for (final file in option.entry.files) {
+        if (visibleFiles >= maxVisibleFiles) {
+          continue;
+        }
+        final normalizedRelativePath = _normalizeRelativePath(file.relativePath);
+        final browserPath = normalizedRelativePath.isEmpty
+            ? '$deviceFolderName/$shareFolderName'
+            : '$deviceFolderName/$shareFolderName/$normalizedRelativePath';
+        final rest = _relativeRestForFolder(
+          folder: normalizedFolder,
+          targetPath: browserPath,
+        );
+        if (rest == null || rest.isEmpty) {
+          continue;
+        }
+        final slashIndex = rest.indexOf('/');
+        if (slashIndex != -1) {
+          final nextFolder = rest.substring(0, slashIndex);
+          final nextFolderPath = normalizedFolder.isEmpty
+              ? nextFolder
+              : '$normalizedFolder/$nextFolder';
+          folders.putIfAbsent(
+            nextFolderPath,
+            () => FileExplorerVirtualFolder(
+              name: nextFolder,
+              folderPath: nextFolderPath,
+            ),
+          );
+          continue;
+        }
+        final resolved = _toResolvedFile(
+          option: option,
+          file: file,
+          includeSourceInPath: false,
+        );
+        files.add(
+          FileExplorerVirtualFile(
+            path: 'remote://${resolved.token}',
+            virtualPath: browserPath,
+            sourceToken: resolved.token,
+            subtitle:
+                '${option.ownerName} • ${option.entry.displayName} • ${_formatBytes(file.sizeBytes)}',
+            sizeBytes: file.sizeBytes,
+            modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
+            changedAt: DateTime.fromMillisecondsSinceEpoch(0),
+          ),
+        );
+        visibleFiles += 1;
+      }
+    }
+
+    final sortedFolders = folders.values.toList(growable: false)
+      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    files.sort(
+      (a, b) =>
+          a.virtualPath.toLowerCase().compareTo(b.virtualPath.toLowerCase()),
+    );
+    final hiddenFilesCount = totalFiles > visibleFiles
+        ? totalFiles - visibleFiles
+        : 0;
+    return RemoteBrowseExplorerDirectory(
+      entries: FileExplorerVirtualDirectory(
+        folders: sortedFolders,
+        files: files,
+      ),
+      totalFiles: totalFiles,
+      totalFolders: sortedFolders.length,
       hiddenFilesCount: hiddenFilesCount,
       isFileListCapped: hiddenFilesCount > 0,
     );
@@ -827,12 +922,34 @@ class RemoteShareBrowser extends ChangeNotifier {
     return a.relativePath.toLowerCase().compareTo(b.relativePath.toLowerCase());
   }
 
-  int _countFiles() {
+  int _compareFlatResolvedFiles(
+    RemoteBrowseResolvedFile a,
+    RemoteBrowseResolvedFile b,
+  ) {
+    final categoryCmp = _flatCategoryRank(a).compareTo(_flatCategoryRank(b));
+    if (categoryCmp != 0) {
+      return categoryCmp;
+    }
+    final typeCmp = a.previewLabel.compareTo(b.previewLabel);
+    if (typeCmp != 0) {
+      return typeCmp;
+    }
+    return _compareResolvedFiles(a, b);
+  }
+
+  int _countFiles({required String filterKey}) {
     var total = 0;
     for (final option in _options) {
+      if (filterKey != allDevicesFilterKey && option.ownerIp != filterKey) {
+        continue;
+      }
       total += option.entry.files.length;
     }
     return total;
+  }
+
+  String _deviceFolderName(RemoteShareOption option) {
+    return '${option.ownerName} (${option.ownerIp})';
   }
 
   String _shareFolderName(SharedCatalogEntryItem entry) {
@@ -891,6 +1008,18 @@ class RemoteShareBrowser extends ChangeNotifier {
     return RemoteBrowseMediaKind.other;
   }
 
+  int _flatCategoryRank(RemoteBrowseResolvedFile file) {
+    if (file.mediaKind == RemoteBrowseMediaKind.image ||
+        file.mediaKind == RemoteBrowseMediaKind.video ||
+        _audioExtensions.contains(p.extension(file.relativePath).toLowerCase())) {
+      return 0;
+    }
+    if (_documentExtensions.contains(p.extension(file.relativePath).toLowerCase())) {
+      return 1;
+    }
+    return 2;
+  }
+
   String _previewLabelForRelativePath(String relativePath) {
     final extension = p.extension(relativePath).toLowerCase();
     if (extension.isNotEmpty) {
@@ -921,6 +1050,30 @@ class RemoteShareBrowser extends ChangeNotifier {
     final gb = mb / 1024;
     return '${gb.toStringAsFixed(2)} GB';
   }
+
+  static const Set<String> _audioExtensions = <String>{
+    '.mp3',
+    '.m4a',
+    '.aac',
+    '.flac',
+    '.wav',
+    '.ogg',
+    '.opus',
+    '.wma',
+  };
+
+  static const Set<String> _documentExtensions = <String>{
+    '.pdf',
+    '.doc',
+    '.docx',
+    '.rtf',
+    '.odt',
+    '.pages',
+    '.xls',
+    '.xlsx',
+    '.ppt',
+    '.pptx',
+  };
 }
 
 class _RemoteOwnerDraft {

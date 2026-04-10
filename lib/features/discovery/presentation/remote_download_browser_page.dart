@@ -44,13 +44,17 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   final Set<String> _selectedTokens = <String>{};
 
   String _activeFilterKey = RemoteShareBrowser.allDevicesFilterKey;
+  RemoteBrowseExplorerViewMode _viewMode =
+      RemoteBrowseExplorerViewMode.structured;
   String? _previewingToken;
   bool _isDownloading = false;
 
   RemoteShareBrowser get _browser => widget.remoteShareBrowser;
 
+  String get _activeOwnerCacheKey => '${_viewMode.name}|$_activeFilterKey';
+
   FilesFeatureStateOwner? get _activeOwner =>
-      _ownersByFilterKey[_activeFilterKey];
+      _ownersByFilterKey[_activeOwnerCacheKey];
 
   @override
   void initState() {
@@ -83,7 +87,11 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       ..._browser.currentBrowseProjection.owners.map((owner) => owner.ip),
     };
     final removableKeys = _ownersByFilterKey.keys
-        .where((key) => !validFilterKeys.contains(key))
+        .where((key) {
+          final parts = key.split('|');
+          final filterKey = parts.length < 2 ? key : parts.sublist(1).join('|');
+          return !validFilterKeys.contains(filterKey);
+        })
         .toList(growable: false);
     for (final key in removableKeys) {
       _ownersByFilterKey.remove(key)?.dispose();
@@ -102,7 +110,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   }
 
   Future<void> _ensureOwnerForFilter(String filterKey) async {
-    final existing = _ownersByFilterKey[filterKey];
+    final ownerCacheKey = '${_viewMode.name}|$filterKey';
+    final existing = _ownersByFilterKey[ownerCacheKey];
     if (existing != null) {
       return;
     }
@@ -110,23 +119,24 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       roots: <FileExplorerRoot>[
         FileExplorerRoot(
           label: _browser.rootLabelForFilter(filterKey),
-          path: 'virtual://remote/$filterKey',
+          path: 'virtual://remote/${_viewMode.name}/$filterKey',
           virtualDirectoryLoader: (folderPath) async {
             return _browser
                 .buildExplorerDirectory(
                   filterKey: filterKey,
                   folderPath: folderPath,
+                  viewMode: _viewMode,
                 )
                 .entries;
           },
         ),
       ],
     );
-    _ownersByFilterKey[filterKey] = owner;
+    _ownersByFilterKey[ownerCacheKey] = owner;
     await owner.initialize();
     if (!mounted) {
       owner.dispose();
-      _ownersByFilterKey.remove(filterKey);
+      _ownersByFilterKey.remove(ownerCacheKey);
       return;
     }
     owner.addListener(_syncSearchController);
@@ -172,6 +182,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         final directory = _browser.buildExplorerDirectory(
           filterKey: _activeFilterKey,
           folderPath: activeOwner?.normalizedVirtualCurrentFolder ?? '',
+          viewMode: _viewMode,
         );
         final state = activeOwner?.state;
         final visibleEntries =
@@ -200,10 +211,19 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                     AppSpacing.md,
                     AppSpacing.sm,
                   ),
-                  child: _DeviceFilterBar(
-                    filters: filterChoices,
-                    selectedKey: _activeFilterKey,
-                    onSelected: _handleFilterSelected,
+                  child: Column(
+                    children: [
+                      _RemoteDownloadViewModeToggle(
+                        viewMode: _viewMode,
+                        onChanged: _handleViewModeChanged,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _DeviceFilterBar(
+                        filters: filterChoices,
+                        selectedKey: _activeFilterKey,
+                        onSelected: _handleFilterSelected,
+                      ),
+                    ],
                   ),
                 ),
                 if (_browser.isLoading)
@@ -464,6 +484,21 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     _syncSearchController();
   }
 
+  Future<void> _handleViewModeChanged(RemoteBrowseExplorerViewMode nextMode) async {
+    if (_viewMode == nextMode) {
+      return;
+    }
+    setState(() {
+      _viewMode = nextMode;
+    });
+    await _ensureOwnerForFilter(_activeFilterKey);
+    if (!mounted) {
+      return;
+    }
+    _syncSearchController();
+    setState(() {});
+  }
+
   bool _isSelected(FilesFeatureEntry entry) {
     final token = entry.sourceToken;
     return token != null && _selectedTokens.contains(token);
@@ -662,6 +697,43 @@ class _DeviceFilterChoice {
 
   final String key;
   final String label;
+}
+
+class _RemoteDownloadViewModeToggle extends StatelessWidget {
+  const _RemoteDownloadViewModeToggle({
+    required this.viewMode,
+    required this.onChanged,
+  });
+
+  final RemoteBrowseExplorerViewMode viewMode;
+  final ValueChanged<RemoteBrowseExplorerViewMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: SegmentedButton<RemoteBrowseExplorerViewMode>(
+            key: const Key('remote-download-view-mode-toggle'),
+            segments: const <ButtonSegment<RemoteBrowseExplorerViewMode>>[
+              ButtonSegment<RemoteBrowseExplorerViewMode>(
+                value: RemoteBrowseExplorerViewMode.structured,
+                icon: Icon(Icons.account_tree_outlined),
+                label: Text('Со структурой'),
+              ),
+              ButtonSegment<RemoteBrowseExplorerViewMode>(
+                value: RemoteBrowseExplorerViewMode.flat,
+                icon: Icon(Icons.view_stream_rounded),
+                label: Text('Без структуры'),
+              ),
+            ],
+            selected: <RemoteBrowseExplorerViewMode>{viewMode},
+            onSelectionChanged: (selection) => onChanged(selection.first),
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _DeviceFilterBar extends StatelessWidget {

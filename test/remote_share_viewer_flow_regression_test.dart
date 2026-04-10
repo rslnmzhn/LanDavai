@@ -73,6 +73,9 @@ void main() {
     await tester.pump();
     await _pumpForUi(tester, frames: 20);
 
+    await tester.tap(find.text('Без структуры'));
+    await _pumpForUi(tester, frames: 8);
+
     expect(find.text('remote-preview.txt'), findsOneWidget);
     await tester.tap(find.text('remote-preview.txt'));
     await _pumpUntilFound(
@@ -131,6 +134,9 @@ void main() {
         ),
       );
       await _pumpForUi(tester, frames: 20);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 8);
 
       await tester.tap(
         find.descendant(
@@ -203,6 +209,9 @@ void main() {
     );
     await _pumpForUi(tester, frames: 20);
 
+    await tester.tap(find.text('Без структуры'));
+    await _pumpForUi(tester, frames: 8);
+
     expect(find.text('Скачать выбранные (1)'), findsNothing);
     expect(coordinator.downloadCalls, 0);
 
@@ -224,6 +233,51 @@ void main() {
       'cache-a': <String>{'report.txt'},
     });
   });
+
+  testWidgets(
+    'view mode toggle switches between structured and flat projections',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'nested/report.txt',
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      expect(find.text('report.txt'), findsNothing);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 12);
+
+      expect(find.text('report.txt'), findsOneWidget);
+    },
+  );
 }
 
 Future<void> _seedCatalog({
