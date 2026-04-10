@@ -256,7 +256,7 @@ void main() {
     await _pumpDiscoveryPage(tester, harness: harness);
 
     await _openMenu(tester);
-    expect(find.byType(Drawer), findsNothing);
+    expect(find.byType(Drawer), findsOneWidget);
     expect(
       find.byKey(const Key('discovery-menu-action-friends')),
       findsOneWidget,
