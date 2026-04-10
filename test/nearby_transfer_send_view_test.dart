@@ -90,6 +90,7 @@ void main() {
       expect(find.text('Выбрать файлы'), findsOneWidget);
       expect(find.text('Выбрать папку'), findsOneWidget);
       expect(lanAdapter.sendHandshakeOfferCalls, 1);
+      expect(lanAdapter.lastVerificationCode, hasLength(6));
 
       await tester.pumpWidget(const SizedBox.shrink());
       store.dispose();

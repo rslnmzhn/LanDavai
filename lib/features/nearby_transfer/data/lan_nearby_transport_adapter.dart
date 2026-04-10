@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/domain/transfer_request.dart';
@@ -25,8 +27,10 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
 
   final StreamController<NearbyTransferTransportEvent> _events =
       StreamController<NearbyTransferTransportEvent>.broadcast();
-  final Map<String, Completer<int>> _pendingSenderPorts =
-      <String, Completer<int>>{};
+  final Map<String, _PendingOutgoingOffer> _pendingOutgoingOffers =
+      <String, _PendingOutgoingOffer>{};
+  final Map<String, _PendingIncomingOffer> _pendingIncomingOffers =
+      <String, _PendingIncomingOffer>{};
   final Map<String, TransferReceiveSession> _receiveSessions =
       <String, TransferReceiveSession>{};
   Future<void> _pendingControlWrite = Future<void>.value();
@@ -106,10 +110,10 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
   }
 
   @override
-  Future<void> sendHandshakeOffer(List<String> emojiSequence) async {
+  Future<void> sendHandshakeOffer(List<String> verificationCode) async {
     await _sendControlMessage(<String, Object?>{
       'type': 'handshakeOffer',
-      'emojiSequence': emojiSequence,
+      'verificationCode': verificationCode,
     });
   }
 
@@ -120,80 +124,150 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
 
   @override
   Future<void> sendSelection(NearbyTransferSelection selection) async {
-    final socket = _activeSocket;
-    final peer = _peer;
     final sessionId = _sessionId;
-    if (socket == null || peer == null || sessionId == null) {
+    if (_activeSocket == null || _peer == null || sessionId == null) {
       throw StateError('Nearby transfer is not connected.');
     }
 
     final requestId = _fileHashService.buildStableId(
       '$sessionId-${DateTime.now().microsecondsSinceEpoch}',
     );
-    final sources = <TransferSourceFile>[];
-    final manifest = <TransferFileManifestItem>[];
+    final entries = <_PendingOutgoingOfferEntry>[];
     for (final entry in selection.entries) {
       final sha256 = await _fileHashService.computeSha256ForPath(
         entry.sourcePath,
       );
-      sources.add(
-        TransferSourceFile(
-          sourcePath: entry.sourcePath,
-          fileName: entry.relativePath,
-          sizeBytes: entry.sizeBytes,
-          sha256: sha256,
-        ),
+      final fileId = _fileHashService.buildStableId(
+        '${entry.relativePath}|${entry.sizeBytes}|$sha256',
       );
-      manifest.add(
-        TransferFileManifestItem(
-          fileName: entry.relativePath,
-          sizeBytes: entry.sizeBytes,
-          sha256: sha256,
+      final previewKind = _resolvePreviewKind(
+        entry.relativePath,
+        entry.sizeBytes,
+      );
+      entries.add(
+        _PendingOutgoingOfferEntry(
+          fileId: fileId,
+          sourceFile: TransferSourceFile(
+            sourcePath: entry.sourcePath,
+            fileName: entry.relativePath,
+            sizeBytes: entry.sizeBytes,
+            sha256: sha256,
+          ),
+          manifestItem: TransferFileManifestItem(
+            fileName: entry.relativePath,
+            sizeBytes: entry.sizeBytes,
+            sha256: sha256,
+          ),
+          previewKind: previewKind,
         ),
       );
     }
 
-    final portCompleter = Completer<int>();
-    _pendingSenderPorts[requestId] = portCompleter;
-    try {
-      await _sendControlMessage(<String, Object?>{
-        'type': 'fileOffer',
-        'sessionId': sessionId,
-        'requestId': requestId,
-        'label': selection.label,
-        'files': manifest.map((item) => item.toJson()).toList(growable: false),
-      });
-      final receiverPort = await portCompleter.future.timeout(
-        const Duration(seconds: 20),
-      );
-      final totalBytes = sources.fold<int>(
-        0,
-        (sum, file) => sum + file.sizeBytes,
-      );
-      await _fileTransferService.sendFiles(
-        host: peer.host,
-        port: receiverPort,
-        requestId: requestId,
-        files: sources,
-        onProgress: (sentBytes, totalBytesValue) {
+    _pendingOutgoingOffers[requestId] = _PendingOutgoingOffer(
+      requestId: requestId,
+      label: selection.label,
+      entries: entries,
+    );
+    await _sendControlMessage(<String, Object?>{
+      'type': 'fileOffer',
+      'sessionId': sessionId,
+      'requestId': requestId,
+      'label': selection.label,
+      'files': entries.map((entry) => entry.toJson()).toList(growable: false),
+    });
+  }
+
+  @override
+  Future<void> requestIncomingSelectionPreview({
+    required String requestId,
+    required String fileId,
+  }) async {
+    await _sendControlMessage(<String, Object?>{
+      'type': 'filePreviewRequest',
+      'requestId': requestId,
+      'fileId': fileId,
+    });
+  }
+
+  @override
+  Future<void> requestIncomingSelectionDownload({
+    required String requestId,
+    required List<String> fileIds,
+  }) async {
+    final offer = _pendingIncomingOffers[requestId];
+    if (offer == null) {
+      throw StateError('Incoming nearby offer is not available anymore.');
+    }
+
+    final normalizedFileIds = fileIds
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (normalizedFileIds.isEmpty) {
+      throw StateError('Select at least one file to download.');
+    }
+
+    final selectedEntries = offer.entriesById.values
+        .where((entry) => normalizedFileIds.contains(entry.remote.id))
+        .toList(growable: false);
+    if (selectedEntries.isEmpty) {
+      throw StateError('Requested nearby files are not available.');
+    }
+
+    final destinationDirectory = await _storageService
+        .resolveReceiveDirectory();
+    final receiveSession = await _fileTransferService.startReceiver(
+      requestId: requestId,
+      expectedItems: selectedEntries
+          .map((entry) => entry.manifest)
+          .toList(growable: false),
+      destinationDirectory: destinationDirectory,
+      destinationPathAllocator:
+          ({
+            required Directory destinationDirectory,
+            required String relativePath,
+          }) {
+            return _storageService.allocateDestinationPath(
+              destinationDirectory: destinationDirectory,
+              relativePath: relativePath,
+            );
+          },
+      onProgress: (receivedBytes, totalBytes) {
+        _events.add(
+          NearbyTransferTransferProgressEvent(
+            direction: NearbyTransferProgressDirection.receiving,
+            completedBytes: receivedBytes,
+            totalBytes: totalBytes,
+          ),
+        );
+      },
+    );
+    _receiveSessions[requestId] = receiveSession;
+    await _sendControlMessage(<String, Object?>{
+      'type': 'fileReceiverReady',
+      'requestId': requestId,
+      'port': receiveSession.port,
+      'fileIds': normalizedFileIds,
+    });
+
+    unawaited(
+      receiveSession.result.then((result) {
+        _receiveSessions.remove(requestId);
+        if (result.success) {
+          _pendingIncomingOffers.remove(requestId);
           _events.add(
-            NearbyTransferTransferProgressEvent(
-              direction: NearbyTransferProgressDirection.sending,
-              completedBytes: sentBytes,
-              totalBytes: totalBytesValue == 0 ? totalBytes : totalBytesValue,
+            NearbyTransferTransferCompletedEvent(
+              direction: NearbyTransferProgressDirection.receiving,
+              message: result.message,
+              savedPaths: result.savedPaths,
             ),
           );
-        },
-      );
-      _events.add(
-        const NearbyTransferTransferCompletedEvent(
-          direction: NearbyTransferProgressDirection.sending,
-          message: 'Файлы отправлены.',
-        ),
-      );
-    } finally {
-      _pendingSenderPorts.remove(requestId);
-    }
+        } else {
+          _events.add(NearbyTransferErrorEvent(message: result.message));
+        }
+      }),
+    );
   }
 
   @override
@@ -212,6 +286,8 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       await session.close();
     }
     _receiveSessions.clear();
+    _pendingIncomingOffers.clear();
+    _pendingOutgoingOffers.clear();
     await _server?.close();
     _server = null;
   }
@@ -285,11 +361,13 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       return;
     }
     if (type == 'handshakeOffer') {
-      final sequence = (json['emojiSequence'] as List<dynamic>?)
+      final sequence = (json['verificationCode'] as List<dynamic>?)
           ?.whereType<String>()
           .toList(growable: false);
       if (sequence != null && sequence.isNotEmpty) {
-        _events.add(NearbyTransferHandshakeOfferEvent(emojiSequence: sequence));
+        _events.add(
+          NearbyTransferHandshakeOfferEvent(verificationCode: sequence),
+        );
       }
       return;
     }
@@ -298,15 +376,19 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       return;
     }
     if (type == 'fileOffer') {
-      await _handleFileOffer(json);
+      _handleFileOffer(json);
+      return;
+    }
+    if (type == 'filePreviewRequest') {
+      await _handlePreviewRequest(json);
+      return;
+    }
+    if (type == 'filePreviewReady') {
+      _handlePreviewReady(json);
       return;
     }
     if (type == 'fileReceiverReady') {
-      final requestId = json['requestId'] as String?;
-      final port = (json['port'] as num?)?.toInt();
-      if (requestId != null && port != null) {
-        _pendingSenderPorts.remove(requestId)?.complete(port);
-      }
+      await _handleFileReceiverReady(json);
       return;
     }
     if (type == 'reject') {
@@ -396,75 +478,167 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     );
   }
 
-  Future<void> _handleFileOffer(Map<String, dynamic> json) async {
-    final socket = _activeSocket;
+  void _handleFileOffer(Map<String, dynamic> json) {
     final sessionId = json['sessionId'] as String?;
     final requestId = json['requestId'] as String?;
+    final label = json['label'] as String?;
     final rawFiles = json['files'];
-    if (socket == null ||
+    if (_activeSocket == null ||
         _sessionId == null ||
         sessionId != _sessionId ||
         requestId == null ||
+        label == null ||
         rawFiles is! List<dynamic>) {
       return;
     }
 
-    final items = rawFiles
+    final offerEntries = rawFiles
         .whereType<Map<String, dynamic>>()
-        .map(TransferFileManifestItem.fromJson)
+        .map(_IncomingOfferEntry.fromJson)
         .toList(growable: false);
-    if (items.isEmpty) {
+    if (offerEntries.isEmpty) {
       return;
     }
 
-    final destinationDirectory = await _storageService
-        .resolveReceiveDirectory();
-    final receiveSession = await _fileTransferService.startReceiver(
+    _pendingIncomingOffers[requestId] = _PendingIncomingOffer(
       requestId: requestId,
-      expectedItems: items,
-      destinationDirectory: destinationDirectory,
-      destinationPathAllocator:
-          ({
-            required Directory destinationDirectory,
-            required String relativePath,
-          }) {
-            return _storageService.allocateDestinationPath(
-              destinationDirectory: destinationDirectory,
-              relativePath: relativePath,
-            );
-          },
-      onProgress: (receivedBytes, totalBytes) {
+      label: label,
+      entriesById: <String, _IncomingOfferEntry>{
+        for (final entry in offerEntries) entry.remote.id: entry,
+      },
+    );
+    _events.add(
+      NearbyTransferIncomingSelectionOfferedEvent(
+        requestId: requestId,
+        label: label,
+        files: offerEntries
+            .map((entry) => entry.remote)
+            .toList(growable: false),
+      ),
+    );
+  }
+
+  Future<void> _handlePreviewRequest(Map<String, dynamic> json) async {
+    final requestId = json['requestId'] as String?;
+    final fileId = json['fileId'] as String?;
+    if (requestId == null || fileId == null) {
+      return;
+    }
+
+    final offer = _pendingOutgoingOffers[requestId];
+    final entry = offer?.entryById(fileId);
+    if (entry == null) {
+      return;
+    }
+
+    final payload = await _buildPreviewPayload(
+      requestId: requestId,
+      entry: entry,
+    );
+    if (payload == null) {
+      return;
+    }
+    await _sendControlMessage(payload);
+  }
+
+  void _handlePreviewReady(Map<String, dynamic> json) {
+    final requestId = json['requestId'] as String?;
+    final fileId = json['fileId'] as String?;
+    final previewKindName = json['previewKind'] as String?;
+    if (requestId == null || fileId == null || previewKindName == null) {
+      return;
+    }
+    final previewKind = NearbyTransferRemotePreviewKind.values.firstWhere(
+      (value) => value.name == previewKindName,
+      orElse: () => NearbyTransferRemotePreviewKind.none,
+    );
+    if (previewKind == NearbyTransferRemotePreviewKind.text) {
+      final text = json['text'] as String?;
+      if (text == null) {
+        return;
+      }
+      _events.add(
+        NearbyTransferRemotePreviewReadyEvent(
+          preview: NearbyTransferRemoteFilePreview.text(
+            requestId: requestId,
+            fileId: fileId,
+            textContent: text,
+            isTruncated: json['isTruncated'] as bool? ?? false,
+          ),
+        ),
+      );
+      return;
+    }
+    if (previewKind == NearbyTransferRemotePreviewKind.image) {
+      final encodedBytes = json['bytesBase64'] as String?;
+      if (encodedBytes == null) {
+        return;
+      }
+      _events.add(
+        NearbyTransferRemotePreviewReadyEvent(
+          preview: NearbyTransferRemoteFilePreview.image(
+            requestId: requestId,
+            fileId: fileId,
+            imageBytes: base64Decode(encodedBytes),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleFileReceiverReady(Map<String, dynamic> json) async {
+    final requestId = json['requestId'] as String?;
+    final port = (json['port'] as num?)?.toInt();
+    final rawFileIds = json['fileIds'] as List<dynamic>?;
+    final peer = _peer;
+    if (requestId == null ||
+        port == null ||
+        rawFileIds == null ||
+        peer == null) {
+      return;
+    }
+    final selectedIds = rawFileIds.whereType<String>().toSet();
+    if (selectedIds.isEmpty) {
+      return;
+    }
+    final offer = _pendingOutgoingOffers.remove(requestId);
+    if (offer == null) {
+      return;
+    }
+
+    final selectedEntries = offer.entries
+        .where((entry) => selectedIds.contains(entry.fileId))
+        .toList(growable: false);
+    if (selectedEntries.isEmpty) {
+      return;
+    }
+
+    final totalBytes = selectedEntries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sourceFile.sizeBytes,
+    );
+    await _fileTransferService.sendFiles(
+      host: peer.host,
+      port: port,
+      requestId: requestId,
+      files: selectedEntries
+          .map((entry) => entry.sourceFile)
+          .toList(growable: false),
+      onProgress: (sentBytes, totalBytesValue) {
         _events.add(
           NearbyTransferTransferProgressEvent(
-            direction: NearbyTransferProgressDirection.receiving,
-            completedBytes: receivedBytes,
-            totalBytes: totalBytes,
+            direction: NearbyTransferProgressDirection.sending,
+            completedBytes: sentBytes,
+            totalBytes: totalBytesValue == 0 ? totalBytes : totalBytesValue,
           ),
         );
       },
     );
-    _receiveSessions[requestId] = receiveSession;
-    await _sendControlMessage(<String, Object?>{
-      'type': 'fileReceiverReady',
-      'requestId': requestId,
-      'port': receiveSession.port,
-    });
-
-    unawaited(
-      receiveSession.result.then((result) {
-        _receiveSessions.remove(requestId);
-        if (result.success) {
-          _events.add(
-            NearbyTransferTransferCompletedEvent(
-              direction: NearbyTransferProgressDirection.receiving,
-              message: result.message,
-              savedPaths: result.savedPaths,
-            ),
-          );
-        } else {
-          _events.add(NearbyTransferErrorEvent(message: result.message));
-        }
-      }),
+    _events.add(
+      NearbyTransferTransferCompletedEvent(
+        direction: NearbyTransferProgressDirection.sending,
+        message: '${offer.label}: отправка завершена.',
+      ),
     );
   }
 
@@ -516,6 +690,168 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     socket.destroy();
     _events.add(
       const NearbyTransferDisconnectedEvent(message: 'Соединение закрыто.'),
+    );
+  }
+
+  NearbyTransferRemotePreviewKind _resolvePreviewKind(
+    String relativePath,
+    int sizeBytes,
+  ) {
+    final extension = p.extension(relativePath).toLowerCase();
+    if (_previewableTextExtensions.contains(extension)) {
+      return NearbyTransferRemotePreviewKind.text;
+    }
+    if (_previewableImageExtensions.contains(extension) &&
+        sizeBytes <= _maxInlineImagePreviewBytes) {
+      return NearbyTransferRemotePreviewKind.image;
+    }
+    return NearbyTransferRemotePreviewKind.none;
+  }
+
+  Future<Map<String, Object?>?> _buildPreviewPayload({
+    required String requestId,
+    required _PendingOutgoingOfferEntry entry,
+  }) async {
+    final file = File(entry.sourceFile.sourcePath);
+    if (!await file.exists()) {
+      return null;
+    }
+
+    switch (entry.previewKind) {
+      case NearbyTransferRemotePreviewKind.none:
+        return null;
+      case NearbyTransferRemotePreviewKind.text:
+        final bytes = await file.readAsBytes();
+        final truncated = bytes.length > _maxInlineTextPreviewBytes;
+        final previewBytes = truncated
+            ? bytes.sublist(0, _maxInlineTextPreviewBytes)
+            : bytes;
+        return <String, Object?>{
+          'type': 'filePreviewReady',
+          'requestId': requestId,
+          'fileId': entry.fileId,
+          'previewKind': NearbyTransferRemotePreviewKind.text.name,
+          'text': utf8.decode(previewBytes, allowMalformed: true),
+          'isTruncated': truncated,
+        };
+      case NearbyTransferRemotePreviewKind.image:
+        final bytes = await file.readAsBytes();
+        if (bytes.length > _maxInlineImagePreviewBytes) {
+          return null;
+        }
+        return <String, Object?>{
+          'type': 'filePreviewReady',
+          'requestId': requestId,
+          'fileId': entry.fileId,
+          'previewKind': NearbyTransferRemotePreviewKind.image.name,
+          'bytesBase64': base64Encode(bytes),
+        };
+    }
+  }
+}
+
+const Set<String> _previewableTextExtensions = <String>{
+  '.txt',
+  '.md',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.csv',
+  '.log',
+};
+
+const Set<String> _previewableImageExtensions = <String>{
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.bmp',
+};
+
+const int _maxInlineTextPreviewBytes = 64 * 1024;
+const int _maxInlineImagePreviewBytes = 2 * 1024 * 1024;
+
+class _PendingOutgoingOffer {
+  const _PendingOutgoingOffer({
+    required this.requestId,
+    required this.label,
+    required this.entries,
+  });
+
+  final String requestId;
+  final String label;
+  final List<_PendingOutgoingOfferEntry> entries;
+
+  _PendingOutgoingOfferEntry? entryById(String fileId) {
+    for (final entry in entries) {
+      if (entry.fileId == fileId) {
+        return entry;
+      }
+    }
+    return null;
+  }
+}
+
+class _PendingOutgoingOfferEntry {
+  const _PendingOutgoingOfferEntry({
+    required this.fileId,
+    required this.sourceFile,
+    required this.manifestItem,
+    required this.previewKind,
+  });
+
+  final String fileId;
+  final TransferSourceFile sourceFile;
+  final TransferFileManifestItem manifestItem;
+  final NearbyTransferRemotePreviewKind previewKind;
+
+  Map<String, Object?> toJson() {
+    return <String, Object?>{
+      'id': fileId,
+      'fileName': manifestItem.fileName,
+      'sizeBytes': manifestItem.sizeBytes,
+      'sha256': manifestItem.sha256,
+      'previewKind': previewKind.name,
+    };
+  }
+}
+
+class _PendingIncomingOffer {
+  const _PendingIncomingOffer({
+    required this.requestId,
+    required this.label,
+    required this.entriesById,
+  });
+
+  final String requestId;
+  final String label;
+  final Map<String, _IncomingOfferEntry> entriesById;
+}
+
+class _IncomingOfferEntry {
+  const _IncomingOfferEntry({required this.remote, required this.manifest});
+
+  final NearbyTransferRemoteFileDescriptor remote;
+  final TransferFileManifestItem manifest;
+
+  static _IncomingOfferEntry fromJson(Map<String, dynamic> json) {
+    final previewKind = NearbyTransferRemotePreviewKind.values.firstWhere(
+      (value) => value.name == (json['previewKind'] as String?),
+      orElse: () => NearbyTransferRemotePreviewKind.none,
+    );
+    return _IncomingOfferEntry(
+      remote: NearbyTransferRemoteFileDescriptor(
+        id: json['id'] as String,
+        relativePath: json['fileName'] as String,
+        sizeBytes: (json['sizeBytes'] as num).toInt(),
+        previewKind: previewKind,
+      ),
+      manifest: TransferFileManifestItem(
+        fileName: json['fileName'] as String,
+        sizeBytes: (json['sizeBytes'] as num).toInt(),
+        sha256: json['sha256'] as String,
+      ),
     );
   }
 }

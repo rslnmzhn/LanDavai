@@ -20,7 +20,11 @@ void main() {
     final frameSize = tester.getSize(
       find.byKey(const Key('nearby-transfer-scanner-frame')),
     );
+    final stageSize = tester.getSize(
+      find.byKey(const Key('nearby-transfer-scanner-stage')),
+    );
 
+    expect(stageSize.width, closeTo(stageSize.height, 0.01));
     expect(frameSize.width, closeTo(frameSize.height, 0.01));
   });
 

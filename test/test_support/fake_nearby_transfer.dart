@@ -35,12 +35,18 @@ class FakeNearbyTransferTransportAdapter
   int sendHandshakeOfferCalls = 0;
   int sendHandshakeAcceptedCalls = 0;
   int sendSelectionCalls = 0;
+  int requestIncomingSelectionPreviewCalls = 0;
+  int requestIncomingSelectionDownloadCalls = 0;
   int disconnectCalls = 0;
   String? lastConnectHost;
   int? lastConnectPort;
   String? lastExpectedSessionId;
-  List<String>? lastHandshakeOffer;
+  List<String>? lastVerificationCode;
   NearbyTransferSelection? lastSelection;
+  String? lastPreviewRequestId;
+  String? lastPreviewFileId;
+  String? lastDownloadRequestId;
+  List<String>? lastDownloadFileIds;
   String? lastHostedSessionId;
 
   @override
@@ -85,9 +91,9 @@ class FakeNearbyTransferTransportAdapter
   }
 
   @override
-  Future<void> sendHandshakeOffer(List<String> emojiSequence) async {
+  Future<void> sendHandshakeOffer(List<String> verificationCode) async {
     sendHandshakeOfferCalls += 1;
-    lastHandshakeOffer = List<String>.unmodifiable(emojiSequence);
+    lastVerificationCode = List<String>.unmodifiable(verificationCode);
   }
 
   @override
@@ -99,6 +105,26 @@ class FakeNearbyTransferTransportAdapter
   Future<void> sendSelection(NearbyTransferSelection selection) async {
     sendSelectionCalls += 1;
     lastSelection = selection;
+  }
+
+  @override
+  Future<void> requestIncomingSelectionPreview({
+    required String requestId,
+    required String fileId,
+  }) async {
+    requestIncomingSelectionPreviewCalls += 1;
+    lastPreviewRequestId = requestId;
+    lastPreviewFileId = fileId;
+  }
+
+  @override
+  Future<void> requestIncomingSelectionDownload({
+    required String requestId,
+    required List<String> fileIds,
+  }) async {
+    requestIncomingSelectionDownloadCalls += 1;
+    lastDownloadRequestId = requestId;
+    lastDownloadFileIds = List<String>.unmodifiable(fileIds);
   }
 
   @override

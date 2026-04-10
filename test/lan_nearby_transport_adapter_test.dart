@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/nearby_transfer/data/lan_nearby_transport_adapter.dart';
@@ -23,14 +24,14 @@ void main() {
       final sendCompleted = Completer<void>();
       final receivedOffer = Completer<List<String>>();
       Object? sendError;
-      const emojiSequence = <String>['🔥', '🌊', '🛰️', '🪵', '🎯'];
+      const verificationCode = <String>['1', '2', '3', '4', '5', '6'];
 
       final senderSubscription = sender.events.listen((event) {
         if (event is NearbyTransferConnectedEvent &&
             !sendCompleted.isCompleted) {
           unawaited(
             sender
-                .sendHandshakeOffer(emojiSequence)
+                .sendHandshakeOffer(verificationCode)
                 .then((_) {
                   if (!sendCompleted.isCompleted) {
                     sendCompleted.complete();
@@ -48,7 +49,7 @@ void main() {
       final receiverSubscription = receiver.events.listen((event) {
         if (event is NearbyTransferHandshakeOfferEvent &&
             !receivedOffer.isCompleted) {
-          receivedOffer.complete(event.emojiSequence);
+          receivedOffer.complete(event.verificationCode);
         }
       });
       addTearDown(senderSubscription.cancel);
@@ -69,7 +70,7 @@ void main() {
 
       expect(
         await receivedOffer.future.timeout(const Duration(seconds: 5)),
-        emojiSequence,
+        verificationCode,
       );
       await sendCompleted.future.timeout(const Duration(seconds: 5));
       expect(sendError, isNull);
@@ -86,7 +87,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-1',
-        emojiSequence: const <String>['😀', '🚀', '🌿', '🎧', '📦'],
+        verificationCode: const <String>['1', '3', '5', '7', '8', '9'],
       );
 
       await sender.disconnect();
@@ -95,8 +96,181 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-2',
-        emojiSequence: const <String>['🍀', '🛰️', '🎲', '🛟', '🧭'],
+        verificationCode: const <String>['0', '2', '4', '6', '8', '9'],
       );
+    },
+  );
+
+  test(
+    'receiver gets incoming listing first and sender transfers only explicitly requested files',
+    () async {
+      final receiveRoot = await Directory.systemTemp.createTemp(
+        'landa_nearby_receive_root_',
+      );
+      final sender = _buildAdapter();
+      final receiver = _buildAdapter(receiveRoot: receiveRoot);
+      addTearDown(() async {
+        sender.dispose();
+        receiver.dispose();
+        if (await receiveRoot.exists()) {
+          await receiveRoot.delete(recursive: true);
+        }
+      });
+
+      final tempDir = await Directory.systemTemp.createTemp(
+        'landa_nearby_offer_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final firstFile = File('${tempDir.path}/photo.png');
+      final secondFile = File('${tempDir.path}/notes.txt');
+      await firstFile.writeAsBytes(
+        Uint8List.fromList(List<int>.filled(16, 42)),
+      );
+      await secondFile.writeAsString('hello nearby transfer');
+
+      final offered = Completer<NearbyTransferIncomingSelectionOfferedEvent>();
+      final completed = Completer<NearbyTransferTransferCompletedEvent>();
+      final receiverSubscription = receiver.events.listen((event) {
+        if (event is NearbyTransferIncomingSelectionOfferedEvent &&
+            !offered.isCompleted) {
+          offered.complete(event);
+        }
+        if (event is NearbyTransferTransferCompletedEvent &&
+            event.direction == NearbyTransferProgressDirection.receiving &&
+            !completed.isCompleted) {
+          completed.complete(event);
+        }
+      });
+      addTearDown(receiverSubscription.cancel);
+
+      final hosting = await sender.startHostingSession(
+        sessionId: 'session-selective',
+        localDeviceId: 'sender-device',
+        localDeviceName: 'Sender',
+      );
+      await receiver.connectToSession(
+        host: InternetAddress.loopbackIPv4.address,
+        port: hosting.port,
+        localDeviceId: 'receiver-device',
+        localDeviceName: 'Receiver',
+        expectedSessionId: 'session-selective',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await sender.sendSelection(
+        NearbyTransferSelection(
+          label: 'Offer',
+          entries: <NearbyTransferPickedEntry>[
+            NearbyTransferPickedEntry(
+              sourcePath: firstFile.path,
+              relativePath: 'photo.png',
+              sizeBytes: await firstFile.length(),
+            ),
+            NearbyTransferPickedEntry(
+              sourcePath: secondFile.path,
+              relativePath: 'notes.txt',
+              sizeBytes: await secondFile.length(),
+            ),
+          ],
+        ),
+      );
+
+      final offer = await offered.future.timeout(const Duration(seconds: 5));
+      expect(offer.files, hasLength(2));
+
+      final requestedFile = offer.files.singleWhere(
+        (file) => file.relativePath == 'notes.txt',
+      );
+      await receiver.requestIncomingSelectionDownload(
+        requestId: offer.requestId,
+        fileIds: <String>[requestedFile.id],
+      );
+
+      final result = await completed.future.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(result.savedPaths, hasLength(1));
+      expect(result.savedPaths.single, endsWith('notes.txt'));
+    },
+  );
+
+  test(
+    'receiver can request text preview before download without starting transfer',
+    () async {
+      final sender = _buildAdapter();
+      final receiver = _buildAdapter();
+      addTearDown(() async {
+        sender.dispose();
+        receiver.dispose();
+      });
+
+      final tempDir = await Directory.systemTemp.createTemp(
+        'landa_nearby_preview_test_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) {
+          await tempDir.delete(recursive: true);
+        }
+      });
+
+      final textFile = File('${tempDir.path}/notes.txt');
+      await textFile.writeAsString('preview body');
+
+      final offered = Completer<NearbyTransferIncomingSelectionOfferedEvent>();
+      final previewReady = Completer<NearbyTransferRemotePreviewReadyEvent>();
+      final receiverSubscription = receiver.events.listen((event) {
+        if (event is NearbyTransferIncomingSelectionOfferedEvent &&
+            !offered.isCompleted) {
+          offered.complete(event);
+        }
+        if (event is NearbyTransferRemotePreviewReadyEvent &&
+            !previewReady.isCompleted) {
+          previewReady.complete(event);
+        }
+      });
+      addTearDown(receiverSubscription.cancel);
+
+      final hosting = await sender.startHostingSession(
+        sessionId: 'session-preview',
+        localDeviceId: 'sender-device',
+        localDeviceName: 'Sender',
+      );
+      await receiver.connectToSession(
+        host: InternetAddress.loopbackIPv4.address,
+        port: hosting.port,
+        localDeviceId: 'receiver-device',
+        localDeviceName: 'Receiver',
+        expectedSessionId: 'session-preview',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await sender.sendSelection(
+        NearbyTransferSelection(
+          label: 'Preview offer',
+          entries: <NearbyTransferPickedEntry>[
+            NearbyTransferPickedEntry(
+              sourcePath: textFile.path,
+              relativePath: 'notes.txt',
+              sizeBytes: await textFile.length(),
+            ),
+          ],
+        ),
+      );
+
+      final offer = await offered.future.timeout(const Duration(seconds: 5));
+      await receiver.requestIncomingSelectionPreview(
+        requestId: offer.requestId,
+        fileId: offer.files.single.id,
+      );
+
+      final preview = await previewReady.future.timeout(
+        const Duration(seconds: 5),
+      );
+      expect(preview.preview.kind, NearbyTransferRemotePreviewKind.text);
+      expect(preview.preview.textContent, 'preview body');
     },
   );
 }
@@ -105,7 +279,7 @@ Future<void> _expectHandshakeRound({
   required LanNearbyTransportAdapter sender,
   required LanNearbyTransportAdapter receiver,
   required String sessionId,
-  required List<String> emojiSequence,
+  required List<String> verificationCode,
 }) async {
   addTearDown(receiver.dispose);
 
@@ -117,7 +291,7 @@ Future<void> _expectHandshakeRound({
     if (event is NearbyTransferConnectedEvent && !sendCompleted.isCompleted) {
       unawaited(
         sender
-            .sendHandshakeOffer(emojiSequence)
+            .sendHandshakeOffer(verificationCode)
             .then((_) {
               if (!sendCompleted.isCompleted) {
                 sendCompleted.complete();
@@ -135,7 +309,7 @@ Future<void> _expectHandshakeRound({
   final receiverSubscription = receiver.events.listen((event) {
     if (event is NearbyTransferHandshakeOfferEvent &&
         !receivedOffer.isCompleted) {
-      receivedOffer.complete(event.emojiSequence);
+      receivedOffer.complete(event.verificationCode);
     }
   });
   addTearDown(senderSubscription.cancel);
@@ -156,7 +330,7 @@ Future<void> _expectHandshakeRound({
 
   expect(
     await receivedOffer.future.timeout(const Duration(seconds: 5)),
-    emojiSequence,
+    verificationCode,
   );
   await sendCompleted.future.timeout(const Duration(seconds: 5));
   expect(sendError, isNull);
@@ -164,13 +338,30 @@ Future<void> _expectHandshakeRound({
   await receiver.disconnect();
 }
 
-LanNearbyTransportAdapter _buildAdapter() {
+LanNearbyTransportAdapter _buildAdapter({Directory? receiveRoot}) {
   return LanNearbyTransportAdapter(
     fileHashService: FileHashService(),
     fileTransferService: FileTransferService(),
     storageService: NearbyTransferStorageService(
-      transferStorageService: TransferStorageService(),
+      transferStorageService: receiveRoot == null
+          ? TransferStorageService()
+          : _TestTransferStorageService(receiveRoot),
     ),
     preferredPort: 0,
   );
+}
+
+class _TestTransferStorageService extends TransferStorageService {
+  _TestTransferStorageService(this.receiveRoot);
+
+  final Directory receiveRoot;
+
+  @override
+  Future<Directory> resolveReceiveDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final target = Directory('${receiveRoot.path}/$appFolderName');
+    await target.create(recursive: true);
+    return target;
+  }
 }

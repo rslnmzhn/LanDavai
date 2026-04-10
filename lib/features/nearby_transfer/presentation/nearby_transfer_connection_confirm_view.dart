@@ -17,13 +17,15 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Попросите второе устройство подтвердить этот набор эмодзи:',
+            'Попросите второе устройство подтвердить этот код:',
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: AppSpacing.sm),
           Text(
-            store.emojiSequence.join(' '),
-            style: Theme.of(context).textTheme.headlineSmall,
+            _formatVerificationCode(store.verificationCode),
+            style: Theme.of(
+              context,
+            ).textTheme.headlineSmall?.copyWith(fontFamily: 'JetBrainsMono'),
           ),
         ],
       );
@@ -37,7 +39,7 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Выберите совпадающий набор эмодзи',
+          'Выберите совпадающий цифровой код',
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -46,7 +48,12 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: () => store.selectHandshakeChoice(choice),
-              child: Text(choice.join(' ')),
+              child: Text(
+                _formatVerificationCode(choice),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontFamily: 'JetBrainsMono'),
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -54,4 +61,13 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
       ],
     );
   }
+}
+
+String _formatVerificationCode(List<String> digits) {
+  final joined = digits.join();
+  if (joined.length <= 3) {
+    return joined;
+  }
+  final midpoint = joined.length ~/ 2;
+  return '${joined.substring(0, midpoint)} ${joined.substring(midpoint)}';
 }
