@@ -27,7 +27,7 @@ class NearbyTransferScannerView extends StatefulWidget {
 
 class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
     with TickerProviderStateMixin {
-  static const double _viewportHeight = 260;
+  static const double _maxViewportSize = 320;
   static const double _frameInset = AppSpacing.lg;
   static const double _minFrameSize = 180;
   static const double _maxFrameSize = 224;
@@ -79,41 +79,59 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(AppRadius.lg),
-      child: SizedBox(
-        key: const Key('nearby-transfer-scanner-stage'),
-        height: _viewportHeight,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final scanWindow = _buildScanWindow(constraints.biggest);
-            return Stack(
-              fit: StackFit.expand,
-              children: [
-                _buildPreview(scanWindow),
-                IgnorePointer(
-                  child: NearbyTransferScannerOverlay(
-                    scanWindow: scanWindow,
-                    scanLineAnimation: _scanLineController,
-                    feedbackAnimation: _feedbackController,
-                    detectionActive: _showDetectionFeedback,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportSize = _resolveViewportSize(constraints.biggest);
+        return Center(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: SizedBox.square(
+              key: const Key('nearby-transfer-scanner-stage'),
+              dimension: viewportSize,
+              child: LayoutBuilder(
+                builder: (context, squareConstraints) {
+                  final scanWindow = _buildScanWindow(
+                    squareConstraints.biggest,
+                  );
+                  return Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _buildPreview(scanWindow),
+                      IgnorePointer(
+                        child: NearbyTransferScannerOverlay(
+                          scanWindow: scanWindow,
+                          scanLineAnimation: _scanLineController,
+                          feedbackAnimation: _feedbackController,
+                          detectionActive: _showDetectionFeedback,
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
     );
+  }
+
+  double _resolveViewportSize(Size availableSize) {
+    final bounded = math.min(availableSize.shortestSide, _maxViewportSize);
+    return math.max(_minFrameSize + (_frameInset * 2), bounded);
   }
 
   Widget _buildPreview(Rect scanWindow) {
     final builder = widget.previewBuilder;
     if (builder != null) {
-      return builder(_handleDetectedPayload);
+      return ColoredBox(
+        color: Colors.black,
+        child: builder(_handleDetectedPayload),
+      );
     }
     return MobileScanner(
       scanWindow: scanWindow,
+      fit: BoxFit.cover,
       overlayBuilder: (context, _) => const SizedBox.shrink(),
       onDetect: (capture) {
         final value = capture.barcodes
