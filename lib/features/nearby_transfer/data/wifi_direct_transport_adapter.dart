@@ -51,6 +51,22 @@ class WifiDirectTransportAdapter implements NearbyTransferTransportAdapter {
   }
 
   @override
+  Future<void> requestIncomingSelectionPreview({
+    required String requestId,
+    required String fileId,
+  }) async {
+    throw UnsupportedError('Wi-Fi Direct transport is not available in v1.');
+  }
+
+  @override
+  Future<void> requestIncomingSelectionDownload({
+    required String requestId,
+    required List<String> fileIds,
+  }) async {
+    throw UnsupportedError('Wi-Fi Direct transport is not available in v1.');
+  }
+
+  @override
   Future<void> disconnect() async {}
 
   @override

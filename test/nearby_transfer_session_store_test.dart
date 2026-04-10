@@ -179,6 +179,129 @@ void main() {
   });
 
   test(
+    'incoming nearby offer stays in listing state until receiver explicitly downloads selected files',
+    () async {
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(
+        const NearbyTransferIncomingSelectionOfferedEvent(
+          requestId: 'offer-1',
+          label: 'Фото и заметки',
+          files: <NearbyTransferRemoteFileDescriptor>[
+            NearbyTransferRemoteFileDescriptor(
+              id: 'image-1',
+              relativePath: 'photo.png',
+              sizeBytes: 2048,
+              previewKind: NearbyTransferRemotePreviewKind.image,
+            ),
+            NearbyTransferRemoteFileDescriptor(
+              id: 'text-1',
+              relativePath: 'notes.txt',
+              sizeBytes: 128,
+              previewKind: NearbyTransferRemotePreviewKind.text,
+            ),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasIncomingOffer, isTrue);
+      expect(store.incomingFiles, hasLength(2));
+      expect(lanAdapter.requestIncomingSelectionDownloadCalls, 0);
+
+      store.toggleIncomingFileSelection('image-1', false);
+      await store.downloadSelectedIncomingFiles();
+
+      expect(lanAdapter.requestIncomingSelectionDownloadCalls, 1);
+      expect(lanAdapter.lastDownloadRequestId, 'offer-1');
+      expect(lanAdapter.lastDownloadFileIds, <String>['text-1']);
+    },
+  );
+
+  test(
+    'incoming preview resolves through session store without starting download',
+    () async {
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(
+        const NearbyTransferIncomingSelectionOfferedEvent(
+          requestId: 'offer-1',
+          label: 'Текст',
+          files: <NearbyTransferRemoteFileDescriptor>[
+            NearbyTransferRemoteFileDescriptor(
+              id: 'text-1',
+              relativePath: 'notes.txt',
+              sizeBytes: 128,
+              previewKind: NearbyTransferRemotePreviewKind.text,
+            ),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      final previewFuture = store.loadIncomingPreview(
+        store.incomingFiles.single,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(lanAdapter.requestIncomingSelectionPreviewCalls, 1);
+      expect(lanAdapter.lastPreviewRequestId, 'offer-1');
+      expect(lanAdapter.lastPreviewFileId, 'text-1');
+      expect(lanAdapter.requestIncomingSelectionDownloadCalls, 0);
+
+      lanAdapter.emit(
+        const NearbyTransferRemotePreviewReadyEvent(
+          preview: NearbyTransferRemoteFilePreview.text(
+            requestId: 'offer-1',
+            fileId: 'text-1',
+            textContent: 'hello preview',
+            isTruncated: false,
+          ),
+        ),
+      );
+      final preview = await previewFuture;
+
+      expect(preview, isNotNull);
+      expect(preview!.textContent, 'hello preview');
+      expect(store.activeIncomingPreview?.textContent, 'hello preview');
+      expect(lanAdapter.requestIncomingSelectionDownloadCalls, 0);
+    },
+  );
+
+  test(
     'send flow advertises nearby availability only while the sheet session is active',
     () async {
       final availabilityStore = NearbyTransferAvailabilityStore();

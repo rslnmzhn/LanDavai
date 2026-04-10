@@ -19,7 +19,7 @@ void main() {
   });
 
   testWidgets(
-    'receive view shows scanner fallback banner, horizontal device list, and emoji confirmation choices',
+    'receive view shows incoming file list and explicit download action after handshake',
     (tester) async {
       harness.controller.setTestDevices(<DiscoveredDevice>[
         DiscoveredDevice(
@@ -98,6 +98,36 @@ void main() {
 
       expect(find.text('Выберите совпадающий набор эмодзи'), findsOneWidget);
       expect(find.byType(OutlinedButton), findsAtLeastNWidgets(3));
+
+      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
+      await _pumpForUi(tester);
+      lanAdapter.emit(
+        const NearbyTransferIncomingSelectionOfferedEvent(
+          requestId: 'offer-1',
+          label: 'Пакет файлов',
+          files: <NearbyTransferRemoteFileDescriptor>[
+            NearbyTransferRemoteFileDescriptor(
+              id: 'image-1',
+              relativePath: 'photo.png',
+              sizeBytes: 2048,
+              previewKind: NearbyTransferRemotePreviewKind.image,
+            ),
+            NearbyTransferRemoteFileDescriptor(
+              id: 'doc-1',
+              relativePath: 'report.pdf',
+              sizeBytes: 4096,
+              previewKind: NearbyTransferRemotePreviewKind.none,
+            ),
+          ],
+        ),
+      );
+      await _pumpForUi(tester);
+
+      expect(find.text('Пакет файлов'), findsOneWidget);
+      expect(find.text('photo.png'), findsOneWidget);
+      expect(find.text('report.pdf'), findsOneWidget);
+      expect(find.text('Скачать выбранные'), findsOneWidget);
+      expect(find.text('Preview'), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox.shrink());
       store.dispose();

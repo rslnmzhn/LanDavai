@@ -6,6 +6,7 @@ import '../data/nearby_transfer_transport_adapter.dart';
 import 'nearby_transfer_connection_confirm_view.dart';
 import 'nearby_transfer_device_list_widget.dart';
 import 'nearby_transfer_mode_banner.dart';
+import 'nearby_transfer_receive_offer_section.dart';
 import 'nearby_transfer_scanner_view.dart';
 
 class NearbyTransferReceiveView extends StatelessWidget {
@@ -42,7 +43,7 @@ class NearbyTransferReceiveView extends StatelessWidget {
             NearbyTransferConnectionConfirmView(store: store)
           else if (store.phase == NearbyTransferSessionPhase.connected ||
               store.phase == NearbyTransferSessionPhase.transferring)
-            _ConnectedReceiveState(store: store)
+            NearbyTransferReceiveOfferSection(store: store)
           else
             Text(
               'Отсканируйте QR или выберите устройство из списка ниже.',
@@ -66,31 +67,6 @@ class NearbyTransferReceiveView extends StatelessWidget {
           ],
         ],
       ),
-    );
-  }
-}
-
-class _ConnectedReceiveState extends StatelessWidget {
-  const _ConnectedReceiveState({required this.store});
-
-  final NearbyTransferSessionStore store;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          store.phase == NearbyTransferSessionPhase.transferring
-              ? 'Получение файлов...'
-              : 'Соединение установлено. Ожидаем файлы от подключённого устройства.',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        if (store.transferProgress != null) ...[
-          const SizedBox(height: AppSpacing.sm),
-          LinearProgressIndicator(value: store.transferProgress),
-        ],
-      ],
     );
   }
 }

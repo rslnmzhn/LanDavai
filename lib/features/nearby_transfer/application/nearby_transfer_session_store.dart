@@ -85,6 +85,13 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   int _transferCompletedBytes = 0;
   int _transferTotalBytes = 0;
   bool _hasCompletedOutgoingTransfer = false;
+  NearbyTransferIncomingSelectionOfferedEvent? _incomingOffer;
+  Set<String> _selectedIncomingFileIds = <String>{};
+  String? _previewingFileId;
+  NearbyTransferRemoteFilePreview? _activeIncomingPreview;
+  final Map<String, Completer<NearbyTransferRemoteFilePreview?>>
+  _pendingPreviewRequests =
+      <String, Completer<NearbyTransferRemoteFilePreview?>>{};
   bool _disposed = false;
 
   NearbyTransferMode? get mode => _mode;
@@ -130,6 +137,29 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool get shouldShowSendMore =>
       _role == NearbyTransferRole.send && _hasCompletedOutgoingTransfer;
+
+  NearbyTransferIncomingSelectionOfferedEvent? get incomingOffer =>
+      _incomingOffer;
+
+  List<NearbyTransferRemoteFileDescriptor> get incomingFiles =>
+      List<NearbyTransferRemoteFileDescriptor>.unmodifiable(
+        _incomingOffer?.files ?? const <NearbyTransferRemoteFileDescriptor>[],
+      );
+
+  Set<String> get selectedIncomingFileIds =>
+      Set<String>.unmodifiable(_selectedIncomingFileIds);
+
+  bool get hasIncomingOffer => _incomingOffer != null;
+
+  bool get hasIncomingSelection => _selectedIncomingFileIds.isNotEmpty;
+
+  bool isIncomingFileSelected(String fileId) =>
+      _selectedIncomingFileIds.contains(fileId);
+
+  bool isPreviewLoading(String fileId) => _previewingFileId == fileId;
+
+  NearbyTransferRemoteFilePreview? get activeIncomingPreview =>
+      _activeIncomingPreview;
 
   double? get transferProgress {
     if (_transferTotalBytes <= 0) {
@@ -294,6 +324,72 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     await _sendSelection(selection);
   }
 
+  void toggleIncomingFileSelection(String fileId, bool isSelected) {
+    if (_incomingOffer == null) {
+      return;
+    }
+    if (isSelected) {
+      _selectedIncomingFileIds = <String>{..._selectedIncomingFileIds, fileId};
+    } else {
+      final next = Set<String>.from(_selectedIncomingFileIds);
+      next.remove(fileId);
+      _selectedIncomingFileIds = next;
+    }
+    notifyListeners();
+  }
+
+  Future<NearbyTransferRemoteFilePreview?> loadIncomingPreview(
+    NearbyTransferRemoteFileDescriptor file,
+  ) async {
+    final offer = _incomingOffer;
+    if (offer == null ||
+        file.previewKind == NearbyTransferRemotePreviewKind.none) {
+      return null;
+    }
+    final requestKey = '${offer.requestId}:${file.id}';
+    final existingRequest = _pendingPreviewRequests[requestKey];
+    if (existingRequest != null) {
+      return existingRequest.future;
+    }
+    final completer = Completer<NearbyTransferRemoteFilePreview?>();
+    _pendingPreviewRequests[requestKey] = completer;
+    _previewingFileId = file.id;
+    notifyListeners();
+    try {
+      await _activeAdapter?.requestIncomingSelectionPreview(
+        requestId: offer.requestId,
+        fileId: file.id,
+      );
+      return await completer.future.timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      _setBanner(
+        'Предпросмотр пока недоступен. Попробуйте ещё раз.',
+        isError: true,
+      );
+      return null;
+    } finally {
+      _pendingPreviewRequests.remove(requestKey);
+      if (_previewingFileId == file.id) {
+        _previewingFileId = null;
+      }
+      notifyListeners();
+    }
+  }
+
+  Future<void> downloadSelectedIncomingFiles() async {
+    final offer = _incomingOffer;
+    if (offer == null || _selectedIncomingFileIds.isEmpty) {
+      return;
+    }
+    _phase = NearbyTransferSessionPhase.transferring;
+    _setBanner('Готовим получение выбранных файлов...');
+    notifyListeners();
+    await _activeAdapter?.requestIncomingSelectionDownload(
+      requestId: offer.requestId,
+      fileIds: _selectedIncomingFileIds.toList(growable: false),
+    );
+  }
+
   Future<void> disconnect({bool restart = true}) async {
     await _activeAdapter?.disconnect();
     _clearConnectionState();
@@ -381,6 +477,22 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (event is NearbyTransferIncomingSelectionOfferedEvent) {
+      _incomingOffer = event;
+      _selectedIncomingFileIds = event.files.map((file) => file.id).toSet();
+      _activeIncomingPreview = null;
+      _phase = NearbyTransferSessionPhase.connected;
+      _setBanner('Выберите файлы для загрузки.');
+      notifyListeners();
+      return;
+    }
+    if (event is NearbyTransferRemotePreviewReadyEvent) {
+      _activeIncomingPreview = event.preview;
+      final requestKey = '${event.preview.requestId}:${event.preview.fileId}';
+      _pendingPreviewRequests.remove(requestKey)?.complete(event.preview);
+      notifyListeners();
+      return;
+    }
     if (event is NearbyTransferTransferProgressEvent) {
       _transferCompletedBytes = event.completedBytes;
       _transferTotalBytes = event.totalBytes;
@@ -394,8 +506,13 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _transferTotalBytes = 0;
       if (event.direction == NearbyTransferProgressDirection.sending) {
         _hasCompletedOutgoingTransfer = true;
+        _setBanner('Получатель может выбрать файлы для загрузки.');
+      } else {
+        _incomingOffer = null;
+        _selectedIncomingFileIds = <String>{};
+        _activeIncomingPreview = null;
+        _setBanner(event.message);
       }
-      _setBanner(event.message);
       notifyListeners();
       return;
     }
@@ -418,7 +535,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (!canSendFiles) {
       return;
     }
-    _phase = NearbyTransferSessionPhase.transferring;
+    _phase = NearbyTransferSessionPhase.connected;
+    _setBanner(
+      'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+    );
     notifyListeners();
     await _activeAdapter?.sendSelection(selection);
   }
@@ -447,6 +567,16 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _handshakeChallenge = null;
     _transferCompletedBytes = 0;
     _transferTotalBytes = 0;
+    _incomingOffer = null;
+    _selectedIncomingFileIds = <String>{};
+    _activeIncomingPreview = null;
+    _previewingFileId = null;
+    for (final completer in _pendingPreviewRequests.values) {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+      }
+    }
+    _pendingPreviewRequests.clear();
     _selectedCandidateId = null;
     _candidateRefreshTimer?.cancel();
     _candidateRefreshTimer = null;

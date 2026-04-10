@@ -6,6 +6,8 @@ enum NearbyTransferRole { send, receive }
 
 enum NearbyTransferProgressDirection { sending, receiving }
 
+enum NearbyTransferRemotePreviewKind { none, text, image }
+
 class NearbyTransferCandidateDevice {
   const NearbyTransferCandidateDevice({
     required this.id,
@@ -65,6 +67,62 @@ class NearbyTransferSelection {
   int get itemCount => entries.length;
 }
 
+class NearbyTransferRemoteFileDescriptor {
+  const NearbyTransferRemoteFileDescriptor({
+    required this.id,
+    required this.relativePath,
+    required this.sizeBytes,
+    required this.previewKind,
+  });
+
+  final String id;
+  final String relativePath;
+  final int sizeBytes;
+  final NearbyTransferRemotePreviewKind previewKind;
+}
+
+class NearbyTransferRemoteFilePreview {
+  const NearbyTransferRemoteFilePreview._({
+    required this.requestId,
+    required this.fileId,
+    required this.kind,
+    this.textContent,
+    this.imageBytes,
+    this.isTruncated = false,
+  });
+
+  const NearbyTransferRemoteFilePreview.text({
+    required String requestId,
+    required String fileId,
+    required String textContent,
+    required bool isTruncated,
+  }) : this._(
+         requestId: requestId,
+         fileId: fileId,
+         kind: NearbyTransferRemotePreviewKind.text,
+         textContent: textContent,
+         isTruncated: isTruncated,
+       );
+
+  const NearbyTransferRemoteFilePreview.image({
+    required String requestId,
+    required String fileId,
+    required List<int> imageBytes,
+  }) : this._(
+         requestId: requestId,
+         fileId: fileId,
+         kind: NearbyTransferRemotePreviewKind.image,
+         imageBytes: imageBytes,
+       );
+
+  final String requestId;
+  final String fileId;
+  final NearbyTransferRemotePreviewKind kind;
+  final String? textContent;
+  final List<int>? imageBytes;
+  final bool isTruncated;
+}
+
 abstract class NearbyTransferTransportEvent {
   const NearbyTransferTransportEvent();
 }
@@ -94,6 +152,26 @@ class NearbyTransferHandshakeOfferEvent extends NearbyTransferTransportEvent {
 class NearbyTransferHandshakeAcceptedEvent
     extends NearbyTransferTransportEvent {
   const NearbyTransferHandshakeAcceptedEvent();
+}
+
+class NearbyTransferIncomingSelectionOfferedEvent
+    extends NearbyTransferTransportEvent {
+  const NearbyTransferIncomingSelectionOfferedEvent({
+    required this.requestId,
+    required this.label,
+    required this.files,
+  });
+
+  final String requestId;
+  final String label;
+  final List<NearbyTransferRemoteFileDescriptor> files;
+}
+
+class NearbyTransferRemotePreviewReadyEvent
+    extends NearbyTransferTransportEvent {
+  const NearbyTransferRemotePreviewReadyEvent({required this.preview});
+
+  final NearbyTransferRemoteFilePreview preview;
 }
 
 class NearbyTransferTransferProgressEvent extends NearbyTransferTransportEvent {
@@ -153,6 +231,16 @@ abstract class NearbyTransferTransportAdapter {
   Future<void> sendHandshakeAccepted();
 
   Future<void> sendSelection(NearbyTransferSelection selection);
+
+  Future<void> requestIncomingSelectionPreview({
+    required String requestId,
+    required String fileId,
+  });
+
+  Future<void> requestIncomingSelectionDownload({
+    required String requestId,
+    required List<String> fileIds,
+  });
 
   Future<void> disconnect();
 
