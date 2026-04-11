@@ -93,8 +93,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   }
 
   Future<void> _reconcileProjectionChange() async {
-    final validTokens = _browser.currentFileTokens();
-    _selectedTokens.removeWhere((token) => !validTokens.contains(token));
+    _selectedTokens.removeWhere(
+      (token) => !_browser.containsDownloadToken(token),
+    );
 
     final validFilterKeys = <String>{
       RemoteShareBrowser.allDevicesFilterKey,
@@ -400,7 +401,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                                     entry.sourceToken ||
                                                 _isDownloading,
                                             onTap: () => _openEntry(entry),
-                                            onSelectChanged: entry.isDirectory
+                                            onSelectChanged:
+                                                entry.sourceToken == null
                                                 ? null
                                                 : (value) => _toggleSelection(
                                                     entry,
@@ -432,7 +434,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                                     entry.sourceToken ||
                                                 _isDownloading,
                                             onTap: () => _openEntry(entry),
-                                            onSelectChanged: entry.isDirectory
+                                            onSelectChanged:
+                                                entry.sourceToken == null
                                                 ? null
                                                 : (value) => _toggleSelection(
                                                     entry,
@@ -667,20 +670,20 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   Future<void> _downloadSelectedFiles() async {
     final requests = <String, _RemoteDownloadBatch>{};
     for (final token in _selectedTokens) {
-      final file = _browser.resolveFileToken(token);
-      if (file == null) {
+      final target = _browser.resolveDownloadToken(token);
+      if (target == null) {
         continue;
       }
       final batch = requests.putIfAbsent(
-        file.ownerIp,
+        target.ownerIp,
         () => _RemoteDownloadBatch(
-          ownerIp: file.ownerIp,
-          ownerName: file.ownerName,
+          ownerIp: target.ownerIp,
+          ownerName: target.ownerName,
         ),
       );
-      batch.selectedRelativePathsByCache
-          .putIfAbsent(file.cacheId, () => <String>{})
-          .add(file.relativePath);
+      for (final entry in target.selectedRelativePathsByCache.entries) {
+        batch.addSelection(cacheId: entry.key, relativePaths: entry.value);
+      }
     }
     if (requests.isEmpty) {
       return;
@@ -1142,4 +1145,23 @@ class _RemoteDownloadBatch {
   final String ownerName;
   final Map<String, Set<String>> selectedRelativePathsByCache =
       <String, Set<String>>{};
+
+  void addSelection({
+    required String cacheId,
+    required Set<String> relativePaths,
+  }) {
+    final hadExisting = selectedRelativePathsByCache.containsKey(cacheId);
+    final existing = selectedRelativePathsByCache.putIfAbsent(
+      cacheId,
+      () => <String>{},
+    );
+    if (relativePaths.isEmpty) {
+      selectedRelativePathsByCache[cacheId] = <String>{};
+      return;
+    }
+    if (hadExisting && existing.isEmpty) {
+      return;
+    }
+    existing.addAll(relativePaths);
+  }
 }

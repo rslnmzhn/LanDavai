@@ -239,6 +239,18 @@ class RemoteBrowseResolvedFile {
   final bool hasReceiverCacheSnapshot;
 }
 
+class RemoteBrowseResolvedDownloadTarget {
+  const RemoteBrowseResolvedDownloadTarget({
+    required this.ownerIp,
+    required this.ownerName,
+    required this.selectedRelativePathsByCache,
+  });
+
+  final String ownerIp;
+  final String ownerName;
+  final Map<String, Set<String>> selectedRelativePathsByCache;
+}
+
 class RemoteShareBrowser extends ChangeNotifier {
   RemoteShareBrowser({
     required SharedCacheCatalog sharedCacheCatalog,
@@ -422,7 +434,64 @@ class RemoteShareBrowser extends ChangeNotifier {
     return null;
   }
 
+  RemoteBrowseResolvedDownloadTarget? resolveDownloadToken(String token) {
+    final file = resolveFileToken(token);
+    if (file != null) {
+      return RemoteBrowseResolvedDownloadTarget(
+        ownerIp: file.ownerIp,
+        ownerName: file.ownerName,
+        selectedRelativePathsByCache: <String, Set<String>>{
+          file.cacheId: <String>{file.relativePath},
+        },
+      );
+    }
+    final folder = _parseFolderToken(token);
+    if (folder == null) {
+      return null;
+    }
+
+    String? ownerName;
+    final selectedRelativePathsByCache = <String, Set<String>>{};
+    for (final option in _options) {
+      if (option.ownerIp != folder.ownerIp) {
+        continue;
+      }
+      ownerName ??= option.ownerName;
+      if (folder.cacheId != null && option.entry.cacheId != folder.cacheId) {
+        continue;
+      }
+      if (folder.cacheId != null && folder.relativeFolderPath.isEmpty) {
+        selectedRelativePathsByCache[option.entry.cacheId] = <String>{};
+        continue;
+      }
+      final folderPathLower = folder.relativeFolderPath.toLowerCase();
+      final matchingPaths = option.entry.files
+          .map((file) => _normalizeRelativePath(file.relativePath))
+          .where((relativePath) {
+            final normalizedLower = relativePath.toLowerCase();
+            return folder.relativeFolderPath.isEmpty ||
+                normalizedLower == folderPathLower ||
+                normalizedLower.startsWith('$folderPathLower/');
+          })
+          .toSet();
+      if (matchingPaths.isNotEmpty) {
+        selectedRelativePathsByCache[option.entry.cacheId] = matchingPaths;
+      }
+    }
+    if (ownerName == null || selectedRelativePathsByCache.isEmpty) {
+      return null;
+    }
+    return RemoteBrowseResolvedDownloadTarget(
+      ownerIp: folder.ownerIp,
+      ownerName: ownerName,
+      selectedRelativePathsByCache: selectedRelativePathsByCache,
+    );
+  }
+
   bool containsFileToken(String token) => resolveFileToken(token) != null;
+
+  bool containsDownloadToken(String token) =>
+      resolveDownloadToken(token) != null;
 
   Set<String> currentFileTokens() {
     final tokens = <String>{};
@@ -745,6 +814,13 @@ class RemoteShareBrowser extends ChangeNotifier {
             () => FileExplorerVirtualFolder(
               name: nextFolder,
               folderPath: nextFolderPath,
+              sourceToken: _aggregatedFolderToken(
+                option: option,
+                currentFolderPath: normalizedFolder,
+                nextFolderPath: nextFolderPath,
+                deviceFolderName: deviceFolderName,
+                shareFolderName: shareFolderName,
+              ),
             ),
           );
           continue;
@@ -834,6 +910,11 @@ class RemoteShareBrowser extends ChangeNotifier {
             () => FileExplorerVirtualFolder(
               name: nextFolder,
               folderPath: nextFolderPath,
+              sourceToken: _ownerFolderToken(
+                option: option,
+                nextFolderPath: nextFolderPath,
+                shareFolderName: shareFolderName,
+              ),
             ),
           );
           continue;
@@ -978,6 +1059,64 @@ class RemoteShareBrowser extends ChangeNotifier {
     return '${option.ownerName} (${option.ownerIp})';
   }
 
+  String _aggregatedFolderToken({
+    required RemoteShareOption option,
+    required String currentFolderPath,
+    required String nextFolderPath,
+    required String deviceFolderName,
+    required String shareFolderName,
+  }) {
+    if (currentFolderPath.isEmpty && nextFolderPath == deviceFolderName) {
+      return _folderToken(
+        ownerIp: option.ownerIp,
+        cacheId: null,
+        relativeFolderPath: '',
+      );
+    }
+
+    final shareRootPath = '$deviceFolderName/$shareFolderName';
+    if (nextFolderPath == shareRootPath ||
+        currentFolderPath == deviceFolderName) {
+      return _folderToken(
+        ownerIp: option.ownerIp,
+        cacheId: option.entry.cacheId,
+        relativeFolderPath: '',
+      );
+    }
+
+    final relativeFolderPath = nextFolderPath.startsWith('$shareRootPath/')
+        ? nextFolderPath.substring(shareRootPath.length + 1)
+        : '';
+    return _folderToken(
+      ownerIp: option.ownerIp,
+      cacheId: option.entry.cacheId,
+      relativeFolderPath: relativeFolderPath,
+    );
+  }
+
+  String _ownerFolderToken({
+    required RemoteShareOption option,
+    required String nextFolderPath,
+    required String shareFolderName,
+  }) {
+    if (nextFolderPath == shareFolderName) {
+      return _folderToken(
+        ownerIp: option.ownerIp,
+        cacheId: option.entry.cacheId,
+        relativeFolderPath: '',
+      );
+    }
+
+    final relativeFolderPath = nextFolderPath.startsWith('$shareFolderName/')
+        ? nextFolderPath.substring(shareFolderName.length + 1)
+        : '';
+    return _folderToken(
+      ownerIp: option.ownerIp,
+      cacheId: option.entry.cacheId,
+      relativeFolderPath: relativeFolderPath,
+    );
+  }
+
   String _shareFolderName(SharedCatalogEntryItem entry) {
     final trimmed = entry.displayName.trim();
     if (trimmed.isEmpty) {
@@ -992,6 +1131,35 @@ class RemoteShareBrowser extends ChangeNotifier {
     required String relativePath,
   }) {
     return '$ownerIp|$cacheId|${_normalizeRelativePath(relativePath).toLowerCase()}';
+  }
+
+  String _folderToken({
+    required String ownerIp,
+    required String? cacheId,
+    required String relativeFolderPath,
+  }) {
+    final normalizedCacheId = cacheId == null || cacheId.trim().isEmpty
+        ? '*'
+        : cacheId.trim();
+    return 'folder|$ownerIp|$normalizedCacheId|'
+        '${_normalizeRelativePath(relativeFolderPath).toLowerCase()}';
+  }
+
+  _ParsedFolderToken? _parseFolderToken(String token) {
+    final parts = token.split('|');
+    if (parts.length != 4 || parts.first != 'folder') {
+      return null;
+    }
+    final ownerIp = parts[1].trim();
+    if (ownerIp.isEmpty) {
+      return null;
+    }
+    final cacheId = parts[2].trim();
+    return _ParsedFolderToken(
+      ownerIp: ownerIp,
+      cacheId: cacheId == '*' ? null : cacheId,
+      relativeFolderPath: _normalizeRelativePath(parts[3]).toLowerCase(),
+    );
   }
 
   String _previewKey({
@@ -1206,4 +1374,16 @@ class _RemoteOwnerDraft {
   int shareCount = 0;
   int fileCount = 0;
   int cachedShareCount = 0;
+}
+
+class _ParsedFolderToken {
+  const _ParsedFolderToken({
+    required this.ownerIp,
+    required this.cacheId,
+    required this.relativeFolderPath,
+  });
+
+  final String ownerIp;
+  final String? cacheId;
+  final String relativeFolderPath;
 }

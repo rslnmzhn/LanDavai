@@ -223,6 +223,63 @@ void main() {
   });
 
   testWidgets(
+    'structured mode allows downloading a folder without selecting files one by one',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalogWithFiles(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Share',
+        files: <String>['docs/a.txt', 'docs/sub/b.txt', 'top.txt'],
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Remote A'));
+      await _pumpForUi(tester, frames: 8);
+
+      await tester.tap(find.textContaining('Share').first);
+      await _pumpForUi(tester, frames: 8);
+      expect(find.text('docs'), findsOneWidget);
+
+      await tester.longPress(find.text('docs'));
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsOneWidget);
+
+      await tester.tap(find.text('Скачать выбранные (1)'));
+      await _pumpForUi(tester, frames: 8);
+
+      expect(coordinator.downloadCalls, 1);
+      expect(coordinator.lastSelectedByCache, <String, Set<String>>{
+        'cache-a': <String>{'docs/a.txt', 'docs/sub/b.txt'},
+      });
+    },
+  );
+
+  testWidgets(
     'view mode toggle switches between structured and flat projections',
     (tester) async {
       _registerWidgetCleanup(tester);

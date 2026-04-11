@@ -232,6 +232,88 @@ void main() {
   );
 
   test(
+    'structured folder tokens resolve to whole-share and nested-folder download targets',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-folders',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-folders',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Docs',
+              itemCount: 3,
+              totalBytes: 12,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'docs/a.txt', sizeBytes: 2),
+                SharedCatalogFileItem(
+                  relativePath: 'docs/sub/b.txt',
+                  sizeBytes: 3,
+                ),
+                SharedCatalogFileItem(relativePath: 'other.txt', sizeBytes: 7),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final shareFolder = root.entries.folders.firstWhere(
+        (folder) => folder.name.startsWith('Docs'),
+      );
+      final wholeShareTarget = browser.resolveDownloadToken(
+        shareFolder.sourceToken!,
+      );
+
+      expect(wholeShareTarget, isNotNull);
+      expect(
+        wholeShareTarget!.selectedRelativePathsByCache,
+        <String, Set<String>>{'remote-cache-1': <String>{}},
+      );
+
+      final shareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: shareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final nestedFolder = shareDirectory.entries.folders.firstWhere(
+        (folder) => folder.name == 'docs',
+      );
+      final nestedTarget = browser.resolveDownloadToken(
+        nestedFolder.sourceToken!,
+      );
+
+      expect(nestedTarget, isNotNull);
+      expect(nestedTarget!.selectedRelativePathsByCache, <String, Set<String>>{
+        'remote-cache-1': <String>{'docs/a.txt', 'docs/sub/b.txt'},
+      });
+    },
+  );
+
+  test(
     'records preview-path projection updates through owner-backed batch writes',
     () async {
       await browser.startBrowse(
