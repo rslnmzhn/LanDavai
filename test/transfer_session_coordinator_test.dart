@@ -254,6 +254,7 @@ void main() {
         await sharedCacheCatalog.loadOwnerCaches(
           ownerMacAddress: '02:00:00:00:00:01',
         );
+        final fileHashService = ControlledFileHashService();
         final fileTransferService = CapturingSendFileTransferService();
         final coordinator = _buildCoordinator(
           lanDiscoveryService: lanDiscoveryService,
@@ -285,6 +286,8 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileTransferService.lastFiles.single.fileName, 'report.txt');
+        expect(fileTransferService.lastFiles.single.sha256, isEmpty);
+        expect(fileHashService.pendingPaths, isEmpty);
         expect(lanDiscoveryService.transferRequests, isEmpty);
       },
     );

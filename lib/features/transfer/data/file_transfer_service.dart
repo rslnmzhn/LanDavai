@@ -246,7 +246,9 @@ class FileTransferService {
         hashSink.close();
 
         final actualSha = digestSink.value?.toString() ?? '';
-        if (actualSha.toLowerCase() != file.sha256.toLowerCase()) {
+        final expectedSha = file.sha256.trim();
+        if (expectedSha.isNotEmpty &&
+            actualSha.toLowerCase() != expectedSha.toLowerCase()) {
           throw StateError(
             'Sender SHA-256 mismatch for ${file.fileName}. '
             'File changed during transfer preparation.',
@@ -384,7 +386,9 @@ class FileTransferService {
         await sink.close();
 
         final actualSha = digestSink.value?.toString() ?? '';
-        if (actualSha.toLowerCase() != file.sha256.toLowerCase()) {
+        final expectedSha = file.sha256.trim();
+        if (expectedSha.isNotEmpty &&
+            actualSha.toLowerCase() != expectedSha.toLowerCase()) {
           try {
             await destinationFile.delete();
           } catch (_) {}
