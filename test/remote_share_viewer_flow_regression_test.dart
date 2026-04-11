@@ -138,15 +138,7 @@ void main() {
       await tester.tap(find.text('Без структуры'));
       await _pumpForUi(tester, frames: 8);
 
-      await tester.tap(
-        find.descendant(
-          of: find.ancestor(
-            of: find.text('report.txt'),
-            matching: find.byType(ListTile),
-          ),
-          matching: find.byType(Checkbox),
-        ),
-      );
+      await tester.longPress(find.text('report.txt'));
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsOneWidget);
 
@@ -216,12 +208,8 @@ void main() {
     expect(coordinator.downloadCalls, 0);
 
     await tester.tap(
-      find.descendant(
-        of: find.ancestor(
-          of: find.text('report.txt'),
-          matching: find.byType(ListTile),
-        ),
-        matching: find.byType(Checkbox),
+      find.byKey(
+        const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
       ),
     );
     await _pumpForUi(tester, frames: 4);
@@ -276,6 +264,89 @@ void main() {
       await _pumpForUi(tester, frames: 12);
 
       expect(find.text('report.txt'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'long press and selection circle both toggle file selection while tap stays preview',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      final previewFile = File(
+        '${harness.databaseHarness.rootDirectory.path}/selection-preview.txt',
+      );
+      await tester.runAsync(() async {
+        await previewFile.writeAsString('preview');
+      });
+
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'report.txt',
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => previewFile.path,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 8);
+
+      await tester.longPress(find.text('report.txt'));
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsOneWidget);
+
+      await tester.longPress(find.text('report.txt'));
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsNothing);
+
+      await tester.tap(
+        find.byKey(
+          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
+        ),
+      );
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(
+          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
+        ),
+      );
+      await _pumpForUi(tester, frames: 4);
+      expect(find.text('Скачать выбранные (1)'), findsNothing);
+
+      await tester.tap(find.text('report.txt'));
+      await _pumpUntilFound(
+        tester,
+        find.byType(LocalFileViewerPage, skipOffstage: false),
+        failureMessage: 'Simple tap should still open preview.',
+      );
+      expect(
+        find.byType(LocalFileViewerPage, skipOffstage: false),
+        findsOneWidget,
+      );
     },
   );
 
@@ -544,12 +615,8 @@ void main() {
       await _pumpForUi(tester, frames: 8);
 
       await tester.tap(
-        find.descendant(
-          of: find.ancestor(
-            of: find.text('report.pdf'),
-            matching: find.byType(ListTile),
-          ),
-          matching: find.byType(Checkbox),
+        find.byKey(
+          const Key('remote-download-select-192.168.1.44|cache-a|report.pdf'),
         ),
       );
       await _pumpForUi(tester, frames: 4);

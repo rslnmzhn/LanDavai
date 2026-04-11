@@ -938,36 +938,64 @@ class _RemoteDownloadListTile extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<bool>? onSelectChanged;
 
+  bool get _canSelect => onSelectChanged != null;
+
   @override
   Widget build(BuildContext context) {
     final resolvedFile = entry.sourceToken == null
         ? null
         : browser.resolveFileToken(entry.sourceToken!);
-    return ListTile(
-      shape: RoundedRectangleBorder(
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      tileColor: AppColors.surface,
-      leading: _RemoteExplorerLeading(
-        entry: entry,
-        resolvedFile: resolvedFile,
-        previewCacheOwner: previewCacheOwner,
-      ),
-      title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        entry.subtitle,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: onSelectChanged == null
-          ? null
-          : Checkbox(
-              value: isSelected,
-              onChanged: isBusy
-                  ? null
-                  : (value) => onSelectChanged!(value == true),
+        onTap: isBusy ? null : onTap,
+        onLongPress: !_canSelect || isBusy
+            ? null
+            : () => onSelectChanged!(!isSelected),
+        child: Stack(
+          children: [
+            ListTile(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.md),
+              ),
+              contentPadding: const EdgeInsets.fromLTRB(
+                AppSpacing.sm,
+                AppSpacing.xs,
+                AppSpacing.xl,
+                AppSpacing.xs,
+              ),
+              leading: _RemoteExplorerLeading(
+                entry: entry,
+                resolvedFile: resolvedFile,
+                previewCacheOwner: previewCacheOwner,
+              ),
+              title: Text(
+                entry.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                entry.subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
             ),
-      onTap: isBusy ? null : onTap,
+            if (_canSelect)
+              Positioned(
+                top: AppSpacing.xs,
+                right: AppSpacing.xs,
+                child: _SelectionCircleButton(
+                  token: entry.sourceToken!,
+                  isSelected: isSelected,
+                  isBusy: isBusy,
+                  onChanged: onSelectChanged!,
+                ),
+              ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -991,6 +1019,8 @@ class _RemoteDownloadGridTile extends StatelessWidget {
   final VoidCallback onTap;
   final ValueChanged<bool>? onSelectChanged;
 
+  bool get _canSelect => onSelectChanged != null;
+
   @override
   Widget build(BuildContext context) {
     final resolvedFile = entry.sourceToken == null
@@ -999,6 +1029,9 @@ class _RemoteDownloadGridTile extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.md),
       onTap: isBusy ? null : onTap,
+      onLongPress: !_canSelect || isBusy
+          ? null
+          : () => onSelectChanged!(!isSelected),
       child: Ink(
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -1042,18 +1075,65 @@ class _RemoteDownloadGridTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (onSelectChanged != null)
+            if (_canSelect)
               Positioned(
                 top: AppSpacing.xxs,
                 right: AppSpacing.xxs,
-                child: Checkbox(
-                  value: isSelected,
-                  onChanged: isBusy
-                      ? null
-                      : (value) => onSelectChanged!(value == true),
+                child: _SelectionCircleButton(
+                  token: entry.sourceToken!,
+                  isSelected: isSelected,
+                  isBusy: isBusy,
+                  onChanged: onSelectChanged!,
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SelectionCircleButton extends StatelessWidget {
+  const _SelectionCircleButton({
+    required this.token,
+    required this.isSelected,
+    required this.isBusy,
+    required this.onChanged,
+  });
+
+  final String token;
+  final bool isSelected;
+  final bool isBusy;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        key: Key('remote-download-select-$token'),
+        customBorder: const CircleBorder(),
+        onTap: isBusy ? null : () => onChanged(!isSelected),
+        child: Ink(
+          width: 24,
+          height: 24,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: isSelected ? AppColors.brandPrimary : AppColors.surface,
+            border: Border.all(
+              color: isSelected
+                  ? AppColors.brandPrimary
+                  : AppColors.mutedBorder,
+              width: 1.5,
+            ),
+          ),
+          child: isSelected
+              ? const Icon(
+                  Icons.check_rounded,
+                  size: 16,
+                  color: AppColors.surface,
+                )
+              : null,
         ),
       ),
     );
