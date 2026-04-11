@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,130 @@ void main() {
       sharedCacheCatalog.dispose();
       await harness.dispose();
     });
+
+    test(
+      'single-file remote download sends transfer request before hash computation completes',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared', 'archive.7z'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsBytes(List<int>.filled(32, 7));
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared archive',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileHashService = ControlledFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: <String>['archive.7z'],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(lanDiscoveryService.transferRequests, hasLength(1));
+        expect(
+          lanDiscoveryService.transferRequests.single.items.single.sha256,
+          isEmpty,
+        );
+        expect(fileHashService.pendingPaths, hasLength(1));
+
+        fileHashService.completeAll(withHash: 'lazy-hash');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      },
+    );
+
+    test(
+      'single-file remote download resolves deferred hash before sending approved transfer',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared', 'archive.7z'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsBytes(List<int>.filled(32, 9));
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared archive',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileHashService = ControlledFileHashService();
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: <String>['archive.7z'],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(lanDiscoveryService.transferRequests, hasLength(1));
+
+        coordinator.handleTransferDecisionEvent(
+          TransferDecisionEvent(
+            requestId: lanDiscoveryService.transferRequests.single.requestId,
+            approved: true,
+            receiverName: 'Remote peer',
+            receiverIp: '192.168.1.40',
+            transferPort: 40404,
+            acceptedFileNames: const <String>['archive.7z'],
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(fileTransferService.sendFilesCalls, 0);
+
+        fileHashService.completeAll(withHash: 'lazy-hash-2');
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.lastFiles, hasLength(1));
+        expect(fileTransferService.lastFiles.single.sha256, 'lazy-hash-2');
+      },
+    );
 
     test(
       'protocol transfer request updates incoming session truth in coordinator',
@@ -982,6 +1107,7 @@ Future<void> _waitForDownloadHistoryRecords({
 }
 
 class CapturingLanDiscoveryService extends LanDiscoveryService {
+  final List<SentTransferRequest> transferRequests = <SentTransferRequest>[];
   final List<SentTransferDecision> transferDecisions = <SentTransferDecision>[];
   final List<SentDownloadRequest> downloadRequests = <SentDownloadRequest>[];
   void Function(TransferRequestEvent event)? onTransferRequest;
@@ -1034,6 +1160,29 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   }
 
   @override
+  Future<void> sendTransferRequest({
+    required String targetIp,
+    required String requestId,
+    required String senderName,
+    required String senderMacAddress,
+    required String sharedCacheId,
+    required String sharedLabel,
+    required List<TransferAnnouncementItem> items,
+  }) async {
+    transferRequests.add(
+      SentTransferRequest(
+        targetIp: targetIp,
+        requestId: requestId,
+        senderName: senderName,
+        senderMacAddress: senderMacAddress,
+        sharedCacheId: sharedCacheId,
+        sharedLabel: sharedLabel,
+        items: items,
+      ),
+    );
+  }
+
+  @override
   Future<void> sendDownloadRequest({
     required String targetIp,
     required String requestId,
@@ -1076,6 +1225,26 @@ class SentTransferDecision {
   final String receiverName;
   final int? transferPort;
   final List<String>? acceptedFileNames;
+}
+
+class SentTransferRequest {
+  const SentTransferRequest({
+    required this.targetIp,
+    required this.requestId,
+    required this.senderName,
+    required this.senderMacAddress,
+    required this.sharedCacheId,
+    required this.sharedLabel,
+    required this.items,
+  });
+
+  final String targetIp;
+  final String requestId;
+  final String senderName;
+  final String senderMacAddress;
+  final String sharedCacheId;
+  final String sharedLabel;
+  final List<TransferAnnouncementItem> items;
 }
 
 class SentDownloadRequest {
@@ -1129,6 +1298,48 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
       result: Future<FileTransferResult>.value(result),
       close: () async {},
     );
+  }
+}
+
+class CapturingSendFileTransferService extends FileTransferService {
+  int sendFilesCalls = 0;
+  List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+  }) async {
+    sendFilesCalls += 1;
+    lastFiles = List<TransferSourceFile>.from(files);
+  }
+}
+
+class ControlledFileHashService extends FileHashService {
+  final Map<String, Completer<String>> _completersByPath =
+      <String, Completer<String>>{};
+
+  List<String> get pendingPaths =>
+      _completersByPath.keys.toList(growable: false);
+
+  @override
+  Future<String> computeSha256ForPath(String filePath) {
+    final completer = Completer<String>();
+    _completersByPath[filePath] = completer;
+    return completer.future;
+  }
+
+  void completeAll({required String withHash}) {
+    final completers = _completersByPath.values.toList(growable: false);
+    _completersByPath.clear();
+    for (final completer in completers) {
+      if (!completer.isCompleted) {
+        completer.complete(withHash);
+      }
+    }
   }
 }
 

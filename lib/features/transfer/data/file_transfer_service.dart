@@ -321,9 +321,12 @@ class FileTransferService {
         throw StateError('Transfer manifest duplicate file: ${actual.name}.');
       }
       final expected = expectedByName[actual.name];
-      if (expected == null ||
-          expected.sizeBytes != actual.sizeBytes ||
-          expected.sha256.toLowerCase() != actual.sha256.toLowerCase()) {
+      if (expected == null || expected.sizeBytes != actual.sizeBytes) {
+        throw StateError('Transfer manifest mismatch for ${actual.name}.');
+      }
+      final expectedHash = expected.sha256.trim();
+      if (expectedHash.isNotEmpty &&
+          expectedHash.toLowerCase() != actual.sha256.toLowerCase()) {
         throw StateError('Transfer manifest mismatch for ${actual.name}.');
       }
     }

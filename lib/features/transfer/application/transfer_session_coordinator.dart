@@ -800,6 +800,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }
 
   void handleTransferDecisionEvent(TransferDecisionEvent event) {
+    unawaited(_handleTransferDecisionEventAsync(event));
+  }
+
+  Future<void> _handleTransferDecisionEventAsync(
+    TransferDecisionEvent event,
+  ) async {
     if (!event.approved) {
       _pendingOutgoingTransfers.remove(event.requestId);
       _publishNotice(
@@ -820,13 +826,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
       return;
     }
 
+    final resolvedFiles = await _resolveOutgoingSessionFiles(session);
     final filteredFiles = _filterOutgoingFilesForDecision(
-      files: session.files,
+      files: resolvedFiles,
       acceptedFileNames: event.acceptedFileNames,
     );
     if (filteredFiles.isEmpty) {
       _pendingOutgoingTransfers.remove(event.requestId);
-      unawaited(_cleanupTemporaryOutgoingFiles(session.files));
+      unawaited(_cleanupTemporaryOutgoingFiles(resolvedFiles));
       _publishNotice(
         TransferSessionNotice(
           infoMessage:
@@ -1138,6 +1145,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
         : event.selectedRelativePaths.toSet();
+    final deferHashesUntilAccept =
+        !isPreviewRequest && event.selectedRelativePaths.length == 1;
     final preparedFiles = isPreviewRequest
         ? await _buildCompressedPreviewFilesForCache(
             cache,
@@ -1146,6 +1155,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         : await _buildTransferFilesForCache(
             cache,
             relativePathFilter: relativePathFilter,
+            includeHashes: !deferHashesUntilAccept,
           );
 
     if (preparedFiles.isEmpty) {
@@ -1180,6 +1190,21 @@ class TransferSessionCoordinator extends ChangeNotifier {
               ),
             )
             .toList(growable: false),
+        finalizedFilesFuture: deferHashesUntilAccept
+            ? _hydrateTransferSourceFilesWithHashes(
+                preparedFiles
+                    .map(
+                      (prepared) => TransferSourceFile(
+                        sourcePath: prepared.sourcePath,
+                        fileName: prepared.announcement.fileName,
+                        sizeBytes: prepared.announcement.sizeBytes,
+                        sha256: prepared.announcement.sha256,
+                        deleteAfterTransfer: prepared.deleteAfterTransfer,
+                      ),
+                    )
+                    .toList(growable: false),
+              )
+            : null,
       );
 
       await _lanDiscoveryService.sendTransferRequest(
@@ -1249,6 +1274,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
+    bool includeHashes = true,
   }) async {
     final indexEntries = await _sharedCacheIndexStore.readIndexEntries(cache);
     final items = <_PreparedTransferFile>[];
@@ -1269,7 +1295,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
       if (stat.type != FileSystemEntityType.file) {
         continue;
       }
-      final sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
+      final sha256Hash = includeHashes
+          ? await _fileHashService.computeSha256ForPath(filePath)
+          : '';
 
       items.add(
         _PreparedTransferFile(
@@ -1352,10 +1380,16 @@ class TransferSessionCoordinator extends ChangeNotifier {
           continue;
         }
 
+        final expectedHash = item.sha256.trim();
+        if (expectedHash.isEmpty) {
+          missing.add(item);
+          continue;
+        }
+
         final existingHash = await _fileHashService.computeSha256ForPath(
           targetPath,
         );
-        if (existingHash.toLowerCase() != item.sha256.toLowerCase()) {
+        if (existingHash.toLowerCase() != expectedHash.toLowerCase()) {
           missing.add(item);
         }
       } catch (_) {
@@ -1697,6 +1731,45 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return _pendingRemotePreviewsByKey.remove(matchedKey);
   }
 
+  Future<List<TransferSourceFile>> _resolveOutgoingSessionFiles(
+    _OutgoingTransferSession session,
+  ) async {
+    final finalizedFilesFuture = session.finalizedFilesFuture;
+    if (finalizedFilesFuture == null) {
+      return session.files;
+    }
+    final resolved = await finalizedFilesFuture;
+    session.files = resolved;
+    session.finalizedFilesFuture = null;
+    return resolved;
+  }
+
+  Future<List<TransferSourceFile>> _hydrateTransferSourceFilesWithHashes(
+    List<TransferSourceFile> files,
+  ) async {
+    final hydrated = <TransferSourceFile>[];
+    for (final file in files) {
+      final normalizedHash = file.sha256.trim();
+      if (normalizedHash.isNotEmpty) {
+        hydrated.add(file);
+        continue;
+      }
+      final computedHash = await _fileHashService.computeSha256ForPath(
+        file.sourcePath,
+      );
+      hydrated.add(
+        TransferSourceFile(
+          sourcePath: file.sourcePath,
+          fileName: file.fileName,
+          sizeBytes: file.sizeBytes,
+          sha256: computedHash,
+          deleteAfterTransfer: file.deleteAfterTransfer,
+        ),
+      );
+    }
+    return hydrated;
+  }
+
   void _purgeExpiredPendingRemotePreviews() {
     final now = DateTime.now();
     _pendingRemotePreviewsByKey.removeWhere((_, pending) {
@@ -1761,10 +1834,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
 }
 
 class _OutgoingTransferSession {
-  _OutgoingTransferSession({required this.receiverName, required this.files});
+  _OutgoingTransferSession({
+    required this.receiverName,
+    required this.files,
+    this.finalizedFilesFuture,
+  });
 
   final String receiverName;
-  final List<TransferSourceFile> files;
+  List<TransferSourceFile> files;
+  Future<List<TransferSourceFile>>? finalizedFilesFuture;
 }
 
 class _PreparedTransferFile {
