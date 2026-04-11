@@ -379,30 +379,54 @@ void main() {
     },
   );
 
-  test('structured aggregated mode keeps honest nested paths', () async {
-    await _seedCatalogs(browser);
+  test(
+    'structured aggregated mode exposes share folders and nested paths consistently',
+    () async {
+      await _seedCatalogs(browser);
 
-    final root = browser.buildExplorerDirectory(
-      filterKey: RemoteShareBrowser.allDevicesFilterKey,
-      folderPath: '',
-      viewMode: RemoteBrowseExplorerViewMode.structured,
-    );
+      final root = browser.buildExplorerDirectory(
+        filterKey: RemoteShareBrowser.allDevicesFilterKey,
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
 
-    expect(
-      root.entries.folders.map((folder) => folder.name),
-      contains('Device A (192.168.1.20)'),
-    );
+      final aggregatedShareFolder = root.entries.folders.firstWhere(
+        (folder) => folder.name.startsWith('Device A • Docs'),
+      );
 
-    final deviceDirectory = browser.buildExplorerDirectory(
-      filterKey: RemoteShareBrowser.allDevicesFilterKey,
-      folderPath: 'Device A (192.168.1.20)',
-      viewMode: RemoteBrowseExplorerViewMode.structured,
-    );
-    expect(
-      deviceDirectory.entries.folders.map((folder) => folder.name).first,
-      startsWith('Docs'),
-    );
-  });
+      final aggregatedShareDirectory = browser.buildExplorerDirectory(
+        filterKey: RemoteShareBrowser.allDevicesFilterKey,
+        folderPath: aggregatedShareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(
+        aggregatedShareDirectory.entries.files.map(
+          (file) => p.basename(file.virtualPath),
+        ),
+        contains('report.txt'),
+      );
+
+      final perDeviceRoot = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final perDeviceShareFolder = perDeviceRoot.entries.folders.firstWhere(
+        (folder) => folder.name.startsWith('Docs'),
+      );
+      final perDeviceShareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: perDeviceShareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(
+        perDeviceShareDirectory.entries.files.map(
+          (file) => p.basename(file.virtualPath),
+        ),
+        contains('report.txt'),
+      );
+    },
+  );
 
   test(
     'flat mode orders media before documents and documents before other files',

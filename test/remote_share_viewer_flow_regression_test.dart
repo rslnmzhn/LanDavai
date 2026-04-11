@@ -324,6 +324,52 @@ void main() {
     },
   );
 
+  testWidgets(
+    'all-devices structured view shows share folders and allows navigation without switching to a device filter',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalogWithFiles(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Share',
+        files: <String>['docs/a.txt', 'top.txt'],
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      expect(find.textContaining('Remote A • Share'), findsWidgets);
+
+      await tester.tap(find.textContaining('Remote A • Share').first);
+      await _pumpForUi(tester, frames: 8);
+
+      expect(find.text('docs'), findsOneWidget);
+      expect(find.text('top.txt'), findsOneWidget);
+    },
+  );
+
   testWidgets('download browser sort controls match Files surface patterns', (
     tester,
   ) async {

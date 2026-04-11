@@ -784,8 +784,7 @@ class RemoteShareBrowser extends ChangeNotifier {
     final totalFiles = _countFiles(filterKey: allDevicesFilterKey);
 
     for (final option in _options) {
-      final deviceFolderName = _deviceFolderName(option);
-      final shareFolderName = _shareFolderName(option.entry);
+      final shareFolderName = _aggregatedShareFolderName(option);
       for (final file in option.entry.files) {
         if (visibleFiles >= maxVisibleFiles) {
           continue;
@@ -794,8 +793,8 @@ class RemoteShareBrowser extends ChangeNotifier {
           file.relativePath,
         );
         final browserPath = normalizedRelativePath.isEmpty
-            ? '$deviceFolderName/$shareFolderName'
-            : '$deviceFolderName/$shareFolderName/$normalizedRelativePath';
+            ? shareFolderName
+            : '$shareFolderName/$normalizedRelativePath';
         final rest = _relativeRestForFolder(
           folder: normalizedFolder,
           targetPath: browserPath,
@@ -818,7 +817,6 @@ class RemoteShareBrowser extends ChangeNotifier {
                 option: option,
                 currentFolderPath: normalizedFolder,
                 nextFolderPath: nextFolderPath,
-                deviceFolderName: deviceFolderName,
                 shareFolderName: shareFolderName,
               ),
             ),
@@ -1055,28 +1053,17 @@ class RemoteShareBrowser extends ChangeNotifier {
     return total;
   }
 
-  String _deviceFolderName(RemoteShareOption option) {
-    return '${option.ownerName} (${option.ownerIp})';
+  String _aggregatedShareFolderName(RemoteShareOption option) {
+    return '${option.ownerName} • ${_shareFolderName(option.entry)}';
   }
 
   String _aggregatedFolderToken({
     required RemoteShareOption option,
     required String currentFolderPath,
     required String nextFolderPath,
-    required String deviceFolderName,
     required String shareFolderName,
   }) {
-    if (currentFolderPath.isEmpty && nextFolderPath == deviceFolderName) {
-      return _folderToken(
-        ownerIp: option.ownerIp,
-        cacheId: null,
-        relativeFolderPath: '',
-      );
-    }
-
-    final shareRootPath = '$deviceFolderName/$shareFolderName';
-    if (nextFolderPath == shareRootPath ||
-        currentFolderPath == deviceFolderName) {
+    if (nextFolderPath == shareFolderName || currentFolderPath.isEmpty) {
       return _folderToken(
         ownerIp: option.ownerIp,
         cacheId: option.entry.cacheId,
@@ -1084,8 +1071,8 @@ class RemoteShareBrowser extends ChangeNotifier {
       );
     }
 
-    final relativeFolderPath = nextFolderPath.startsWith('$shareRootPath/')
-        ? nextFolderPath.substring(shareRootPath.length + 1)
+    final relativeFolderPath = nextFolderPath.startsWith('$shareFolderName/')
+        ? nextFolderPath.substring(shareFolderName.length + 1)
         : '';
     return _folderToken(
       ownerIp: option.ownerIp,
