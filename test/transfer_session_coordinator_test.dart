@@ -229,6 +229,154 @@ void main() {
     );
 
     test(
+      'repeated shared download preparation reuses cached manifest hashes when files are unchanged',
+      () async {
+        final ownerFileA = File(
+          p.join(harness.rootDirectory.path, 'shared_cached', 'a.txt'),
+        );
+        final ownerFileB = File(
+          p.join(harness.rootDirectory.path, 'shared_cached', 'b.txt'),
+        );
+        await ownerFileA.parent.create(recursive: true);
+        await ownerFileA.writeAsString('alpha');
+        await ownerFileB.writeAsString('beta');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFileA.path, ownerFileB.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileHashService = CountingFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-cache-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+        final cachedEntries = await sharedCacheIndexStore.readIndexEntries(
+          cache,
+        );
+        expect(
+          cachedEntries.where((entry) => (entry.sha256 ?? '').isNotEmpty),
+          hasLength(2),
+        );
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-cache-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026, 1, 2),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+      },
+    );
+
+    test(
+      'shared download preparation recomputes cached hash when indexed file metadata changed',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared_changed', 'a.txt'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('alpha');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        await sharedCacheIndexStore.persistCachedManifestEntries(
+          record: cache,
+          entries: <SharedFolderIndexEntry>[
+            SharedFolderIndexEntry(
+              relativePath: 'a.txt',
+              sizeBytes: ownerFile.lengthSync(),
+              modifiedAtMs: ownerFile
+                  .statSync()
+                  .modified
+                  .millisecondsSinceEpoch,
+              absolutePath: ownerFile.path,
+              sha256: 'stale-hash',
+            ),
+          ],
+        );
+
+        await ownerFile.writeAsString('changed-content', flush: true);
+        final updatedModifiedAt = DateTime.now().add(
+          const Duration(seconds: 1),
+        );
+        await ownerFile.setLastModified(updatedModifiedAt);
+
+        final fileHashService = CountingFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-changed',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 1);
+        final updatedEntries = await sharedCacheIndexStore.readIndexEntries(
+          cache,
+        );
+        expect(updatedEntries.single.sha256, isNot('stale-hash'));
+      },
+    );
+
+    test(
       'protocol transfer request updates incoming session truth in coordinator',
       () {
         final coordinator = _buildCoordinator(
@@ -1411,6 +1559,16 @@ class ControlledFileHashService extends FileHashService {
         completer.complete(withHash);
       }
     }
+  }
+}
+
+class CountingFileHashService extends FileHashService {
+  int computeCalls = 0;
+
+  @override
+  Future<String> computeSha256ForPath(String filePath) async {
+    computeCalls += 1;
+    return 'counted-hash-$computeCalls';
   }
 }
 

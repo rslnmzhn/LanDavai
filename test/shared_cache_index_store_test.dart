@@ -136,4 +136,63 @@ void main() {
       expect((payload['entries'] as List<dynamic>), hasLength(1));
     },
   );
+
+  test(
+    'persistCachedManifestEntries stores optional sha256 without changing compact entry identity',
+    () async {
+      final file = File(p.join(fixtureDirectory.path, 'alpha.txt'));
+      await file.writeAsString('alpha', flush: true);
+
+      const cacheId = 'owner-cache-hash';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Shared Docs',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: fixtureDirectory.path,
+        displayName: 'Shared Docs',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 1234,
+      );
+
+      await indexStore.materializeOwnerFolderIndex(
+        record: record,
+        folderPath: fixtureDirectory.path,
+      );
+      await indexStore.persistCachedManifestEntries(
+        record: record,
+        entries: <SharedFolderIndexEntry>[
+          SharedFolderIndexEntry(
+            relativePath: 'alpha.txt',
+            sizeBytes: file.lengthSync(),
+            modifiedAtMs: file.statSync().modified.millisecondsSinceEpoch,
+            sha256: 'cached-hash',
+          ),
+        ],
+      );
+
+      final entries = await indexStore.readIndexEntries(record);
+      final payload =
+          jsonDecode(await File(indexPath).readAsString())
+              as Map<String, dynamic>;
+
+      expect(entries.single.sha256, 'cached-hash');
+      expect(
+        payload['entries'],
+        contains(
+          allOf(
+            containsPair('p', 'alpha.txt'),
+            containsPair('h', 'cached-hash'),
+          ),
+        ),
+      );
+    },
+  );
 }

@@ -136,6 +136,7 @@ class SharedCacheIndexStore {
           modifiedAtMs: stat.modified.millisecondsSinceEpoch,
           absolutePath: absolutePath,
           thumbnailId: thumbnail?.thumbnailId,
+          sha256: null,
         ),
       );
       if ((index + 1) % 20 == 0) {
@@ -234,6 +235,10 @@ class SharedCacheIndexStore {
           modifiedAtMs: modifiedAtMs,
           absolutePath: absolutePath,
           thumbnailId: thumbnailId,
+          sha256:
+              sizeBytes == entry.sizeBytes && modifiedAtMs == entry.modifiedAtMs
+              ? entry.sha256
+              : null,
         ),
       );
       onProgress?.call(
@@ -327,6 +332,53 @@ class SharedCacheIndexStore {
         cacheId: record.cacheId,
       );
     }
+  }
+
+  Future<bool> persistCachedManifestEntries({
+    required SharedFolderCacheRecord record,
+    required List<SharedFolderIndexEntry> entries,
+  }) async {
+    if (entries.isEmpty) {
+      return false;
+    }
+    final existingEntries = await _readIndexEntriesFromPath(
+      record.indexFilePath,
+    );
+    if (existingEntries.isEmpty) {
+      return false;
+    }
+    final updatesByRelativePath = <String, SharedFolderIndexEntry>{
+      for (final entry in entries) entry.relativePath: entry,
+    };
+    var changed = false;
+    final nextEntries = existingEntries
+        .map((existing) {
+          final update = updatesByRelativePath[existing.relativePath];
+          if (update == null) {
+            return existing;
+          }
+          final next = existing.copyWith(
+            sizeBytes: update.sizeBytes,
+            modifiedAtMs: update.modifiedAtMs,
+            absolutePath: update.absolutePath,
+            clearAbsolutePath: update.absolutePath == null,
+            sha256: update.sha256,
+            clearSha256: update.sha256 == null || update.sha256!.trim().isEmpty,
+          );
+          if (next.sizeBytes != existing.sizeBytes ||
+              next.modifiedAtMs != existing.modifiedAtMs ||
+              next.absolutePath != existing.absolutePath ||
+              next.sha256 != existing.sha256) {
+            changed = true;
+          }
+          return next;
+        })
+        .toList(growable: false);
+    if (!changed) {
+      return false;
+    }
+    await _writeIndexFile(record, nextEntries);
+    return true;
   }
 
   SharedCacheIndexWriteResult _buildWriteResult(
@@ -492,6 +544,7 @@ class SharedCacheIndexStore {
             sizeBytes: probe.sizeBytes,
             modifiedAtMs: probe.modifiedAtMs,
             thumbnailId: thumbnail?.thumbnailId,
+            sha256: null,
           );
         }
 

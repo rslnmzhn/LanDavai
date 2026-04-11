@@ -669,6 +669,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
                 relativePath: item.fileName,
                 sizeBytes: item.sizeBytes,
                 modifiedAtMs: request.createdAt.millisecondsSinceEpoch,
+                sha256: item.sha256,
               ),
             )
             .toList(growable: false);
@@ -1320,6 +1321,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }) async {
     final indexEntries = await _sharedCacheIndexStore.readIndexEntries(cache);
     final items = <_PreparedTransferFile>[];
+    final refreshedManifestEntries = <SharedFolderIndexEntry>[];
     final normalizedFolderPrefixes = folderPrefixFilter
         ?.map(_normalizeTransferPathForMatch)
         .where((prefix) => prefix.isNotEmpty)
@@ -1355,19 +1357,48 @@ class TransferSessionCoordinator extends ChangeNotifier {
       if (stat.type != FileSystemEntityType.file) {
         continue;
       }
-      final sha256Hash = includeHashes
-          ? await _fileHashService.computeSha256ForPath(filePath)
-          : '';
+      final currentSizeBytes = stat.size;
+      final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
+      String sha256Hash = '';
+      if (includeHashes) {
+        final cachedSha256 = entry.sha256?.trim() ?? '';
+        final canReuseCachedManifest =
+            cachedSha256.isNotEmpty &&
+            entry.sizeBytes == currentSizeBytes &&
+            entry.modifiedAtMs == currentModifiedAtMs;
+        if (canReuseCachedManifest) {
+          sha256Hash = cachedSha256;
+        } else {
+          sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
+          refreshedManifestEntries.add(
+            entry.copyWith(
+              sizeBytes: currentSizeBytes,
+              modifiedAtMs: currentModifiedAtMs,
+              absolutePath: cache.rootPath.startsWith('selection://')
+                  ? filePath
+                  : null,
+              clearAbsolutePath: !cache.rootPath.startsWith('selection://'),
+              sha256: sha256Hash,
+            ),
+          );
+        }
+      }
 
       items.add(
         _PreparedTransferFile(
           sourcePath: filePath,
           announcement: TransferAnnouncementItem(
             fileName: entry.relativePath,
-            sizeBytes: entry.sizeBytes,
+            sizeBytes: currentSizeBytes,
             sha256: sha256Hash,
           ),
         ),
+      );
+    }
+    if (refreshedManifestEntries.isNotEmpty) {
+      await _sharedCacheIndexStore.persistCachedManifestEntries(
+        record: cache,
+        entries: refreshedManifestEntries,
       );
     }
     return items;
