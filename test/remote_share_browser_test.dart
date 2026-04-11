@@ -195,10 +195,7 @@ void main() {
       );
       expect(
         directory.entries.files.map((file) => file.subtitle),
-        containsAll(<String>[
-          'Device A • Docs • 4 B',
-          'Device B • Docs • 8 B',
-        ]),
+        containsAll(<String>['Device A • Docs • 4 B', 'Device B • Docs • 8 B']),
       );
     },
   );
@@ -325,13 +322,72 @@ void main() {
     );
   });
 
-  test('flat mode orders media before documents and documents before other files',
-      () async {
+  test(
+    'flat mode orders media before documents and documents before other files',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-media',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-media',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Mixed',
+              itemCount: 3,
+              totalBytes: 12,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'readme.pdf', sizeBytes: 2),
+                SharedCatalogFileItem(relativePath: 'song.mp3', sizeBytes: 3),
+                SharedCatalogFileItem(
+                  relativePath: 'archive.zip',
+                  sizeBytes: 7,
+                ),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final directory = browser.buildExplorerDirectory(
+        filterKey: RemoteShareBrowser.allDevicesFilterKey,
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.flat,
+      );
+
+      expect(
+        directory.entries.files
+            .map((file) => p.basename(file.virtualPath))
+            .toList(),
+        <String>['song.mp3', 'readme.pdf', 'archive.zip'],
+      );
+    },
+  );
+
+  test('flat mode category filtering keeps only selected categories', () async {
     await browser.startBrowse(
       targets: const <DiscoveredDevice>[],
       receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
       requesterName: 'Receiver',
-      requestId: 'request-media',
+      requestId: 'request-filter',
       responseWindow: Duration.zero,
       sendShareQuery:
           ({
@@ -342,7 +398,7 @@ void main() {
     );
     await browser.applyRemoteCatalog(
       event: ShareCatalogEvent(
-        requestId: 'request-media',
+        requestId: 'request-filter',
         ownerIp: '192.168.1.20',
         ownerName: 'Device A',
         ownerMacAddress: '11:22:33:44:55:66',
@@ -355,9 +411,9 @@ void main() {
             itemCount: 3,
             totalBytes: 12,
             files: <SharedCatalogFileItem>[
-              SharedCatalogFileItem(relativePath: 'readme.pdf', sizeBytes: 2),
-              SharedCatalogFileItem(relativePath: 'song.mp3', sizeBytes: 3),
-              SharedCatalogFileItem(relativePath: 'archive.zip', sizeBytes: 7),
+              SharedCatalogFileItem(relativePath: 'photo.jpg', sizeBytes: 2),
+              SharedCatalogFileItem(relativePath: 'readme.pdf', sizeBytes: 3),
+              SharedCatalogFileItem(relativePath: 'script.dart', sizeBytes: 7),
             ],
           ),
         ],
@@ -370,11 +426,17 @@ void main() {
       filterKey: RemoteShareBrowser.allDevicesFilterKey,
       folderPath: '',
       viewMode: RemoteBrowseExplorerViewMode.flat,
+      showAllFlatCategories: false,
+      visibleFlatCategories: const <RemoteBrowseFlatFileCategory>{
+        RemoteBrowseFlatFileCategory.documents,
+      },
     );
 
     expect(
-      directory.entries.files.map((file) => p.basename(file.virtualPath)).toList(),
-      <String>['song.mp3', 'readme.pdf', 'archive.zip'],
+      directory.entries.files
+          .map((file) => p.basename(file.virtualPath))
+          .toList(),
+      <String>['readme.pdf'],
     );
   });
 }

@@ -278,6 +278,290 @@ void main() {
       expect(find.text('report.txt'), findsOneWidget);
     },
   );
+
+  testWidgets('category filter is available only in flat mode', (tester) async {
+    await _setLargeSurface(tester);
+    _registerWidgetCleanup(tester);
+    await _seedCatalog(
+      browser: harness.remoteShareBrowser,
+      ownerIp: '192.168.1.44',
+      ownerName: 'Remote A',
+      cacheId: 'cache-a',
+      displayName: 'Docs',
+      filePath: 'report.pdf',
+    );
+
+    final coordinator = _TestTransferSessionCoordinator(
+      previewPathProvider: () async => null,
+      sharedCacheCatalog: harness.sharedCacheCatalog,
+      sharedCacheIndexStore: harness.sharedCacheIndexStore,
+      previewCacheOwner: harness.previewCacheOwner,
+      downloadHistoryBoundary: harness.downloadHistoryBoundary,
+      settings: harness.readModel.settings,
+    );
+    addTearDown(coordinator.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RemoteDownloadBrowserPage(
+          onRefreshRemoteShares: () async {},
+          remoteShareBrowser: harness.remoteShareBrowser,
+          previewCacheOwner: harness.previewCacheOwner,
+          transferSessionCoordinator: coordinator,
+          useStandardAppDownloadFolder: true,
+        ),
+      ),
+    );
+    await _pumpForUi(tester, frames: 20);
+
+    expect(
+      find.byKey(const Key('remote-download-flat-category-filter-bar')),
+      findsNothing,
+    );
+
+    await tester.tap(find.text('Без структуры'));
+    await _pumpForUi(tester, frames: 8);
+
+    expect(
+      find.byKey(const Key('remote-download-flat-category-filter-bar')),
+      findsOneWidget,
+    );
+    expect(find.text('Показывать все'), findsOneWidget);
+  });
+
+  testWidgets('show all overrides flat category toggles', (tester) async {
+    await _setLargeSurface(tester);
+    _registerWidgetCleanup(tester);
+    await _seedCatalogWithFiles(
+      browser: harness.remoteShareBrowser,
+      ownerIp: '192.168.1.44',
+      ownerName: 'Remote A',
+      cacheId: 'cache-a',
+      displayName: 'Mixed',
+      files: const <String>['photo.jpg', 'report.pdf', 'script.dart'],
+    );
+
+    final coordinator = _TestTransferSessionCoordinator(
+      previewPathProvider: () async => null,
+      sharedCacheCatalog: harness.sharedCacheCatalog,
+      sharedCacheIndexStore: harness.sharedCacheIndexStore,
+      previewCacheOwner: harness.previewCacheOwner,
+      downloadHistoryBoundary: harness.downloadHistoryBoundary,
+      settings: harness.readModel.settings,
+    );
+    addTearDown(coordinator.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: RemoteDownloadBrowserPage(
+          onRefreshRemoteShares: () async {},
+          remoteShareBrowser: harness.remoteShareBrowser,
+          previewCacheOwner: harness.previewCacheOwner,
+          transferSessionCoordinator: coordinator,
+          useStandardAppDownloadFolder: true,
+        ),
+      ),
+    );
+    await _pumpForUi(tester, frames: 20);
+
+    await tester.tap(find.text('Без структуры'));
+    await _pumpForUi(tester, frames: 8);
+
+    expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.text('report.pdf'), findsOneWidget);
+    expect(find.text('script.dart'), findsOneWidget);
+
+    await tester.ensureVisible(
+      find.byKey(const Key('remote-download-category-documents')),
+    );
+    await tester.tap(
+      find.byKey(const Key('remote-download-category-documents')),
+    );
+    await _pumpForUi(tester, frames: 8);
+
+    expect(find.text('photo.jpg'), findsNothing);
+    expect(find.text('report.pdf'), findsOneWidget);
+    expect(find.text('script.dart'), findsNothing);
+
+    await tester.drag(
+      find.byKey(const Key('remote-download-flat-category-filter-bar')),
+      const Offset(640, 0),
+    );
+    await _pumpForUi(tester, frames: 4);
+    await tester.tap(find.byKey(const Key('remote-download-show-all-chip')));
+    await _pumpForUi(tester, frames: 8);
+
+    expect(find.text('photo.jpg'), findsOneWidget);
+    expect(find.text('report.pdf'), findsOneWidget);
+    expect(find.text('script.dart'), findsOneWidget);
+  });
+
+  testWidgets(
+    'flat search respects selected categories while structured mode is unaffected',
+    (tester) async {
+      await _setLargeSurface(tester);
+      _registerWidgetCleanup(tester);
+      await _seedCatalogWithFiles(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Mixed',
+        files: const <String>['nested/song.mp3', 'nested/report.pdf'],
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      expect(
+        find.byKey(const Key('remote-download-flat-category-filter-bar')),
+        findsNothing,
+      );
+      expect(find.text('song.mp3'), findsNothing);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 8);
+
+      await tester.ensureVisible(
+        find.byKey(const Key('remote-download-category-documents')),
+      );
+      await tester.tap(
+        find.byKey(const Key('remote-download-category-documents')),
+      );
+      await _pumpForUi(tester, frames: 8);
+
+      expect(find.text('song.mp3'), findsNothing);
+      expect(find.text('report.pdf'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField), 'song');
+      await _pumpForUi(tester, frames: 8);
+
+      expect(find.text('song.mp3'), findsNothing);
+      expect(find.text('report.pdf'), findsNothing);
+
+      await tester.tap(find.text('Со структурой'));
+      await _pumpForUi(tester, frames: 8);
+
+      expect(
+        find.byKey(const Key('remote-download-flat-category-filter-bar')),
+        findsNothing,
+      );
+      expect(find.text('song.mp3'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'preview and download still work for visible files after category filtering',
+    (tester) async {
+      await _setLargeSurface(tester);
+      _registerWidgetCleanup(tester);
+      final previewFile = File(
+        '${harness.databaseHarness.rootDirectory.path}/filtered-preview.pdf',
+      );
+      await tester.runAsync(() async {
+        await previewFile.writeAsString('preview');
+      });
+
+      await _seedCatalogWithFiles(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Mixed',
+        files: const <String>['cover.jpg', 'report.pdf'],
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => previewFile.path,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 8);
+      await tester.ensureVisible(
+        find.byKey(const Key('remote-download-category-documents')),
+      );
+      await tester.tap(
+        find.byKey(const Key('remote-download-category-documents')),
+      );
+      await _pumpForUi(tester, frames: 8);
+
+      expect(find.text('cover.jpg'), findsNothing);
+      expect(find.text('report.pdf'), findsOneWidget);
+
+      await tester.tap(find.text('report.pdf'));
+      await _pumpUntilFound(
+        tester,
+        find.byType(LocalFileViewerPage, skipOffstage: false),
+        failureMessage: 'Filtered preview did not open the file viewer.',
+      );
+      expect(
+        find.byType(LocalFileViewerPage, skipOffstage: false),
+        findsOneWidget,
+      );
+
+      Navigator.of(
+        tester.element(find.byType(LocalFileViewerPage, skipOffstage: false)),
+      ).pop();
+      await _pumpForUi(tester, frames: 8);
+
+      await tester.tap(
+        find.descendant(
+          of: find.ancestor(
+            of: find.text('report.pdf'),
+            matching: find.byType(ListTile),
+          ),
+          matching: find.byType(Checkbox),
+        ),
+      );
+      await _pumpForUi(tester, frames: 4);
+      await tester.tap(find.text('Скачать выбранные (1)'));
+      await _pumpForUi(tester, frames: 8);
+
+      expect(coordinator.downloadCalls, 1);
+      expect(coordinator.lastSelectedByCache, <String, Set<String>>{
+        'cache-a': <String>{'report.pdf'},
+      });
+    },
+  );
 }
 
 Future<void> _seedCatalog({
@@ -330,6 +614,61 @@ Future<void> _seedCatalog({
   );
 }
 
+Future<void> _seedCatalogWithFiles({
+  required TrackingRemoteShareBrowser browser,
+  required String ownerIp,
+  required String ownerName,
+  required String cacheId,
+  required String displayName,
+  required List<String> files,
+  String requestId = 'request-1',
+  bool startBrowse = true,
+}) async {
+  if (startBrowse) {
+    await browser.startBrowse(
+      targets: const <DiscoveredDevice>[],
+      receiverMacAddress: 'aa:bb:cc:dd:ee:ff',
+      requesterName: 'Receiver',
+      requestId: requestId,
+      responseWindow: Duration.zero,
+      sendShareQuery:
+          ({
+            required String targetIp,
+            required String requestId,
+            required String requesterName,
+          }) async {},
+    );
+  }
+  await browser.applyRemoteCatalog(
+    event: ShareCatalogEvent(
+      requestId: requestId,
+      ownerIp: ownerIp,
+      ownerName: ownerName,
+      ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+      entries: <SharedCatalogEntryItem>[
+        SharedCatalogEntryItem(
+          cacheId: cacheId,
+          displayName: displayName,
+          itemCount: files.length,
+          totalBytes: files.length * 12,
+          files: files
+              .map(
+                (filePath) => SharedCatalogFileItem(
+                  relativePath: filePath,
+                  sizeBytes: 12,
+                ),
+              )
+              .toList(growable: false),
+        ),
+      ],
+      removedCacheIds: const <String>[],
+      observedAt: DateTime(2026, 1, 2),
+    ),
+    ownerDisplayName: ownerName,
+    ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+  );
+}
+
 Future<void> _pumpForUi(WidgetTester tester, {int frames = 12}) async {
   for (var i = 0; i < frames; i += 1) {
     await tester.pump(const Duration(milliseconds: 50));
@@ -358,6 +697,13 @@ void _registerWidgetCleanup(WidgetTester tester) {
     await tester.pumpWidget(const SizedBox.shrink());
     await _pumpForUi(tester);
   });
+}
+
+Future<void> _setLargeSurface(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(1440, 2200);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
 }
 
 class _TestTransferSessionCoordinator extends TransferSessionCoordinator {

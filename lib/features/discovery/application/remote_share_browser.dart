@@ -127,6 +127,8 @@ enum RemoteBrowseExplorerViewMode { structured, flat }
 
 enum RemoteBrowseMediaKind { image, video, other }
 
+enum RemoteBrowseFlatFileCategory { images, videos, music, documents, programs }
+
 class RemoteBrowseFileChoice {
   const RemoteBrowseFileChoice({
     required this.ownerIp,
@@ -364,13 +366,21 @@ class RemoteShareBrowser extends ChangeNotifier {
     required String filterKey,
     required String folderPath,
     required RemoteBrowseExplorerViewMode viewMode,
+    Set<RemoteBrowseFlatFileCategory>? visibleFlatCategories,
+    bool showAllFlatCategories = true,
   }) {
     if (viewMode == RemoteBrowseExplorerViewMode.flat) {
-      return _buildFlatExplorerDirectory(filterKey: filterKey);
+      return _buildFlatExplorerDirectory(
+        filterKey: filterKey,
+        visibleCategories: visibleFlatCategories,
+        showAllCategories: showAllFlatCategories,
+      );
     }
     final ownerIp = filterKey == allDevicesFilterKey ? null : filterKey;
     if (ownerIp == null) {
-      return _buildStructuredAggregatedExplorerDirectory(folderPath: folderPath);
+      return _buildStructuredAggregatedExplorerDirectory(
+        folderPath: folderPath,
+      );
     }
     return _buildOwnerExplorerDirectory(
       ownerIp: ownerIp,
@@ -631,6 +641,8 @@ class RemoteShareBrowser extends ChangeNotifier {
 
   RemoteBrowseExplorerDirectory _buildFlatExplorerDirectory({
     required String filterKey,
+    required Set<RemoteBrowseFlatFileCategory>? visibleCategories,
+    required bool showAllCategories,
   }) {
     final files = <RemoteBrowseResolvedFile>[];
     for (final option in _options) {
@@ -653,6 +665,18 @@ class RemoteShareBrowser extends ChangeNotifier {
         break;
       }
     }
+    files.removeWhere((file) {
+      if (showAllCategories) {
+        return false;
+      }
+      final categories = visibleCategories;
+      if (categories == null || categories.isEmpty) {
+        return true;
+      }
+      return !categories.contains(
+        flatCategoryForRelativePath(file.relativePath),
+      );
+    });
     files.sort(_compareFlatResolvedFiles);
     final entries = files
         .map(
@@ -697,7 +721,9 @@ class RemoteShareBrowser extends ChangeNotifier {
         if (visibleFiles >= maxVisibleFiles) {
           continue;
         }
-        final normalizedRelativePath = _normalizeRelativePath(file.relativePath);
+        final normalizedRelativePath = _normalizeRelativePath(
+          file.relativePath,
+        );
         final browserPath = normalizedRelativePath.isEmpty
             ? '$deviceFolderName/$shareFolderName'
             : '$deviceFolderName/$shareFolderName/$normalizedRelativePath';
@@ -1009,15 +1035,53 @@ class RemoteShareBrowser extends ChangeNotifier {
   }
 
   int _flatCategoryRank(RemoteBrowseResolvedFile file) {
-    if (file.mediaKind == RemoteBrowseMediaKind.image ||
-        file.mediaKind == RemoteBrowseMediaKind.video ||
-        _audioExtensions.contains(p.extension(file.relativePath).toLowerCase())) {
-      return 0;
+    switch (flatCategoryForRelativePath(file.relativePath)) {
+      case RemoteBrowseFlatFileCategory.images:
+      case RemoteBrowseFlatFileCategory.videos:
+      case RemoteBrowseFlatFileCategory.music:
+        return 0;
+      case RemoteBrowseFlatFileCategory.documents:
+        return 1;
+      case RemoteBrowseFlatFileCategory.programs:
+        return 2;
     }
-    if (_documentExtensions.contains(p.extension(file.relativePath).toLowerCase())) {
-      return 1;
+  }
+
+  RemoteBrowseFlatFileCategory flatCategoryForRelativePath(
+    String relativePath,
+  ) {
+    final extension = p.extension(relativePath).toLowerCase();
+    if (RemoteBrowseFileChoice._imageExtensions.contains(extension)) {
+      return RemoteBrowseFlatFileCategory.images;
     }
-    return 2;
+    if (RemoteBrowseFileChoice._videoExtensions.contains(extension)) {
+      return RemoteBrowseFlatFileCategory.videos;
+    }
+    if (_audioExtensions.contains(extension)) {
+      return RemoteBrowseFlatFileCategory.music;
+    }
+    if (_documentExtensions.contains(extension)) {
+      return RemoteBrowseFlatFileCategory.documents;
+    }
+    if (_programExtensions.contains(extension)) {
+      return RemoteBrowseFlatFileCategory.programs;
+    }
+    return RemoteBrowseFlatFileCategory.programs;
+  }
+
+  String flatCategoryLabel(RemoteBrowseFlatFileCategory category) {
+    switch (category) {
+      case RemoteBrowseFlatFileCategory.images:
+        return 'Показывать картинки';
+      case RemoteBrowseFlatFileCategory.videos:
+        return 'Показывать видео';
+      case RemoteBrowseFlatFileCategory.music:
+        return 'Показывать музыку';
+      case RemoteBrowseFlatFileCategory.documents:
+        return 'Показывать документы';
+      case RemoteBrowseFlatFileCategory.programs:
+        return 'Показывать программные файлы';
+    }
   }
 
   String _previewLabelForRelativePath(String relativePath) {
@@ -1066,6 +1130,9 @@ class RemoteShareBrowser extends ChangeNotifier {
     '.pdf',
     '.doc',
     '.docx',
+    '.txt',
+    '.md',
+    '.csv',
     '.rtf',
     '.odt',
     '.pages',
@@ -1073,6 +1140,56 @@ class RemoteShareBrowser extends ChangeNotifier {
     '.xlsx',
     '.ppt',
     '.pptx',
+    '.ods',
+    '.odp',
+    '.epub',
+  };
+
+  static const Set<String> _programExtensions = <String>{
+    '',
+    '.dart',
+    '.kt',
+    '.java',
+    '.swift',
+    '.m',
+    '.mm',
+    '.c',
+    '.cc',
+    '.cpp',
+    '.cxx',
+    '.h',
+    '.hpp',
+    '.cs',
+    '.js',
+    '.ts',
+    '.tsx',
+    '.jsx',
+    '.py',
+    '.rb',
+    '.go',
+    '.rs',
+    '.php',
+    '.html',
+    '.css',
+    '.scss',
+    '.json',
+    '.yaml',
+    '.yml',
+    '.xml',
+    '.sh',
+    '.bat',
+    '.ps1',
+    '.exe',
+    '.msi',
+    '.apk',
+    '.ipa',
+    '.deb',
+    '.rpm',
+    '.appimage',
+    '.zip',
+    '.tar',
+    '.gz',
+    '.7z',
   };
 }
 

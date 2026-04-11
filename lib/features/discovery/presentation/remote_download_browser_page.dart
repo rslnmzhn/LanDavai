@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_colors.dart';
@@ -38,6 +39,15 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
 }
 
 class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
+  static const Set<RemoteBrowseFlatFileCategory> _allFlatCategories =
+      <RemoteBrowseFlatFileCategory>{
+        RemoteBrowseFlatFileCategory.images,
+        RemoteBrowseFlatFileCategory.videos,
+        RemoteBrowseFlatFileCategory.music,
+        RemoteBrowseFlatFileCategory.documents,
+        RemoteBrowseFlatFileCategory.programs,
+      };
+
   final TextEditingController _searchController = TextEditingController();
   final Map<String, FilesFeatureStateOwner> _ownersByFilterKey =
       <String, FilesFeatureStateOwner>{};
@@ -46,12 +56,17 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   String _activeFilterKey = RemoteShareBrowser.allDevicesFilterKey;
   RemoteBrowseExplorerViewMode _viewMode =
       RemoteBrowseExplorerViewMode.structured;
+  bool _showAllFlatCategories = true;
+  Set<RemoteBrowseFlatFileCategory> _visibleFlatCategories = _allFlatCategories;
   String? _previewingToken;
   bool _isDownloading = false;
 
   RemoteShareBrowser get _browser => widget.remoteShareBrowser;
 
   String get _activeOwnerCacheKey => '${_viewMode.name}|$_activeFilterKey';
+
+  Set<RemoteBrowseFlatFileCategory>? get _effectiveVisibleFlatCategories =>
+      _showAllFlatCategories ? null : _visibleFlatCategories;
 
   FilesFeatureStateOwner? get _activeOwner =>
       _ownersByFilterKey[_activeOwnerCacheKey];
@@ -126,6 +141,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                   filterKey: filterKey,
                   folderPath: folderPath,
                   viewMode: _viewMode,
+                  visibleFlatCategories: _effectiveVisibleFlatCategories,
+                  showAllFlatCategories: _showAllFlatCategories,
                 )
                 .entries;
           },
@@ -183,6 +200,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           filterKey: _activeFilterKey,
           folderPath: activeOwner?.normalizedVirtualCurrentFolder ?? '',
           viewMode: _viewMode,
+          visibleFlatCategories: _effectiveVisibleFlatCategories,
+          showAllFlatCategories: _showAllFlatCategories,
         );
         final state = activeOwner?.state;
         final visibleEntries =
@@ -223,6 +242,16 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                         selectedKey: _activeFilterKey,
                         onSelected: _handleFilterSelected,
                       ),
+                      if (_viewMode == RemoteBrowseExplorerViewMode.flat) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        _FlatCategoryFilterBar(
+                          browser: _browser,
+                          showAll: _showAllFlatCategories,
+                          selectedCategories: _visibleFlatCategories,
+                          onShowAllChanged: _handleShowAllFlatCategoriesChanged,
+                          onCategoryChanged: _handleFlatCategoryChanged,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -484,7 +513,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     _syncSearchController();
   }
 
-  Future<void> _handleViewModeChanged(RemoteBrowseExplorerViewMode nextMode) async {
+  Future<void> _handleViewModeChanged(
+    RemoteBrowseExplorerViewMode nextMode,
+  ) async {
     if (_viewMode == nextMode) {
       return;
     }
@@ -496,6 +527,64 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       return;
     }
     _syncSearchController();
+    setState(() {});
+  }
+
+  Future<void> _handleShowAllFlatCategoriesChanged(bool nextValue) async {
+    if (_showAllFlatCategories == nextValue) {
+      return;
+    }
+    setState(() {
+      _showAllFlatCategories = nextValue;
+      if (nextValue &&
+          _visibleFlatCategories.length != _allFlatCategories.length) {
+        _visibleFlatCategories = _allFlatCategories;
+      }
+    });
+    await _refreshFlatOwners();
+  }
+
+  Future<void> _handleFlatCategoryChanged(
+    RemoteBrowseFlatFileCategory category,
+    bool nextValue,
+  ) async {
+    final nextCategories = _showAllFlatCategories
+        ? <RemoteBrowseFlatFileCategory>{category}
+        : Set<RemoteBrowseFlatFileCategory>.from(_visibleFlatCategories);
+    if (nextValue) {
+      nextCategories.add(category);
+    } else {
+      nextCategories.remove(category);
+    }
+    if (setEquals(nextCategories, _visibleFlatCategories) &&
+        !_showAllFlatCategories) {
+      return;
+    }
+    setState(() {
+      _showAllFlatCategories = false;
+      _visibleFlatCategories = nextCategories;
+    });
+    await _refreshFlatOwners();
+  }
+
+  Future<void> _refreshFlatOwners() async {
+    final flatOwners = _ownersByFilterKey.entries
+        .where(
+          (entry) => entry.key.startsWith(
+            '${RemoteBrowseExplorerViewMode.flat.name}|',
+          ),
+        )
+        .map((entry) => entry.value)
+        .toList(growable: false);
+    if (flatOwners.isNotEmpty) {
+      for (final owner in flatOwners) {
+        owner.invalidateSelectedVirtualRootCache();
+      }
+      await Future.wait(flatOwners.map((owner) => owner.refreshCurrentRoot()));
+    }
+    if (!mounted) {
+      return;
+    }
     setState(() {});
   }
 
@@ -766,6 +855,66 @@ class _DeviceFilterBar extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+}
+
+class _FlatCategoryFilterBar extends StatelessWidget {
+  const _FlatCategoryFilterBar({
+    required this.browser,
+    required this.showAll,
+    required this.selectedCategories,
+    required this.onShowAllChanged,
+    required this.onCategoryChanged,
+  });
+
+  final RemoteShareBrowser browser;
+  final bool showAll;
+  final Set<RemoteBrowseFlatFileCategory> selectedCategories;
+  final ValueChanged<bool> onShowAllChanged;
+  final void Function(RemoteBrowseFlatFileCategory category, bool value)
+  onCategoryChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final chips = <Widget>[
+      FilterChip(
+        key: const Key('remote-download-show-all-chip'),
+        label: const Text('Показывать все'),
+        selected: showAll,
+        onSelected: onShowAllChanged,
+      ),
+      ...RemoteBrowseFlatFileCategory.values.map((category) {
+        return FilterChip(
+          key: Key('remote-download-category-${category.name}'),
+          label: Text(browser.flatCategoryLabel(category)),
+          selected: !showAll && selectedCategories.contains(category),
+          onSelected: (value) => onCategoryChanged(category, value),
+        );
+      }),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Категории файлов',
+          style: Theme.of(
+            context,
+          ).textTheme.labelLarge?.copyWith(color: AppColors.textSecondary),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        SizedBox(
+          height: 40,
+          child: ListView.separated(
+            key: const Key('remote-download-flat-category-filter-bar'),
+            scrollDirection: Axis.horizontal,
+            itemCount: chips.length,
+            separatorBuilder: (context, index) =>
+                const SizedBox(width: AppSpacing.xs),
+            itemBuilder: (context, index) => chips[index],
+          ),
+        ),
+      ],
     );
   }
 }
