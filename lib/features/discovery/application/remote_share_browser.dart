@@ -345,7 +345,8 @@ class RemoteShareBrowser extends ChangeNotifier {
     _options.removeWhere((option) => option.ownerIp == event.ownerIp);
     _clearOwnerPreviewPaths(ownerIp: event.ownerIp, notify: false);
 
-    for (final entry in event.entries) {
+    final dedupedEntries = _dedupeEntriesForProjection(event.entries);
+    for (final entry in dedupedEntries) {
       final uiEntry = _trimRemoteShareEntryForProjection(entry);
       _options.add(
         RemoteShareOption(
@@ -753,8 +754,13 @@ class RemoteShareBrowser extends ChangeNotifier {
             path: 'remote://${file.token}',
             virtualPath: file.relativePath,
             sourceToken: file.token,
-            subtitle:
-                '${file.ownerName} • ${file.cacheDisplayName} • ${_formatBytes(file.sizeBytes)}',
+            subtitle: _buildUserFacingFileSubtitle(
+              ownerName: file.ownerName,
+              shareDisplayName: file.cacheDisplayName,
+              relativePath: file.relativePath,
+              sizeBytes: file.sizeBytes,
+              includeOwner: filterKey == allDevicesFilterKey,
+            ),
             sizeBytes: file.sizeBytes,
             modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
             changedAt: DateTime.fromMillisecondsSinceEpoch(0),
@@ -833,8 +839,13 @@ class RemoteShareBrowser extends ChangeNotifier {
             path: 'remote://${resolved.token}',
             virtualPath: browserPath,
             sourceToken: resolved.token,
-            subtitle:
-                '${option.ownerName} • ${option.entry.displayName} • ${_formatBytes(file.sizeBytes)}',
+            subtitle: _buildUserFacingFileSubtitle(
+              ownerName: option.ownerName,
+              shareDisplayName: option.entry.displayName,
+              relativePath: normalizedRelativePath,
+              sizeBytes: file.sizeBytes,
+              includeOwner: true,
+            ),
             sizeBytes: file.sizeBytes,
             modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
             changedAt: DateTime.fromMillisecondsSinceEpoch(0),
@@ -927,8 +938,12 @@ class RemoteShareBrowser extends ChangeNotifier {
             path: 'remote://${resolved.token}',
             virtualPath: browserPath,
             sourceToken: resolved.token,
-            subtitle:
-                '${option.entry.displayName} • ${_formatBytes(file.sizeBytes)}',
+            subtitle: _buildUserFacingFileSubtitle(
+              ownerName: option.ownerName,
+              shareDisplayName: option.entry.displayName,
+              relativePath: normalizedRelativePath,
+              sizeBytes: file.sizeBytes,
+            ),
             sizeBytes: file.sizeBytes,
             modifiedAt: DateTime.fromMillisecondsSinceEpoch(0),
             changedAt: DateTime.fromMillisecondsSinceEpoch(0),
@@ -1057,6 +1072,21 @@ class RemoteShareBrowser extends ChangeNotifier {
     return '${option.ownerName} • ${_shareFolderName(option.entry)}';
   }
 
+  String _buildUserFacingFileSubtitle({
+    required String ownerName,
+    required String shareDisplayName,
+    required String relativePath,
+    required int sizeBytes,
+    bool includeOwner = false,
+  }) {
+    final pathSegments = <String>[
+      if (includeOwner) ownerName.trim(),
+      _userFacingShareDisplayName(shareDisplayName),
+      if (relativePath.trim().isNotEmpty) _normalizeRelativePath(relativePath),
+    ];
+    return '${pathSegments.join(' / ')} • ${_formatBytes(sizeBytes)}';
+  }
+
   String _aggregatedFolderToken({
     required RemoteShareOption option,
     required String currentFolderPath,
@@ -1105,11 +1135,37 @@ class RemoteShareBrowser extends ChangeNotifier {
   }
 
   String _shareFolderName(SharedCatalogEntryItem entry) {
-    final trimmed = entry.displayName.trim();
+    return _userFacingShareDisplayName(entry.displayName);
+  }
+
+  String _userFacingShareDisplayName(String rawDisplayName) {
+    final trimmed = rawDisplayName.trim();
     if (trimmed.isEmpty) {
-      return 'Share ${entry.cacheId.substring(0, 6)}';
+      return 'Shared folder';
     }
-    return '$trimmed · ${entry.cacheId.substring(0, 6)}';
+    return trimmed;
+  }
+
+  List<SharedCatalogEntryItem> _dedupeEntriesForProjection(
+    List<SharedCatalogEntryItem> entries,
+  ) {
+    final deduped = <SharedCatalogEntryItem>[];
+    final seenKeys = <String>{};
+    for (final entry in entries) {
+      final key = _projectionDedupKey(entry);
+      if (seenKeys.add(key)) {
+        deduped.add(entry);
+      }
+    }
+    return deduped;
+  }
+
+  String _projectionDedupKey(SharedCatalogEntryItem entry) {
+    final displayName = entry.displayName.trim().toLowerCase();
+    if (displayName.isEmpty) {
+      return entry.cacheId;
+    }
+    return displayName;
   }
 
   String _fileToken({

@@ -195,7 +195,10 @@ void main() {
       );
       expect(
         directory.entries.files.map((file) => file.subtitle),
-        containsAll(<String>['Device A • Docs • 4 B', 'Device B • Docs • 8 B']),
+        containsAll(<String>[
+          'Device A / Docs / report.txt • 4 B',
+          'Device B / Docs / report.txt • 8 B',
+        ]),
       );
     },
   );
@@ -228,6 +231,142 @@ void main() {
       expect(resolved.cacheId, 'remote-cache-1');
       expect(resolved.relativePath, 'report.txt');
       expect(browser.containsFileToken(file.sourceToken!), isTrue);
+      expect(file.subtitle, 'Docs / report.txt • 4 B');
+    },
+  );
+
+  test(
+    'projection collapses versioned duplicates to the newest share entry only',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-dedupe',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-dedupe',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-new',
+              displayName: 'Docs',
+              itemCount: 1,
+              totalBytes: 10,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(
+                  relativePath: 'latest.txt',
+                  sizeBytes: 10,
+                ),
+              ],
+            ),
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-old',
+              displayName: 'Docs',
+              itemCount: 1,
+              totalBytes: 8,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'old.txt', sizeBytes: 8),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(root.entries.folders, hasLength(1));
+      expect(root.entries.folders.single.name, 'Docs');
+
+      final shareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: root.entries.folders.single.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(
+        shareDirectory.entries.files.map(
+          (file) => p.basename(file.virtualPath),
+        ),
+        <String>['latest.txt'],
+      );
+    },
+  );
+
+  test(
+    'projection keeps different real folders visible when display names differ',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-no-merge',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-no-merge',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Docs',
+              itemCount: 1,
+              totalBytes: 10,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'a.txt', sizeBytes: 10),
+              ],
+            ),
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-2',
+              displayName: 'Docs 2026',
+              itemCount: 1,
+              totalBytes: 8,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(relativePath: 'b.txt', sizeBytes: 8),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(
+        root.entries.folders.map((folder) => folder.name),
+        containsAll(<String>['Docs', 'Docs 2026']),
+      );
     },
   );
 

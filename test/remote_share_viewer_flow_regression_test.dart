@@ -367,6 +367,7 @@ void main() {
 
       expect(find.text('docs'), findsOneWidget);
       expect(find.text('top.txt'), findsOneWidget);
+      expect(find.text('Remote A / Share / top.txt • 12 B'), findsOneWidget);
     },
   );
 
