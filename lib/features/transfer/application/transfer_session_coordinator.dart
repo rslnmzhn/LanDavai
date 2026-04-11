@@ -135,6 +135,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
       <String, Completer<String?>>{};
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
+  final Map<String, List<_PreparedTransferFile>>
+  _preparedTransferFilesByScopeKey = <String, List<_PreparedTransferFile>>{};
 
   final Duration pendingRemoteDownloadTtl;
   final Duration pendingRemotePreviewTtl;
@@ -155,6 +157,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   TransferSessionNotice? _pendingNotice;
   SharedDownloadPreparationState? _sharedDownloadPreparationState;
   bool _disposed = false;
+  int _preparedTransferScopeCacheHits = 0;
 
   bool get isSendingTransfer => _isSendingTransfer;
   bool get isUploading =>
@@ -189,6 +192,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
   SharedDownloadPreparationState? get sharedDownloadPreparationState =>
       _sharedDownloadPreparationState;
   bool get isPreparingSharedDownload => _sharedDownloadPreparationState != null;
+  @visibleForTesting
+  int get preparedTransferScopeCacheEntryCount =>
+      _preparedTransferFilesByScopeKey.length;
+  @visibleForTesting
+  int get preparedTransferScopeCacheHits => _preparedTransferScopeCacheHits;
 
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;
@@ -1606,11 +1614,23 @@ class TransferSessionCoordinator extends ChangeNotifier {
     Set<String>? folderPrefixFilter,
     bool includeHashes = true,
   }) async {
-    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
+    var scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
       cache,
       relativePathFilter: relativePathFilter,
       folderPrefixFilter: folderPrefixFilter,
     );
+    final initialScopeCacheKey = _preparedTransferScopeCacheKey(
+      cacheId: cache.cacheId,
+      selectionFingerprint: scopedSelection.fingerprint,
+      includeHashes: includeHashes,
+    );
+    final cachedPreparedFiles =
+        _preparedTransferFilesByScopeKey[initialScopeCacheKey];
+    if (cachedPreparedFiles != null) {
+      _preparedTransferScopeCacheHits += 1;
+      return cachedPreparedFiles;
+    }
+
     final items = <_PreparedTransferFile>[];
     final refreshedManifestEntries = <SharedFolderIndexEntry>[];
     for (final entry in scopedSelection.entries) {
@@ -1669,8 +1689,56 @@ class TransferSessionCoordinator extends ChangeNotifier {
         record: cache,
         entries: refreshedManifestEntries,
       );
+      scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
+        cache,
+        relativePathFilter: relativePathFilter,
+        folderPrefixFilter: folderPrefixFilter,
+      );
     }
-    return items;
+    final preparedItems = List<_PreparedTransferFile>.unmodifiable(items);
+    _cachePreparedTransferFiles(
+      cacheId: cache.cacheId,
+      selectionFingerprint: scopedSelection.fingerprint,
+      includeHashes: includeHashes,
+      files: preparedItems,
+    );
+    return preparedItems;
+  }
+
+  String _preparedTransferScopeCacheKey({
+    required String cacheId,
+    required String selectionFingerprint,
+    required bool includeHashes,
+  }) {
+    return '$cacheId|$selectionFingerprint|$includeHashes';
+  }
+
+  void _cachePreparedTransferFiles({
+    required String cacheId,
+    required String selectionFingerprint,
+    required bool includeHashes,
+    required List<_PreparedTransferFile> files,
+  }) {
+    final cacheKey = _preparedTransferScopeCacheKey(
+      cacheId: cacheId,
+      selectionFingerprint: selectionFingerprint,
+      includeHashes: includeHashes,
+    );
+    _preparedTransferFilesByScopeKey[cacheKey] = files;
+
+    const maxEntriesPerCache = 8;
+    final keysForCache = _preparedTransferFilesByScopeKey.keys
+        .where((key) => key.startsWith('$cacheId|'))
+        .toList(growable: false);
+    if (keysForCache.length <= maxEntriesPerCache) {
+      return;
+    }
+    final keysToRemove = keysForCache.take(
+      keysForCache.length - maxEntriesPerCache,
+    );
+    for (final key in keysToRemove) {
+      _preparedTransferFilesByScopeKey.remove(key);
+    }
   }
 
   SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {

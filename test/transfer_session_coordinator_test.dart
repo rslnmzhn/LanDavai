@@ -361,6 +361,186 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
+        expect(coordinator.preparedTransferScopeCacheHits, 1);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
+      },
+    );
+
+    test(
+      'whole-root shared download reuses prepared scope when fingerprint is unchanged',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_fingerprint_root'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'docs', 'sub'),
+        ).create(recursive: true);
+        await File(p.join(ownerRoot.path, 'docs', 'a.txt')).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'docs', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        final cacheResult = await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: ownerRoot.path,
+          displayName: 'Docs',
+        );
+        final cache = cacheResult.record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileHashService = CountingFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-root-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+        expect(coordinator.preparedTransferScopeCacheHits, 0);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-root-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026, 1, 2),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+        expect(coordinator.preparedTransferScopeCacheHits, 1);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
+      },
+    );
+
+    test(
+      'nested folder shared download reuses prepared scope until fingerprint changes',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_fingerprint_nested'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'docs', 'sub'),
+        ).create(recursive: true);
+        await File(p.join(ownerRoot.path, 'docs', 'a.txt')).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'docs', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        await File(p.join(ownerRoot.path, 'top.txt')).writeAsString('top');
+        var cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: ownerRoot.path,
+          displayName: 'Docs',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileHashService = CountingFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-prefix-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>['docs'],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+        expect(coordinator.preparedTransferScopeCacheHits, 0);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-prefix-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>['docs'],
+            previewMode: false,
+            observedAt: DateTime(2026, 1, 2),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileHashService.computeCalls, 2);
+        expect(coordinator.preparedTransferScopeCacheHits, 1);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
+
+        await File(p.join(ownerRoot.path, 'docs', 'c.txt')).writeAsString('c');
+        cache = await sharedCacheCatalog.refreshOwnerFolderSubdirectoryEntries(
+          cache,
+          relativeFolderPath: 'docs',
+        );
+        final changedFingerprint = await sharedCacheIndexStore
+            .readTreeFingerprint(cache, relativeFolderPath: 'docs');
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-prefix-3',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>['docs'],
+            previewMode: false,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(changedFingerprint.itemCount, 3);
+        expect(fileHashService.computeCalls, greaterThan(2));
+        expect(coordinator.preparedTransferScopeCacheHits, 1);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 2);
       },
     );
 
