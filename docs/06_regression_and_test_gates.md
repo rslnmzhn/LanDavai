@@ -46,12 +46,22 @@ Purpose:
 Purpose:
 
 - shared download handshake and direct-start path
+- sender-side explicit approval/reject routing
+- sender-side preparation state before upload start
 - fingerprint-backed manifest/cache reuse
 - safe invalidation and rebuild when indexed state changes
 - folder-prefix download scaling
 - large folder transfer continuity without reintroducing giant path expansion
 - receiver/preview continuity
 - remote-share projection integrity
+
+Required proof points for the current shared-download baseline:
+
+- requester-side shared download still starts through the expected handshake path
+- sender-side incoming shared download request is exposed before preparation starts
+- sender-side reject sends a real protocol response and prevents transfer start
+- sender-side approve enters real preparation state before sending/upload begins
+- preview remains outside sender approval flow
 
 ## Nearby-transfer coverage
 
@@ -74,3 +84,13 @@ Update this file when:
 - a new regression gate becomes a required baseline proof
 - an old gate is replaced or removed
 - a new active feature seam gains dedicated regression coverage
+
+## Manual verification notes
+
+When shared-download sender approval/progress changes:
+
+- manually verify happy-path sender approve
+- manually verify sender reject path
+- manually verify sender preparation/progress visibility before upload starts
+
+If Windows `flutter test` is blocked by the known `build/native_assets/windows/sqlite3.dll` native-assets lock/copy issue, record it as an environment limitation rather than an app defect.

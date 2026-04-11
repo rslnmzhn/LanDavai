@@ -33,7 +33,7 @@ Truth stays in explicit owners and boundaries. `DiscoveryController` is a thin s
 - `PreviewCacheOwner`
   Preview cache lifecycle, preview artifact directories, cleanup policy.
 - `TransferSessionCoordinator`
-  Live transfer/session truth, shared-download handshake/progress/preparation states, and ephemeral consumption of fingerprint-backed indexed reuse. It does not own index or fingerprint truth.
+  Live transfer/session truth, sender-side incoming shared-download approval/reject state, shared-download handshake/progress/preparation states, and ephemeral consumption of fingerprint-backed indexed reuse. It does not own index or fingerprint truth.
 - `VideoLinkSessionBoundary`
   Video-link session commands and projection.
 - `DownloadHistoryBoundary`

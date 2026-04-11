@@ -47,6 +47,26 @@ Preview remains separate from normal explicit downloads.
    - waiting for remote side
 5. Active byte progress starts only after the actual file stream begins.
 
+## Sender-side approval and preparation flow
+
+Normal shared-access downloads no longer auto-start silently on the sender.
+
+1. Sender receives `DownloadRequestEvent`.
+2. `TransferSessionCoordinator` resolves the requested shared cache and creates an `IncomingSharedDownloadRequest`.
+3. Discovery shell shows an explicit sender-side approval surface with:
+   - requester device name
+   - requested file/folder summary
+   - actions `Отправить` and `Отказать`
+4. If sender rejects:
+   - coordinator sends a `DownloadResponseEvent` with `approved = false`
+   - requester-side pending download is cleared and the requester gets a rejection notice
+5. If sender approves:
+   - coordinator enters sender-side preparation stages
+   - direct-start explicit file/folder-prefix downloads may still skip the extra transfer-request round-trip
+   - legacy path downloads continue through `TransferRequest -> TransferDecision`
+
+Sender-side preparation UI is owner-backed by `TransferSessionCoordinator` and surfaced in the discovery shell. It reflects real preparation stages, not fake progress.
+
 ## Folder download model
 
 - Whole shared-root download uses whole-cache semantics.
@@ -93,10 +113,12 @@ Preview stays on the legacy path.
 
 ## Current sender confirmation behavior
 
-There is no sender-side explicit approval UI for shared-access downloads in the current production flow.
+Sender-side explicit approval now exists in the production shared-download flow.
 
-- Sender may emit a notification/notice.
-- Shared download is prepared automatically on the sender side.
+- Sender gets an app-level alert signal when a non-preview shared download request arrives.
+- Sender sees an explicit approval/reject surface before preparation starts.
+- Sender-side preparation state is visible after approval and before actual sending begins.
+- Preview stays separate and does not use the sender approval surface.
 
 ## Main files
 
@@ -114,3 +136,4 @@ There is no sender-side explicit approval UI for shared-access downloads in the 
 - `test/remote_share_viewer_flow_regression_test.dart`
 - `test/transfer_session_coordinator_test.dart`
 - `test/lan_discovery_service_protocol_handlers_test.dart`
+- `test/smoke_test.dart`
