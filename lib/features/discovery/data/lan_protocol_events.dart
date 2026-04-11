@@ -141,6 +141,7 @@ class DownloadRequestEvent {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.selectedFolderPrefixes,
     required this.previewMode,
     required this.observedAt,
   });
@@ -151,6 +152,7 @@ class DownloadRequestEvent {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final List<String> selectedFolderPrefixes;
   final bool previewMode;
   final DateTime observedAt;
 }

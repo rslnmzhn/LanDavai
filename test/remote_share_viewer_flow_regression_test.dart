@@ -220,6 +220,7 @@ void main() {
     expect(coordinator.lastSelectedByCache, <String, Set<String>>{
       'cache-a': <String>{'report.txt'},
     });
+    expect(coordinator.lastSelectedFolderPrefixesByCache, isEmpty);
   });
 
   testWidgets(
@@ -273,9 +274,13 @@ void main() {
       await _pumpForUi(tester, frames: 8);
 
       expect(coordinator.downloadCalls, 1);
-      expect(coordinator.lastSelectedByCache, <String, Set<String>>{
-        'cache-a': <String>{'docs/a.txt', 'docs/sub/b.txt'},
-      });
+      expect(coordinator.lastSelectedByCache, <String, Set<String>>{});
+      expect(
+        coordinator.lastSelectedFolderPrefixesByCache,
+        <String, Set<String>>{
+          'cache-a': <String>{'docs'},
+        },
+      );
     },
   );
 
@@ -949,6 +954,7 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
   final Future<String?> Function() _previewPathProvider;
   int downloadCalls = 0;
   Map<String, Set<String>>? lastSelectedByCache;
+  Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
 
   @override
   List<IncomingTransferRequest> get incomingRequests =>
@@ -969,9 +975,12 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
     required String ownerIp,
     required String ownerName,
     required Map<String, Set<String>> selectedRelativePathsByCache,
+    Map<String, Set<String>> selectedFolderPrefixesByCache =
+        const <String, Set<String>>{},
     required bool useStandardAppDownloadFolder,
   }) async {
     downloadCalls += 1;
     lastSelectedByCache = selectedRelativePathsByCache;
+    lastSelectedFolderPrefixesByCache = selectedFolderPrefixesByCache;
   }
 }

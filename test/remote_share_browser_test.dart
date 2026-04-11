@@ -432,6 +432,10 @@ void main() {
         wholeShareTarget!.selectedRelativePathsByCache,
         <String, Set<String>>{'remote-cache-1': <String>{}},
       );
+      expect(
+        wholeShareTarget.selectedFolderPrefixesByCache,
+        const <String, Set<String>>{},
+      );
 
       final shareDirectory = browser.buildExplorerDirectory(
         filterKey: '192.168.1.20',
@@ -446,8 +450,84 @@ void main() {
       );
 
       expect(nestedTarget, isNotNull);
-      expect(nestedTarget!.selectedRelativePathsByCache, <String, Set<String>>{
-        'remote-cache-1': <String>{'docs/a.txt', 'docs/sub/b.txt'},
+      expect(
+        nestedTarget!.selectedRelativePathsByCache,
+        const <String, Set<String>>{},
+      );
+      expect(nestedTarget.selectedFolderPrefixesByCache, <String, Set<String>>{
+        'remote-cache-1': <String>{'docs'},
+      });
+    },
+  );
+
+  test(
+    'nested folder download targets stay prefix-based without expanding large file lists',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-large-folder',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-large-folder',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Large share',
+              itemCount: 15000,
+              totalBytes: 15000,
+              files: List<SharedCatalogFileItem>.generate(
+                15000,
+                (index) => SharedCatalogFileItem(
+                  relativePath: 'docs/file_$index.txt',
+                  sizeBytes: 1,
+                ),
+                growable: false,
+              ),
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final shareFolder = root.entries.folders.firstWhere(
+        (folder) => folder.name.startsWith('Large share'),
+      );
+      final shareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: shareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final nestedFolder = shareDirectory.entries.folders.firstWhere(
+        (folder) => folder.name == 'docs',
+      );
+
+      final target = browser.resolveDownloadToken(nestedFolder.sourceToken!);
+
+      expect(target, isNotNull);
+      expect(target!.selectedRelativePathsByCache, isEmpty);
+      expect(target.selectedFolderPrefixesByCache, <String, Set<String>>{
+        'remote-cache-1': <String>{'docs'},
       });
     },
   );

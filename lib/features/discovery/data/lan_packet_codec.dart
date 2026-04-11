@@ -231,6 +231,7 @@ class LanPacketCodec {
     required String requesterMacAddress,
     required String cacheId,
     required List<String> selectedRelativePaths,
+    required List<String> selectedFolderPrefixes,
     required bool previewMode,
     required int createdAtMs,
   }) {
@@ -241,6 +242,7 @@ class LanPacketCodec {
       requesterMacAddress: requesterMacAddress,
       cacheId: cacheId,
       selectedRelativePaths: selectedRelativePaths,
+      selectedFolderPrefixes: selectedFolderPrefixes,
       previewMode: previewMode,
       createdAtMs: createdAtMs,
     );

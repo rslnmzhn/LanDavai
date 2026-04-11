@@ -45,6 +45,7 @@ class LanShareProtocolHandler {
       requesterMacAddress: packet.requesterMacAddress,
       cacheId: packet.cacheId,
       selectedRelativePaths: packet.selectedRelativePaths,
+      selectedFolderPrefixes: packet.selectedFolderPrefixes,
       previewMode: packet.previewMode,
       observedAt: observedAt,
     );

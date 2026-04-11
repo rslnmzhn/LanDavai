@@ -57,6 +57,7 @@ class LanSharePacketCodec {
     required String requesterMacAddress,
     required String cacheId,
     required List<String> selectedRelativePaths,
+    required List<String> selectedFolderPrefixes,
     required bool previewMode,
     required int createdAtMs,
   }) {
@@ -67,6 +68,7 @@ class LanSharePacketCodec {
       'requesterMacAddress': requesterMacAddress,
       'cacheId': cacheId,
       'selectedRelativePaths': selectedRelativePaths,
+      'selectedFolderPrefixes': selectedFolderPrefixes,
       'previewMode': previewMode,
       'createdAtMs': createdAtMs,
     };
@@ -254,6 +256,7 @@ class LanSharePacketCodec {
     final requesterMacAddress = decoded['requesterMacAddress'] as String?;
     final cacheId = decoded['cacheId'] as String?;
     final selectedRelativePathsRaw = decoded['selectedRelativePaths'];
+    final selectedFolderPrefixesRaw = decoded['selectedFolderPrefixes'];
     final previewMode = decoded['previewMode'] as bool? ?? false;
     if (instanceId == null ||
         requestId == null ||
@@ -277,6 +280,20 @@ class LanSharePacketCodec {
       }
     }
 
+    final selectedFolderPrefixes = <String>[];
+    if (selectedFolderPrefixesRaw is List<dynamic>) {
+      for (final raw in selectedFolderPrefixesRaw) {
+        if (raw is! String) {
+          continue;
+        }
+        final normalized = raw.trim();
+        if (normalized.isEmpty) {
+          continue;
+        }
+        selectedFolderPrefixes.add(normalized);
+      }
+    }
+
     return LanDownloadRequestPacket(
       instanceId: instanceId,
       requestId: requestId,
@@ -284,6 +301,7 @@ class LanSharePacketCodec {
       requesterMacAddress: requesterMacAddress,
       cacheId: cacheId,
       selectedRelativePaths: selectedRelativePaths,
+      selectedFolderPrefixes: selectedFolderPrefixes,
       previewMode: previewMode,
     );
   }

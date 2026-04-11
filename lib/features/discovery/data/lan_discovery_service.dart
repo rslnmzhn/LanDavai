@@ -329,6 +329,7 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required String cacheId,
     List<String> selectedRelativePaths = const <String>[],
+    List<String> selectedFolderPrefixes = const <String>[],
     bool previewMode = false,
   }) async {
     await _sendOutgoingPacket(
@@ -340,6 +341,7 @@ class LanDiscoveryService {
         requesterMacAddress: requesterMacAddress,
         cacheId: cacheId,
         selectedRelativePaths: selectedRelativePaths,
+        selectedFolderPrefixes: selectedFolderPrefixes,
         previewMode: previewMode,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),

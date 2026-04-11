@@ -684,6 +684,12 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       for (final entry in target.selectedRelativePathsByCache.entries) {
         batch.addSelection(cacheId: entry.key, relativePaths: entry.value);
       }
+      for (final entry in target.selectedFolderPrefixesByCache.entries) {
+        batch.addFolderPrefixes(
+          cacheId: entry.key,
+          folderPrefixes: entry.value,
+        );
+      }
     }
     if (requests.isEmpty) {
       return;
@@ -698,6 +704,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           ownerIp: batch.ownerIp,
           ownerName: batch.ownerName,
           selectedRelativePathsByCache: batch.selectedRelativePathsByCache,
+          selectedFolderPrefixesByCache: batch.selectedFolderPrefixesByCache,
           useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
         );
       }
@@ -1145,6 +1152,8 @@ class _RemoteDownloadBatch {
   final String ownerName;
   final Map<String, Set<String>> selectedRelativePathsByCache =
       <String, Set<String>>{};
+  final Map<String, Set<String>> selectedFolderPrefixesByCache =
+      <String, Set<String>>{};
 
   void addSelection({
     required String cacheId,
@@ -1163,5 +1172,19 @@ class _RemoteDownloadBatch {
       return;
     }
     existing.addAll(relativePaths);
+  }
+
+  void addFolderPrefixes({
+    required String cacheId,
+    required Set<String> folderPrefixes,
+  }) {
+    if (folderPrefixes.isEmpty) {
+      return;
+    }
+    final existing = selectedFolderPrefixesByCache.putIfAbsent(
+      cacheId,
+      () => <String>{},
+    );
+    existing.addAll(folderPrefixes);
   }
 }

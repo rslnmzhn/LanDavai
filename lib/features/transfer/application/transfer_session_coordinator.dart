@@ -265,9 +265,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String ownerIp,
     required String ownerName,
     required Map<String, Set<String>> selectedRelativePathsByCache,
+    Map<String, Set<String>> selectedFolderPrefixesByCache =
+        const <String, Set<String>>{},
     required bool useStandardAppDownloadFolder,
   }) async {
-    if (selectedRelativePathsByCache.isEmpty) {
+    if (selectedRelativePathsByCache.isEmpty &&
+        selectedFolderPrefixesByCache.isEmpty) {
       _publishNotice(
         const TransferSessionNotice(
           errorMessage: 'Select at least one file before requesting download.',
@@ -277,7 +280,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     final normalizedSelection = <String, List<String>>{};
+    final normalizedFolderPrefixes = <String, List<String>>{};
     var selectedFilesCount = 0;
+    var selectedFolderCount = 0;
     for (final entry in selectedRelativePathsByCache.entries) {
       final cacheId = entry.key.trim();
       if (cacheId.isEmpty) {
@@ -293,8 +298,26 @@ class TransferSessionCoordinator extends ChangeNotifier {
       normalizedSelection[cacheId] = paths;
       selectedFilesCount += paths.length;
     }
+    for (final entry in selectedFolderPrefixesByCache.entries) {
+      final cacheId = entry.key.trim();
+      if (cacheId.isEmpty) {
+        continue;
+      }
+      final prefixes =
+          entry.value
+              .map((path) => path.trim())
+              .where((path) => path.isNotEmpty)
+              .toSet()
+              .toList(growable: false)
+            ..sort();
+      if (prefixes.isEmpty) {
+        continue;
+      }
+      normalizedFolderPrefixes[cacheId] = prefixes;
+      selectedFolderCount += prefixes.length;
+    }
 
-    if (normalizedSelection.isEmpty) {
+    if (normalizedSelection.isEmpty && normalizedFolderPrefixes.isEmpty) {
       _publishNotice(
         const TransferSessionNotice(
           errorMessage: 'Selected file list is empty.',
@@ -325,33 +348,42 @@ class TransferSessionCoordinator extends ChangeNotifier {
     try {
       _purgeExpiredPendingRemoteDownloads();
       final stamp = DateTime.now().microsecondsSinceEpoch;
-      for (final entry in normalizedSelection.entries) {
+      final cacheIds = <String>{
+        ...normalizedSelection.keys,
+        ...normalizedFolderPrefixes.keys,
+      };
+      for (final cacheId in cacheIds) {
+        final selectedPaths = normalizedSelection[cacheId] ?? const <String>[];
+        final folderPrefixes =
+            normalizedFolderPrefixes[cacheId] ?? const <String>[];
         final requestId = _fileHashService.buildStableId(
-          'download|$ownerIp|${entry.key}|$stamp|'
-          '${entry.value.join(",")}|$_localDeviceMac',
+          'download|$ownerIp|$cacheId|$stamp|'
+          '${selectedPaths.join(",")}|${folderPrefixes.join(",")}|$_localDeviceMac',
         );
         await _lanDiscoveryService.sendDownloadRequest(
           targetIp: ownerIp,
           requestId: requestId,
           requesterName: _localName,
           requesterMacAddress: _localDeviceMac,
-          cacheId: entry.key,
-          selectedRelativePaths: entry.value,
+          cacheId: cacheId,
+          selectedRelativePaths: selectedPaths,
+          selectedFolderPrefixes: folderPrefixes,
         );
 
         final pendingKey = _pendingRemoteDownloadKey(
           ownerIp: ownerIp,
-          cacheId: entry.key,
+          cacheId: cacheId,
         );
         _pendingRemoteDownloads[pendingKey] = _PendingRemoteDownloadIntent(
           ownerIp: ownerIp,
           ownerMacAddress: _resolveRemoteOwnerMac(
             ownerIp: ownerIp,
-            cacheId: entry.key,
+            cacheId: cacheId,
           ),
-          cacheId: entry.key,
+          cacheId: cacheId,
           destinationDirectoryPath: destinationDirectory.path,
-          preserveSharedRootOnReceive: entry.value.isEmpty,
+          preserveSharedRootOnReceive:
+              selectedPaths.isEmpty && folderPrefixes.isEmpty,
           createdAt: DateTime.now(),
         );
       }
@@ -359,6 +391,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
         TransferSessionNotice(
           infoMessage: selectedFilesCount > 0
               ? 'Requested $selectedFilesCount file(s) from $ownerName.'
+              : selectedFolderCount > 0
+              ? 'Requested $selectedFolderCount folder(s) from $ownerName.'
               : 'Download request sent to $ownerName.',
           clearError: true,
         ),
@@ -425,6 +459,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         requesterMacAddress: _localDeviceMac,
         cacheId: cacheId,
         selectedRelativePaths: <String>[relativePath],
+        selectedFolderPrefixes: const <String>[],
         previewMode: true,
       );
 
@@ -1145,8 +1180,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
         : event.selectedRelativePaths.toSet();
+    final folderPrefixFilter = event.selectedFolderPrefixes.isEmpty
+        ? null
+        : event.selectedFolderPrefixes.toSet();
     final deferHashesUntilAccept =
-        !isPreviewRequest && event.selectedRelativePaths.length == 1;
+        !isPreviewRequest &&
+        folderPrefixFilter == null &&
+        event.selectedRelativePaths.length == 1;
     final preparedFiles = isPreviewRequest
         ? await _buildCompressedPreviewFilesForCache(
             cache,
@@ -1155,6 +1195,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         : await _buildTransferFilesForCache(
             cache,
             relativePathFilter: relativePathFilter,
+            folderPrefixFilter: folderPrefixFilter,
             includeHashes: !deferHashesUntilAccept,
           );
 
@@ -1274,14 +1315,33 @@ class TransferSessionCoordinator extends ChangeNotifier {
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
+    Set<String>? folderPrefixFilter,
     bool includeHashes = true,
   }) async {
     final indexEntries = await _sharedCacheIndexStore.readIndexEntries(cache);
     final items = <_PreparedTransferFile>[];
+    final normalizedFolderPrefixes = folderPrefixFilter
+        ?.map(_normalizeTransferPathForMatch)
+        .where((prefix) => prefix.isNotEmpty)
+        .toSet();
     for (final entry in indexEntries) {
-      if (relativePathFilter != null &&
-          !relativePathFilter.contains(entry.relativePath)) {
-        continue;
+      final normalizedRelativePath = _normalizeTransferPathForMatch(
+        entry.relativePath,
+      );
+      if (relativePathFilter != null) {
+        if (!relativePathFilter.contains(entry.relativePath)) {
+          continue;
+        }
+      } else if (normalizedFolderPrefixes != null &&
+          normalizedFolderPrefixes.isNotEmpty) {
+        final matchesFolderPrefix = normalizedFolderPrefixes.any(
+          (prefix) =>
+              normalizedRelativePath == prefix ||
+              normalizedRelativePath.startsWith('$prefix/'),
+        );
+        if (!matchesFolderPrefix) {
+          continue;
+        }
       }
       final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
       if (filePath == null) {

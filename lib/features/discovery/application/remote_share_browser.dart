@@ -244,11 +244,13 @@ class RemoteBrowseResolvedDownloadTarget {
     required this.ownerIp,
     required this.ownerName,
     required this.selectedRelativePathsByCache,
+    required this.selectedFolderPrefixesByCache,
   });
 
   final String ownerIp;
   final String ownerName;
   final Map<String, Set<String>> selectedRelativePathsByCache;
+  final Map<String, Set<String>> selectedFolderPrefixesByCache;
 }
 
 class RemoteShareBrowser extends ChangeNotifier {
@@ -444,6 +446,7 @@ class RemoteShareBrowser extends ChangeNotifier {
         selectedRelativePathsByCache: <String, Set<String>>{
           file.cacheId: <String>{file.relativePath},
         },
+        selectedFolderPrefixesByCache: const <String, Set<String>>{},
       );
     }
     final folder = _parseFolderToken(token);
@@ -453,6 +456,7 @@ class RemoteShareBrowser extends ChangeNotifier {
 
     String? ownerName;
     final selectedRelativePathsByCache = <String, Set<String>>{};
+    final selectedFolderPrefixesByCache = <String, Set<String>>{};
     for (final option in _options) {
       if (option.ownerIp != folder.ownerIp) {
         continue;
@@ -465,27 +469,27 @@ class RemoteShareBrowser extends ChangeNotifier {
         selectedRelativePathsByCache[option.entry.cacheId] = <String>{};
         continue;
       }
-      final folderPathLower = folder.relativeFolderPath.toLowerCase();
-      final matchingPaths = option.entry.files
-          .map((file) => _normalizeRelativePath(file.relativePath))
-          .where((relativePath) {
-            final normalizedLower = relativePath.toLowerCase();
-            return folder.relativeFolderPath.isEmpty ||
-                normalizedLower == folderPathLower ||
-                normalizedLower.startsWith('$folderPathLower/');
-          })
-          .toSet();
-      if (matchingPaths.isNotEmpty) {
-        selectedRelativePathsByCache[option.entry.cacheId] = matchingPaths;
+      final normalizedFolderPrefix = _normalizeRelativePath(
+        folder.relativeFolderPath,
+      );
+      if (normalizedFolderPrefix.isEmpty) {
+        selectedRelativePathsByCache[option.entry.cacheId] = <String>{};
+        continue;
       }
+      selectedFolderPrefixesByCache[option.entry.cacheId] = <String>{
+        normalizedFolderPrefix,
+      };
     }
-    if (ownerName == null || selectedRelativePathsByCache.isEmpty) {
+    if (ownerName == null ||
+        (selectedRelativePathsByCache.isEmpty &&
+            selectedFolderPrefixesByCache.isEmpty)) {
       return null;
     }
     return RemoteBrowseResolvedDownloadTarget(
       ownerIp: folder.ownerIp,
       ownerName: ownerName,
       selectedRelativePathsByCache: selectedRelativePathsByCache,
+      selectedFolderPrefixesByCache: selectedFolderPrefixesByCache,
     );
   }
 

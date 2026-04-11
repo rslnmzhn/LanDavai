@@ -138,6 +138,7 @@ void main() {
             requesterMacAddress: '11:22:33:44:55:66',
             cacheId: cache.cacheId,
             selectedRelativePaths: <String>['archive.7z'],
+            selectedFolderPrefixes: const <String>[],
             previewMode: false,
             observedAt: DateTime(2026),
           ),
@@ -195,6 +196,7 @@ void main() {
             requesterMacAddress: '11:22:33:44:55:66',
             cacheId: cache.cacheId,
             selectedRelativePaths: <String>['archive.7z'],
+            selectedFolderPrefixes: const <String>[],
             previewMode: false,
             observedAt: DateTime(2026),
           ),
@@ -383,6 +385,7 @@ void main() {
           selectedRelativePathsByCache: <String, Set<String>>{
             'remote-cache': <String>{'report.txt'},
           },
+          selectedFolderPrefixesByCache: const <String, Set<String>>{},
           useStandardAppDownloadFolder: true,
         );
 
@@ -468,6 +471,7 @@ void main() {
           selectedRelativePathsByCache: <String, Set<String>>{
             'remote-cache': <String>{'report.txt'},
           },
+          selectedFolderPrefixesByCache: const <String, Set<String>>{},
           useStandardAppDownloadFolder: false,
         );
 
@@ -534,6 +538,7 @@ void main() {
           selectedRelativePathsByCache: <String, Set<String>>{
             'remote-cache': <String>{'report.txt'},
           },
+          selectedFolderPrefixesByCache: const <String, Set<String>>{},
           useStandardAppDownloadFolder: false,
         );
 
@@ -586,6 +591,7 @@ void main() {
           selectedRelativePathsByCache: <String, Set<String>>{
             'remote-cache': <String>{'report.txt'},
           },
+          selectedFolderPrefixesByCache: const <String, Set<String>>{},
           useStandardAppDownloadFolder: false,
         );
 
@@ -720,6 +726,67 @@ void main() {
             '${customRoot.path}${Platform.pathSeparator}docs${Platform.pathSeparator}a.txt',
             '${customRoot.path}${Platform.pathSeparator}docs${Platform.pathSeparator}sub${Platform.pathSeparator}b.txt',
           ]),
+        );
+      },
+    );
+
+    test(
+      'nested folder downloads send folder prefixes instead of expanding massive path lists',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_large'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'docs', 'sub'),
+        ).create(recursive: true);
+        await File(p.join(ownerRoot.path, 'docs', 'a.txt')).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'docs', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        await File(p.join(ownerRoot.path, 'top.txt')).writeAsString('top');
+
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[
+            p.join(ownerRoot.path, 'docs', 'a.txt'),
+            p.join(ownerRoot.path, 'docs', 'sub', 'b.txt'),
+            p.join(ownerRoot.path, 'top.txt'),
+          ],
+          displayName: 'Docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: const <String, Set<String>>{},
+          selectedFolderPrefixesByCache: <String, Set<String>>{
+            cache.cacheId: <String>{'docs'},
+          },
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(lanDiscoveryService.downloadRequests, hasLength(1));
+        expect(
+          lanDiscoveryService.downloadRequests.single.selectedRelativePaths,
+          isEmpty,
+        );
+        expect(
+          lanDiscoveryService.downloadRequests.single.selectedFolderPrefixes,
+          <String>['docs'],
         );
       },
     );
@@ -1190,6 +1257,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     required String requesterMacAddress,
     required String cacheId,
     List<String> selectedRelativePaths = const <String>[],
+    List<String> selectedFolderPrefixes = const <String>[],
     bool previewMode = false,
   }) async {
     downloadRequests.add(
@@ -1200,6 +1268,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
         requesterMacAddress: requesterMacAddress,
         cacheId: cacheId,
         selectedRelativePaths: List<String>.from(selectedRelativePaths),
+        selectedFolderPrefixes: List<String>.from(selectedFolderPrefixes),
         previewMode: previewMode,
       ),
     );
@@ -1255,6 +1324,7 @@ class SentDownloadRequest {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.selectedFolderPrefixes,
     required this.previewMode,
   });
 
@@ -1264,6 +1334,7 @@ class SentDownloadRequest {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final List<String> selectedFolderPrefixes;
   final bool previewMode;
 }
 

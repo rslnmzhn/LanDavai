@@ -335,6 +335,7 @@ class LanDownloadRequestPacket extends LanInboundPacket {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.selectedFolderPrefixes,
     required this.previewMode,
   });
 
@@ -343,6 +344,7 @@ class LanDownloadRequestPacket extends LanInboundPacket {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final List<String> selectedFolderPrefixes;
   final bool previewMode;
 }
 

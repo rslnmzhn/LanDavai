@@ -259,6 +259,7 @@ void main() {
       requesterMacAddress: 'bb:bb:bb:bb:bb:bb',
       cacheId: 'cache-2',
       selectedRelativePaths: <String>['docs/report.pdf'],
+      selectedFolderPrefixes: const <String>[],
       previewMode: true,
       observedAt: DateTime.fromMillisecondsSinceEpoch(8),
     );
@@ -401,6 +402,7 @@ void main() {
             requesterMacAddress: 'bb:bb:bb:bb:bb:bb',
             cacheId: 'cache-2',
             selectedRelativePaths: <String>['docs/report.pdf'],
+            selectedFolderPrefixes: const <String>[],
             previewMode: true,
             createdAtMs: 7,
           )!
