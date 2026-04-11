@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -328,7 +327,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                           _sortOptionFromMenuAction(action),
                                         ),
                                     itemBuilder: (context) =>
-                                        _sortMenuItems(state),
+                                        _sortMenuItems(state, activeOwner),
                                     padding: EdgeInsets.zero,
                                     child: Container(
                                       height: 40,
@@ -352,6 +351,13 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                 ],
                               ),
                               const SizedBox(height: AppSpacing.sm),
+                              if (state.errorMessage != null) ...[
+                                ExplorerErrorBanner(
+                                  message: state.errorMessage!,
+                                  onRetry: activeOwner.refreshCurrentRoot,
+                                ),
+                                const SizedBox(height: AppSpacing.sm),
+                              ],
                               if (directory.isFileListCapped)
                                 Padding(
                                   padding: const EdgeInsets.only(
@@ -386,7 +392,6 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                           final entry = visibleEntries[index];
                                           return _RemoteDownloadListTile(
                                             entry: entry,
-                                            browser: _browser,
                                             previewCacheOwner:
                                                 widget.previewCacheOwner,
                                             isSelected: _isSelected(entry),
@@ -418,7 +423,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                           final entry = visibleEntries[index];
                                           return _RemoteDownloadGridTile(
                                             entry: entry,
-                                            browser: _browser,
+                                            tileExtent: state.gridTileExtent,
                                             previewCacheOwner:
                                                 widget.previewCacheOwner,
                                             isSelected: _isSelected(entry),
@@ -710,6 +715,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
 
   List<PopupMenuEntry<ExplorerMenuAction>> _sortMenuItems(
     FilesFeatureState state,
+    FilesFeatureStateOwner owner,
   ) {
     return <PopupMenuEntry<ExplorerMenuAction>>[
       const PopupMenuItem<ExplorerMenuAction>(
@@ -755,6 +761,37 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         value: ExplorerMenuAction.sortSizeSmallest,
         checked: state.sortOption == FilesFeatureSortOption.sizeSmallest,
         child: const Text('Size: smallest'),
+      ),
+      const PopupMenuDivider(),
+      PopupMenuItem<ExplorerMenuAction>(
+        enabled: false,
+        height: 86,
+        child: StatefulBuilder(
+          builder: (context, setMenuState) {
+            var menuTileSize = state.gridTileExtent;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Tile size',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                Slider(
+                  value: menuTileSize,
+                  min: FilesFeatureStateOwner.minGridTileExtent,
+                  max: FilesFeatureStateOwner.maxGridTileExtent,
+                  divisions: 3,
+                  onChanged: (next) {
+                    setMenuState(() {
+                      menuTileSize = next;
+                    });
+                    owner.setGridTileExtent(next);
+                  },
+                ),
+              ],
+            );
+          },
+        ),
       ),
     ];
   }
@@ -922,7 +959,6 @@ class _FlatCategoryFilterBar extends StatelessWidget {
 class _RemoteDownloadListTile extends StatelessWidget {
   const _RemoteDownloadListTile({
     required this.entry,
-    required this.browser,
     required this.previewCacheOwner,
     required this.isSelected,
     required this.isBusy,
@@ -931,7 +967,6 @@ class _RemoteDownloadListTile extends StatelessWidget {
   });
 
   final FilesFeatureEntry entry;
-  final RemoteShareBrowser browser;
   final PreviewCacheOwner previewCacheOwner;
   final bool isSelected;
   final bool isBusy;
@@ -942,9 +977,6 @@ class _RemoteDownloadListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedFile = entry.sourceToken == null
-        ? null
-        : browser.resolveFileToken(entry.sourceToken!);
     return Material(
       color: AppColors.surface,
       borderRadius: BorderRadius.circular(AppRadius.md),
@@ -956,30 +988,12 @@ class _RemoteDownloadListTile extends StatelessWidget {
             : () => onSelectChanged!(!isSelected),
         child: Stack(
           children: [
-            ListTile(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppRadius.md),
-              ),
-              contentPadding: const EdgeInsets.fromLTRB(
-                AppSpacing.sm,
-                AppSpacing.xs,
-                AppSpacing.xl,
-                AppSpacing.xs,
-              ),
-              leading: _RemoteExplorerLeading(
+            Padding(
+              padding: const EdgeInsets.only(right: AppSpacing.lg),
+              child: ExplorerEntityTile(
                 entry: entry,
-                resolvedFile: resolvedFile,
                 previewCacheOwner: previewCacheOwner,
-              ),
-              title: Text(
-                entry.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                entry.subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                onTap: onTap,
               ),
             ),
             if (_canSelect)
@@ -1003,7 +1017,7 @@ class _RemoteDownloadListTile extends StatelessWidget {
 class _RemoteDownloadGridTile extends StatelessWidget {
   const _RemoteDownloadGridTile({
     required this.entry,
-    required this.browser,
+    required this.tileExtent,
     required this.previewCacheOwner,
     required this.isSelected,
     required this.isBusy,
@@ -1012,7 +1026,7 @@ class _RemoteDownloadGridTile extends StatelessWidget {
   });
 
   final FilesFeatureEntry entry;
-  final RemoteShareBrowser browser;
+  final double tileExtent;
   final PreviewCacheOwner previewCacheOwner;
   final bool isSelected;
   final bool isBusy;
@@ -1023,71 +1037,32 @@ class _RemoteDownloadGridTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedFile = entry.sourceToken == null
-        ? null
-        : browser.resolveFileToken(entry.sourceToken!);
     return InkWell(
       borderRadius: BorderRadius.circular(AppRadius.md),
       onTap: isBusy ? null : onTap,
       onLongPress: !_canSelect || isBusy
           ? null
           : () => onSelectChanged!(!isSelected),
-      child: Ink(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(
-            color: isSelected ? AppColors.brandPrimary : AppColors.mutedBorder,
+      child: Stack(
+        children: [
+          ExplorerEntityGridTile(
+            entry: entry,
+            tileExtent: tileExtent,
+            previewCacheOwner: previewCacheOwner,
+            onTap: onTap,
           ),
-        ),
-        child: Stack(
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(AppSpacing.xs),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Center(
-                      child: _RemoteExplorerLeading(
-                        entry: entry,
-                        resolvedFile: resolvedFile,
-                        previewCacheOwner: previewCacheOwner,
-                        size: 92,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    entry.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  Text(
-                    entry.subtitle,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
+          if (_canSelect)
+            Positioned(
+              top: AppSpacing.xxs,
+              right: AppSpacing.xxs,
+              child: _SelectionCircleButton(
+                token: entry.sourceToken!,
+                isSelected: isSelected,
+                isBusy: isBusy,
+                onChanged: onSelectChanged!,
               ),
             ),
-            if (_canSelect)
-              Positioned(
-                top: AppSpacing.xxs,
-                right: AppSpacing.xxs,
-                child: _SelectionCircleButton(
-                  token: entry.sourceToken!,
-                  isSelected: isSelected,
-                  isBusy: isBusy,
-                  onChanged: onSelectChanged!,
-                ),
-              ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -1136,67 +1111,6 @@ class _SelectionCircleButton extends StatelessWidget {
               : null,
         ),
       ),
-    );
-  }
-}
-
-class _RemoteExplorerLeading extends StatelessWidget {
-  const _RemoteExplorerLeading({
-    required this.entry,
-    required this.resolvedFile,
-    required this.previewCacheOwner,
-    this.size = 44,
-  });
-
-  final FilesFeatureEntry entry;
-  final RemoteBrowseResolvedFile? resolvedFile;
-  final PreviewCacheOwner previewCacheOwner;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    if (entry.isDirectory) {
-      return ExplorerEntityLeading(
-        isDirectory: true,
-        filePath: null,
-        previewCacheOwner: previewCacheOwner,
-        size: size,
-      );
-    }
-    final previewPath = resolvedFile?.previewPath;
-    if (previewPath != null && previewPath.trim().isNotEmpty) {
-      final kind = resolvedFile?.mediaKind ?? RemoteBrowseMediaKind.other;
-      if (kind == RemoteBrowseMediaKind.image) {
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          child: Image.file(
-            File(previewPath),
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => _fallback(kind),
-          ),
-        );
-      }
-      return _fallback(kind);
-    }
-    return _fallback(resolvedFile?.mediaKind ?? RemoteBrowseMediaKind.other);
-  }
-
-  Widget _fallback(RemoteBrowseMediaKind kind) {
-    final icon = switch (kind) {
-      RemoteBrowseMediaKind.image => Icons.image_rounded,
-      RemoteBrowseMediaKind.video => Icons.play_circle_fill_rounded,
-      RemoteBrowseMediaKind.other => Icons.insert_drive_file_rounded,
-    };
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-      ),
-      child: Icon(icon, color: AppColors.mutedIcon),
     );
   }
 }
