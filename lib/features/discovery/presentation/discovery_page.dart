@@ -30,7 +30,7 @@ import 'discovery_add_share_sheet.dart';
 import 'discovery_destination_pages.dart';
 import 'discovery_device_actions.dart';
 import 'discovery_device_list_section.dart';
-import 'discovery_receive_panel_sheet.dart';
+import 'remote_download_browser_page.dart';
 import 'discovery_side_menu_surface.dart';
 import 'discovery_wide_layout_surface.dart';
 
@@ -190,7 +190,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
               _controller.sharedFolderIndexingProgressValue,
           isAddingShare: _controller.isAddingShare,
           isSendingTransfer: _transferSessionCoordinator.isSendingTransfer,
-          onReceive: _openReceivePanel,
+          onReceive: _openDownloadBrowser,
           onAdd: _openAddShareMenu,
           onSend: _openNearbyTransferSheet,
         );
@@ -393,16 +393,19 @@ class _DiscoveryPageState extends State<DiscoveryPage>
     _requestVideoSurfaceReload();
   }
 
-  Future<void> _openReceivePanel() async {
+  Future<void> _openDownloadBrowser() async {
     unawaited(_controller.loadRemoteShareOptions());
-    await showDiscoveryReceivePanel(
-      context: context,
-      onRefreshRemoteShares: _controller.loadRemoteShareOptions,
-      remoteShareBrowser: _remoteShareBrowser,
-      previewCacheOwner: _previewCacheOwner,
-      transferSessionCoordinator: _transferSessionCoordinator,
-      useStandardAppDownloadFolder:
-          _readModel.settings.useStandardAppDownloadFolder,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RemoteDownloadBrowserPage(
+          onRefreshRemoteShares: _controller.loadRemoteShareOptions,
+          remoteShareBrowser: _remoteShareBrowser,
+          previewCacheOwner: _previewCacheOwner,
+          transferSessionCoordinator: _transferSessionCoordinator,
+          useStandardAppDownloadFolder:
+              _readModel.settings.useStandardAppDownloadFolder,
+        ),
+      ),
     );
   }
 

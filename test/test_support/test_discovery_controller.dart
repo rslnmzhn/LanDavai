@@ -458,8 +458,6 @@ class TrackingRemoteShareBrowser extends RemoteShareBrowser {
 
   int startBrowseCalls = 0;
   int applyRemoteCatalogCalls = 0;
-  int selectOwnerCalls = 0;
-  String? lastSelectedOwnerIp;
 
   @override
   Future<RemoteBrowseStartResult> startBrowse({
@@ -494,13 +492,6 @@ class TrackingRemoteShareBrowser extends RemoteShareBrowser {
       ownerDisplayName: ownerDisplayName,
       ownerMacAddress: ownerMacAddress,
     );
-  }
-
-  @override
-  void selectOwner(String? ownerIp) {
-    selectOwnerCalls += 1;
-    lastSelectedOwnerIp = ownerIp;
-    super.selectOwner(ownerIp);
   }
 }
 

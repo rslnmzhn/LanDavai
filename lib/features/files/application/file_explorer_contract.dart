@@ -26,6 +26,7 @@ class FileExplorerVirtualFile {
   const FileExplorerVirtualFile({
     required this.path,
     required this.virtualPath,
+    this.sourceToken,
     this.subtitle,
     this.sizeBytes,
     this.modifiedAt,
@@ -34,6 +35,7 @@ class FileExplorerVirtualFile {
 
   final String path;
   final String virtualPath;
+  final String? sourceToken;
   final String? subtitle;
   final int? sizeBytes;
   final DateTime? modifiedAt;
@@ -44,11 +46,13 @@ class FileExplorerVirtualFolder {
   const FileExplorerVirtualFolder({
     required this.name,
     required this.folderPath,
+    this.sourceToken,
     this.removableSharedCacheId,
   });
 
   final String name;
   final String folderPath;
+  final String? sourceToken;
   final String? removableSharedCacheId;
 }
 

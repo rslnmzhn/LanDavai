@@ -51,9 +51,9 @@ class DiscoveryActionBar extends StatelessWidget {
                   child: _AdaptiveActionButton.filled(
                     onPressed: onReceive,
                     icon: Icons.arrow_downward,
-                    label: 'Принять',
-                    compactLabel: 'Приём',
-                    tooltip: 'Принять файлы',
+                    label: 'Скачать',
+                    compactLabel: 'Скачать',
+                    tooltip: 'Скачать файлы из сети',
                     availableWidth: perButtonWidth,
                   ),
                 ),
