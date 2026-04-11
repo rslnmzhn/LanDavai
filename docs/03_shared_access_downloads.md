@@ -8,8 +8,12 @@ This file describes the current shared-access browse, preview, and download flow
   Owns remote catalog, owner list, aggregated/per-owner projections, preview/download token resolution.
 - `FilesFeatureStateOwner`
   Owns explorer/search/sort/view/path state per active route/filter.
+- `SharedCacheCatalog`
+  Owns cache metadata records for owner and receiver shared caches.
+- `SharedCacheIndexStore`
+  Owns compact indexed entries, persisted optional file hashes, folder/tree fingerprints, and scoped selection fingerprints.
 - `TransferSessionCoordinator`
-  Owns live transfer truth, shared-download preparation state, active transfer progress, preview/download requests.
+  Owns live transfer truth, shared-download preparation state, active transfer progress, preview/download requests, and only consumes fingerprint/index state for safe preparation reuse.
 
 ## Shared-access browser entry
 
@@ -49,6 +53,33 @@ Preview remains separate from normal explicit downloads.
 - Nested folder download uses prefix-based selection, not giant explicit path expansion.
 - Path preservation on receive remains intact for whole-root downloads.
 
+## Fingerprint-backed preparation reuse
+
+The current normal shared-download path uses fingerprint/index reuse in two layers:
+
+- `SharedCacheIndexStore`
+  - computes deterministic folder/tree fingerprints from the current indexed state
+  - computes deterministic scoped-selection fingerprints for whole-root or filtered prefix/file selections
+  - invalidates those fingerprints automatically when the indexed state changes
+- `TransferSessionCoordinator`
+  - reads the current scoped selection through `readScopedSelection(...)`
+  - may reuse an ephemeral prepared transfer file list only when the scoped selection fingerprint is unchanged
+  - still rebuilds the real prepared file list when the scoped fingerprint changes or the scoped cache is absent
+
+This means:
+
+- unchanged large whole-root downloads can reuse previously prepared indexed scope inputs
+- unchanged nested folder/prefix downloads can do the same
+- changed indexed folder state forces rebuild instead of trusting stale prepared scope data
+
+## What still rebuilds
+
+Fingerprint reuse is a fast freshness gate, not file-level truth.
+
+- Preview remains on its own preparation path and does not use the normal prepared-scope reuse cache.
+- Real filesystem-backed prepared files are still rebuilt when the scoped fingerprint changes.
+- Per-file correctness such as existing-local-file checks and send/receive verification still remain outside folder fingerprint truth.
+
 ## Current handshake behavior
 
 Normal shared downloads can take one of two paths:
@@ -78,6 +109,7 @@ There is no sender-side explicit approval UI for shared-access downloads in the 
 
 ## Current regression coverage
 
+- `test/shared_cache_index_store_test.dart`
 - `test/remote_share_browser_test.dart`
 - `test/remote_share_viewer_flow_regression_test.dart`
 - `test/transfer_session_coordinator_test.dart`

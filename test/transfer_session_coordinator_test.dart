@@ -545,6 +545,54 @@ void main() {
     );
 
     test(
+      'preview requests stay outside prepared transfer scope reuse cache',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared_preview_scope', 'a.txt'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('alpha');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'preview-request-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>['a.txt'],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: true,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(coordinator.preparedTransferScopeCacheHits, 0);
+        expect(coordinator.preparedTransferScopeCacheEntryCount, 0);
+      },
+    );
+
+    test(
       'shared download preparation recomputes cached hash when indexed file metadata changed',
       () async {
         final ownerFile = File(

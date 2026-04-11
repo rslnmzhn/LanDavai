@@ -37,6 +37,7 @@ Purpose:
 
 ## Transfer/shared-access coverage
 
+- `test/shared_cache_index_store_test.dart`
 - `test/transfer_session_coordinator_test.dart`
 - `test/lan_discovery_service_protocol_handlers_test.dart`
 - `test/remote_share_browser_test.dart`
@@ -45,8 +46,10 @@ Purpose:
 Purpose:
 
 - shared download handshake and direct-start path
-- manifest/cache reuse
+- fingerprint-backed manifest/cache reuse
+- safe invalidation and rebuild when indexed state changes
 - folder-prefix download scaling
+- large folder transfer continuity without reintroducing giant path expansion
 - receiver/preview continuity
 - remote-share projection integrity
 
