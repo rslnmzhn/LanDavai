@@ -215,8 +215,32 @@ class LanPacketCodec {
     required List<SharedCatalogEntryItem> entries,
     required List<String> removedCacheIds,
     required int createdAtMs,
+    int chunkIndex = 0,
+    int chunkCount = 1,
   }) {
     return _shareCodec.encodeShareCatalog(
+      instanceId: instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      removedCacheIds: removedCacheIds,
+      createdAtMs: createdAtMs,
+      chunkIndex: chunkIndex,
+      chunkCount: chunkCount,
+    );
+  }
+
+  List<EncodedLanPacket> encodeShareCatalogChunks({
+    required String instanceId,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+    required List<String> removedCacheIds,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareCatalogChunks(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,

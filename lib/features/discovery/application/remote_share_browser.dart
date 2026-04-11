@@ -256,14 +256,12 @@ class RemoteBrowseResolvedDownloadTarget {
 class RemoteShareBrowser extends ChangeNotifier {
   RemoteShareBrowser({
     required SharedCacheCatalog sharedCacheCatalog,
-    this.maxFilesPerCacheForUi = 4000,
     this.maxVisibleFiles = 2500,
   }) : _sharedCacheCatalog = sharedCacheCatalog;
 
   static const String allDevicesFilterKey = '__all_devices__';
 
   final SharedCacheCatalog _sharedCacheCatalog;
-  final int maxFilesPerCacheForUi;
   final int maxVisibleFiles;
 
   final List<RemoteShareOption> _options = <RemoteShareOption>[];
@@ -349,14 +347,13 @@ class RemoteShareBrowser extends ChangeNotifier {
 
     final dedupedEntries = _dedupeEntriesForProjection(event.entries);
     for (final entry in dedupedEntries) {
-      final uiEntry = _trimRemoteShareEntryForProjection(entry);
       _options.add(
         RemoteShareOption(
           requestId: event.requestId,
           ownerIp: event.ownerIp,
           ownerName: ownerDisplayName,
           ownerMacAddress: normalizedOwnerMac,
-          entry: uiEntry,
+          entry: entry,
           receiverCacheSnapshot:
               _receiverSnapshotsByRemoteCacheId[entry.cacheId],
         ),
@@ -975,21 +972,6 @@ class RemoteShareBrowser extends ChangeNotifier {
       totalFolders: sortedFolders.length,
       hiddenFilesCount: hiddenFilesCount,
       isFileListCapped: hiddenFilesCount > 0,
-    );
-  }
-
-  SharedCatalogEntryItem _trimRemoteShareEntryForProjection(
-    SharedCatalogEntryItem entry,
-  ) {
-    if (entry.files.length <= maxFilesPerCacheForUi) {
-      return entry;
-    }
-    return SharedCatalogEntryItem(
-      cacheId: entry.cacheId,
-      displayName: entry.displayName,
-      itemCount: entry.itemCount,
-      totalBytes: entry.totalBytes,
-      files: entry.files.take(maxFilesPerCacheForUi).toList(growable: false),
     );
   }
 

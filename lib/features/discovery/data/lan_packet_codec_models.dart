@@ -318,6 +318,8 @@ class LanShareCatalogPacket extends LanInboundPacket {
     required this.ownerMacAddress,
     required this.entries,
     required this.removedCacheIds,
+    this.chunkIndex = 0,
+    this.chunkCount = 1,
   });
 
   final String requestId;
@@ -325,6 +327,8 @@ class LanShareCatalogPacket extends LanInboundPacket {
   final String ownerMacAddress;
   final List<SharedCatalogEntryItem> entries;
   final List<String> removedCacheIds;
+  final int chunkIndex;
+  final int chunkCount;
 }
 
 class LanDownloadRequestPacket extends LanInboundPacket {

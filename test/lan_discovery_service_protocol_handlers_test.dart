@@ -525,6 +525,65 @@ void main() {
     expect(receivedClipboardQuery, same(clipboardQueryEvent));
     expect(receivedClipboardCatalog, same(clipboardCatalogEvent));
   });
+
+  test(
+    'reassembles chunked share catalogs before notifying handlers',
+    () async {
+      ShareCatalogEvent? receivedShareCatalog;
+
+      await service.start(
+        deviceName: 'Local workstation',
+        localPeerId: 'local-peer',
+        localSourceIps: const <String>{'192.168.1.10'},
+        onAppDetected: (_) {},
+        onShareCatalog: (event) {
+          receivedShareCatalog = event;
+        },
+      );
+
+      final packets = codec.encodeShareCatalogChunks(
+        instanceId: 'remote-instance',
+        requestId: 'share-chunked-1',
+        ownerName: 'Owner',
+        ownerMacAddress: 'aa:aa:aa:aa:aa:aa',
+        entries: <SharedCatalogEntryItem>[
+          SharedCatalogEntryItem(
+            cacheId: 'cache-large',
+            displayName: 'Projects',
+            itemCount: 600,
+            totalBytes: 600,
+            files: List<SharedCatalogFileItem>.generate(
+              600,
+              (index) => SharedCatalogFileItem(
+                relativePath: index < 300
+                    ? 'project_a/src/file_$index.txt'
+                    : 'project_b/src/file_$index.txt',
+                sizeBytes: 1,
+              ),
+              growable: false,
+            ),
+          ),
+        ],
+        removedCacheIds: const <String>['stale'],
+        createdAtMs: 1,
+      );
+
+      expect(packets.length, greaterThan(1));
+      for (final packet in packets) {
+        transportAdapter.emitDatagram(
+          bytes: packet.bytes,
+          senderIp: '192.168.1.26',
+          senderPort: LanDiscoveryService.discoveryPort,
+        );
+      }
+
+      expect(shareHandler.shareCatalogCalls, 1);
+      expect(receivedShareCatalog, isNotNull);
+      expect(receivedShareCatalog!.entries, hasLength(1));
+      expect(receivedShareCatalog!.entries.single.files, hasLength(600));
+      expect(receivedShareCatalog!.removedCacheIds, <String>['stale']);
+    },
+  );
 }
 
 class RecordingPresenceHandler extends LanPresenceProtocolHandler {

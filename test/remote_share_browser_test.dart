@@ -648,6 +648,89 @@ void main() {
   );
 
   test(
+    'large remote share keeps full structured tree after refreshed catalog apply',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-large-refresh',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+
+      Future<void> applyCatalog(List<String> projectNames) {
+        final files = <SharedCatalogFileItem>[];
+        for (final projectName in projectNames) {
+          for (var index = 0; index < 1600; index += 1) {
+            files.add(
+              SharedCatalogFileItem(
+                relativePath: '$projectName/src/file_$index.txt',
+                sizeBytes: index + 1,
+              ),
+            );
+          }
+        }
+        return browser.applyRemoteCatalog(
+          event: ShareCatalogEvent(
+            requestId: 'request-large-refresh',
+            ownerIp: '192.168.1.20',
+            ownerName: 'Device A',
+            ownerMacAddress: '11:22:33:44:55:66',
+            observedAt: DateTime(2026),
+            removedCacheIds: const <String>[],
+            entries: <SharedCatalogEntryItem>[
+              SharedCatalogEntryItem(
+                cacheId: 'remote-cache-large',
+                displayName: 'Projects',
+                itemCount: files.length,
+                totalBytes: files.fold<int>(
+                  0,
+                  (sum, file) => sum + file.sizeBytes,
+                ),
+                files: files,
+              ),
+            ],
+          ),
+          ownerDisplayName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+        );
+      }
+
+      await applyCatalog(<String>['project_alpha']);
+      await applyCatalog(<String>[
+        'project_alpha',
+        'project_beta',
+        'project_gamma',
+      ]);
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final shareFolder = root.entries.folders.firstWhere(
+        (folder) => folder.name == 'Projects',
+      );
+      final shareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: shareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+
+      expect(
+        shareDirectory.entries.folders.map((folder) => folder.name),
+        containsAll(<String>['project_alpha', 'project_beta', 'project_gamma']),
+      );
+    },
+  );
+
+  test(
     'flat mode orders media before documents and documents before other files',
     () async {
       await browser.startBrowse(
