@@ -195,4 +195,187 @@ void main() {
       );
     },
   );
+
+  test(
+    'tree fingerprints stay stable for unchanged indexed state and differ for root vs nested folder views',
+    () async {
+      final docsDirectory = Directory(p.join(fixtureDirectory.path, 'docs'));
+      await docsDirectory.create(recursive: true);
+      final nestedDirectory = Directory(p.join(docsDirectory.path, 'nested'));
+      await nestedDirectory.create(recursive: true);
+      await File(
+        p.join(docsDirectory.path, 'alpha.txt'),
+      ).writeAsString('alpha', flush: true);
+      await File(
+        p.join(nestedDirectory.path, 'beta.txt'),
+      ).writeAsString('beta', flush: true);
+
+      const cacheId = 'owner-cache-fingerprint';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Shared Docs',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: fixtureDirectory.path,
+        displayName: 'Shared Docs',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 1234,
+      );
+
+      await indexStore.materializeOwnerFolderIndex(
+        record: record,
+        folderPath: fixtureDirectory.path,
+      );
+
+      final rootFingerprintA = await indexStore.readTreeFingerprint(record);
+      final rootFingerprintB = await indexStore.readTreeFingerprint(record);
+      final nestedFingerprint = await indexStore.readTreeFingerprint(
+        record,
+        relativeFolderPath: 'docs/nested',
+      );
+
+      expect(rootFingerprintA.fingerprint, rootFingerprintB.fingerprint);
+      expect(rootFingerprintA.itemCount, 2);
+      expect(nestedFingerprint.itemCount, 1);
+      expect(
+        rootFingerprintA.fingerprint,
+        isNot(nestedFingerprint.fingerprint),
+      );
+    },
+  );
+
+  test(
+    'tree fingerprints and scoped selections invalidate when indexed folder content changes',
+    () async {
+      final docsDirectory = Directory(p.join(fixtureDirectory.path, 'docs'));
+      await docsDirectory.create(recursive: true);
+      final alphaFile = File(p.join(docsDirectory.path, 'alpha.txt'));
+      await alphaFile.writeAsString('alpha', flush: true);
+
+      const cacheId = 'owner-cache-fingerprint-refresh';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Shared Docs',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: fixtureDirectory.path,
+        displayName: 'Shared Docs',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 1234,
+      );
+
+      await indexStore.materializeOwnerFolderIndex(
+        record: record,
+        folderPath: fixtureDirectory.path,
+      );
+      final beforeFingerprint = await indexStore.readTreeFingerprint(
+        record,
+        relativeFolderPath: 'docs',
+      );
+      final beforeSelection = await indexStore.readScopedSelection(
+        record,
+        folderPrefixFilter: <String>{'docs'},
+      );
+
+      await File(
+        p.join(docsDirectory.path, 'beta.txt'),
+      ).writeAsString('beta', flush: true);
+      await indexStore.refreshOwnerFolderSubdirectoryIndex(
+        record,
+        relativeFolderPath: 'docs',
+      );
+
+      final afterFingerprint = await indexStore.readTreeFingerprint(
+        record,
+        relativeFolderPath: 'docs',
+      );
+      final afterSelection = await indexStore.readScopedSelection(
+        record,
+        folderPrefixFilter: <String>{'docs'},
+      );
+
+      expect(
+        afterFingerprint.fingerprint,
+        isNot(beforeFingerprint.fingerprint),
+      );
+      expect(afterSelection.fingerprint, isNot(beforeSelection.fingerprint));
+      expect(afterSelection.itemCount, 2);
+    },
+  );
+
+  test(
+    'scoped selection cache reuses unchanged indexed snapshot and falls through when state changes',
+    () async {
+      final docsDirectory = Directory(p.join(fixtureDirectory.path, 'docs'));
+      await docsDirectory.create(recursive: true);
+      await File(
+        p.join(docsDirectory.path, 'alpha.txt'),
+      ).writeAsString('alpha', flush: true);
+
+      const cacheId = 'owner-cache-scope-cache';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Shared Docs',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: fixtureDirectory.path,
+        displayName: 'Shared Docs',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 1234,
+      );
+
+      await indexStore.materializeOwnerFolderIndex(
+        record: record,
+        folderPath: fixtureDirectory.path,
+      );
+
+      final firstSelection = await indexStore.readScopedSelection(
+        record,
+        folderPrefixFilter: <String>{'docs'},
+      );
+      final secondSelection = await indexStore.readScopedSelection(
+        record,
+        folderPrefixFilter: <String>{'docs'},
+      );
+
+      expect(identical(firstSelection, secondSelection), isTrue);
+
+      await File(
+        p.join(docsDirectory.path, 'beta.txt'),
+      ).writeAsString('beta', flush: true);
+      await indexStore.refreshOwnerFolderSubdirectoryIndex(
+        record,
+        relativeFolderPath: 'docs',
+      );
+
+      final refreshedSelection = await indexStore.readScopedSelection(
+        record,
+        folderPrefixFilter: <String>{'docs'},
+      );
+
+      expect(identical(firstSelection, refreshedSelection), isFalse);
+      expect(refreshedSelection.itemCount, 2);
+    },
+  );
 }

@@ -1606,32 +1606,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
     Set<String>? folderPrefixFilter,
     bool includeHashes = true,
   }) async {
-    final indexEntries = await _sharedCacheIndexStore.readIndexEntries(cache);
+    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
+      cache,
+      relativePathFilter: relativePathFilter,
+      folderPrefixFilter: folderPrefixFilter,
+    );
     final items = <_PreparedTransferFile>[];
     final refreshedManifestEntries = <SharedFolderIndexEntry>[];
-    final normalizedFolderPrefixes = folderPrefixFilter
-        ?.map(_normalizeTransferPathForMatch)
-        .where((prefix) => prefix.isNotEmpty)
-        .toSet();
-    for (final entry in indexEntries) {
-      final normalizedRelativePath = _normalizeTransferPathForMatch(
-        entry.relativePath,
-      );
-      if (relativePathFilter != null) {
-        if (!relativePathFilter.contains(entry.relativePath)) {
-          continue;
-        }
-      } else if (normalizedFolderPrefixes != null &&
-          normalizedFolderPrefixes.isNotEmpty) {
-        final matchesFolderPrefix = normalizedFolderPrefixes.any(
-          (prefix) =>
-              normalizedRelativePath == prefix ||
-              normalizedRelativePath.startsWith('$prefix/'),
-        );
-        if (!matchesFolderPrefix) {
-          continue;
-        }
-      }
+    for (final entry in scopedSelection.entries) {
       final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
       if (filePath == null) {
         continue;

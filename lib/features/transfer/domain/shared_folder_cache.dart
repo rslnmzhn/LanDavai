@@ -1,5 +1,33 @@
 enum SharedFolderCacheRole { owner, receiver }
 
+class SharedFolderTreeFingerprint {
+  const SharedFolderTreeFingerprint({
+    required this.relativeFolderPath,
+    required this.fingerprint,
+    required this.itemCount,
+    required this.totalBytes,
+  });
+
+  final String relativeFolderPath;
+  final String fingerprint;
+  final int itemCount;
+  final int totalBytes;
+}
+
+class SharedCacheScopedSelection {
+  const SharedCacheScopedSelection({
+    required this.entries,
+    required this.fingerprint,
+    required this.itemCount,
+    required this.totalBytes,
+  });
+
+  final List<SharedFolderIndexEntry> entries;
+  final String fingerprint;
+  final int itemCount;
+  final int totalBytes;
+}
+
 class SharedFolderIndexEntry {
   SharedFolderIndexEntry({
     required this.relativePath,

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/storage/app_database.dart';
@@ -33,6 +34,10 @@ class SharedCacheIndexStore {
 
   final AppDatabase _database;
   final ThumbnailCacheService _thumbnailCacheService;
+  final Map<String, _IndexFileSnapshot> _snapshotCacheByPath =
+      <String, _IndexFileSnapshot>{};
+  final Map<String, SharedCacheScopedSelection> _scopedSelectionCache =
+      <String, SharedCacheScopedSelection>{};
 
   Future<String> normalizeExistingDirectoryPath(String folderPath) async {
     final directory = Directory(folderPath);
@@ -57,8 +62,100 @@ class SharedCacheIndexStore {
 
   Future<List<SharedFolderIndexEntry>> readIndexEntries(
     SharedFolderCacheRecord record,
-  ) {
-    return _readIndexEntriesFromPath(record.indexFilePath);
+  ) async {
+    final snapshot = await _readIndexSnapshotFromPath(record.indexFilePath);
+    return snapshot.entries;
+  }
+
+  Future<SharedFolderTreeFingerprint> readTreeFingerprint(
+    SharedFolderCacheRecord record, {
+    String relativeFolderPath = '',
+  }) async {
+    final snapshot = await _readIndexSnapshotFromPath(record.indexFilePath);
+    final normalizedFolderPath = _normalizeRelativeFolderPath(
+      relativeFolderPath,
+    );
+    final fingerprint =
+        snapshot.folderFingerprints[normalizedFolderPath] ??
+        SharedFolderTreeFingerprint(
+          relativeFolderPath: normalizedFolderPath,
+          fingerprint: 'empty',
+          itemCount: 0,
+          totalBytes: 0,
+        );
+    return fingerprint;
+  }
+
+  Future<SharedCacheScopedSelection> readScopedSelection(
+    SharedFolderCacheRecord record, {
+    Set<String>? relativePathFilter,
+    Set<String>? folderPrefixFilter,
+  }) async {
+    final snapshot = await _readIndexSnapshotFromPath(record.indexFilePath);
+    final normalizedRelativePaths = relativePathFilter == null
+        ? null
+        : (relativePathFilter
+                  .map(_normalizeRelativeFolderPath)
+                  .where((path) => path.isNotEmpty)
+                  .toSet()
+                  .toList(growable: false)
+                ..sort())
+              .toSet();
+    final normalizedFolderPrefixes = folderPrefixFilter == null
+        ? null
+        : (folderPrefixFilter
+                  .map(_normalizeRelativeFolderPath)
+                  .where((path) => path.isNotEmpty)
+                  .toSet()
+                  .toList(growable: false)
+                ..sort())
+              .toSet();
+    final cacheKey =
+        '${record.indexFilePath}|${snapshot.rootFingerprint.fingerprint}|'
+        '${normalizedRelativePaths?.join(",") ?? "-"}|'
+        '${normalizedFolderPrefixes?.join(",") ?? "-"}';
+    final cached = _scopedSelectionCache[cacheKey];
+    if (cached != null) {
+      return cached;
+    }
+
+    final selectedEntries = <SharedFolderIndexEntry>[];
+    for (final entry in snapshot.entries) {
+      final normalizedRelativePath = _normalizeRelativeFolderPath(
+        entry.relativePath,
+      );
+      if (normalizedRelativePaths != null) {
+        if (!normalizedRelativePaths.contains(normalizedRelativePath)) {
+          continue;
+        }
+      } else if (normalizedFolderPrefixes != null &&
+          normalizedFolderPrefixes.isNotEmpty) {
+        final matchesFolderPrefix = normalizedFolderPrefixes.any(
+          (prefix) =>
+              normalizedRelativePath == prefix ||
+              normalizedRelativePath.startsWith('$prefix/'),
+        );
+        if (!matchesFolderPrefix) {
+          continue;
+        }
+      }
+      selectedEntries.add(entry);
+    }
+    final selection = SharedCacheScopedSelection(
+      entries: List<SharedFolderIndexEntry>.unmodifiable(selectedEntries),
+      fingerprint: _buildSelectionFingerprint(
+        selectedEntries,
+        relativePathFilter: normalizedRelativePaths,
+        folderPrefixFilter: normalizedFolderPrefixes,
+      ),
+      itemCount: selectedEntries.length,
+      totalBytes: selectedEntries.fold<int>(
+        0,
+        (sum, entry) => sum + entry.sizeBytes,
+      ),
+    );
+    _scopedSelectionCache[cacheKey] = selection;
+    return selection;
   }
 
   Future<SharedCacheIndexWriteResult> materializeOwnerFolderIndex({
@@ -275,9 +372,7 @@ class SharedCacheIndexStore {
       throw ArgumentError('Directory does not exist: ${record.rootPath}');
     }
 
-    final existingEntries = await _readIndexEntriesFromPath(
-      record.indexFilePath,
-    );
+    final existingEntries = await readIndexEntries(record);
     final untouched = <SharedFolderIndexEntry>[];
     final previousScoped = <String, SharedFolderIndexEntry>{};
     for (final entry in existingEntries) {
@@ -341,9 +436,7 @@ class SharedCacheIndexStore {
     if (entries.isEmpty) {
       return false;
     }
-    final existingEntries = await _readIndexEntriesFromPath(
-      record.indexFilePath,
-    );
+    final existingEntries = await readIndexEntries(record);
     if (existingEntries.isEmpty) {
       return false;
     }
@@ -396,25 +489,125 @@ class SharedCacheIndexStore {
     );
   }
 
-  Future<List<SharedFolderIndexEntry>> _readIndexEntriesFromPath(
+  Future<_IndexFileSnapshot> _readIndexSnapshotFromPath(
     String indexFilePath,
   ) async {
     if (indexFilePath.trim().isEmpty) {
-      return <SharedFolderIndexEntry>[];
+      return _IndexFileSnapshot.empty;
     }
 
     final file = File(indexFilePath);
     if (!await file.exists()) {
-      return <SharedFolderIndexEntry>[];
+      return _IndexFileSnapshot.empty;
+    }
+
+    final stat = await file.stat();
+    final fileModifiedAtMs = stat.modified.millisecondsSinceEpoch;
+    final cached = _snapshotCacheByPath[indexFilePath];
+    if (cached != null &&
+        cached.fileLength == stat.size &&
+        cached.fileModifiedAtMs == fileModifiedAtMs) {
+      return cached;
     }
 
     final content = await file.readAsString();
     final jsonMap = jsonDecode(content) as Map<String, dynamic>;
     final rawEntries = jsonMap['entries'] as List<dynamic>? ?? <dynamic>[];
-    return rawEntries
+    final entries = rawEntries
         .whereType<Map<String, dynamic>>()
         .map(SharedFolderIndexEntry.fromCompactJson)
         .toList(growable: false);
+    final folderFingerprints = _buildFolderFingerprints(entries);
+    final snapshot = _IndexFileSnapshot(
+      entries: List<SharedFolderIndexEntry>.unmodifiable(entries),
+      rootFingerprint:
+          folderFingerprints[''] ?? _IndexFileSnapshot.empty.rootFingerprint,
+      folderFingerprints: Map<String, SharedFolderTreeFingerprint>.unmodifiable(
+        folderFingerprints,
+      ),
+      fileLength: stat.size,
+      fileModifiedAtMs: fileModifiedAtMs,
+    );
+    _snapshotCacheByPath[indexFilePath] = snapshot;
+    _evictScopedSelectionCacheForPath(indexFilePath);
+    return snapshot;
+  }
+
+  Future<List<SharedFolderIndexEntry>> _readIndexEntriesFromPath(
+    String indexFilePath,
+  ) async {
+    final snapshot = await _readIndexSnapshotFromPath(indexFilePath);
+    return snapshot.entries;
+  }
+
+  Map<String, SharedFolderTreeFingerprint> _buildFolderFingerprints(
+    List<SharedFolderIndexEntry> entries,
+  ) {
+    final accumulators = <String, _FolderFingerprintAccumulator>{
+      '': _FolderFingerprintAccumulator(relativeFolderPath: ''),
+    };
+    for (final entry in entries) {
+      final normalizedRelativePath = _normalizeRelativeFolderPath(
+        entry.relativePath,
+      );
+      final parts = normalizedRelativePath.split('/');
+      final prefixes = <String>{''};
+      if (parts.length > 1) {
+        for (var i = 1; i < parts.length; i += 1) {
+          prefixes.add(parts.take(i).join('/'));
+        }
+      }
+      for (final prefix in prefixes) {
+        final accumulator = accumulators.putIfAbsent(
+          prefix,
+          () => _FolderFingerprintAccumulator(relativeFolderPath: prefix),
+        );
+        accumulator.add(entry);
+      }
+    }
+    return <String, SharedFolderTreeFingerprint>{
+      for (final entry in accumulators.entries) entry.key: entry.value.build(),
+    };
+  }
+
+  String _buildSelectionFingerprint(
+    List<SharedFolderIndexEntry> entries, {
+    Set<String>? relativePathFilter,
+    Set<String>? folderPrefixFilter,
+  }) {
+    final relativePaths = List<String>.from(
+      relativePathFilter ?? const <String>[],
+    )..sort();
+    final folderPrefixes = List<String>.from(
+      folderPrefixFilter ?? const <String>[],
+    )..sort();
+    return sha256
+        .convert(
+          utf8.encode(
+            <String>[
+              'v$schemaVersion',
+              'files=${relativePaths.join(",")}',
+              'folders=${folderPrefixes.join(",")}',
+              for (final entry in entries)
+                '${entry.relativePath}|${entry.sizeBytes}|${entry.modifiedAtMs}|${entry.sha256 ?? ""}',
+            ].join('\n'),
+          ),
+        )
+        .toString();
+  }
+
+  void _invalidateIndexCaches(String indexFilePath) {
+    _snapshotCacheByPath.remove(indexFilePath);
+    _evictScopedSelectionCacheForPath(indexFilePath);
+  }
+
+  void _evictScopedSelectionCacheForPath(String indexFilePath) {
+    final keys = _scopedSelectionCache.keys
+        .where((key) => key.startsWith('$indexFilePath|'))
+        .toList(growable: false);
+    for (final key in keys) {
+      _scopedSelectionCache.remove(key);
+    }
   }
 
   Future<void> _writeIndexFile(
@@ -426,6 +619,7 @@ class SharedCacheIndexStore {
       await file.parent.create(recursive: true);
     }
 
+    final folderFingerprints = _buildFolderFingerprints(entries);
     final payload = <String, Object?>{
       'schemaVersion': schemaVersion,
       'cacheId': record.cacheId,
@@ -435,10 +629,12 @@ class SharedCacheIndexStore {
       'displayName': record.displayName,
       'rootPath': record.rootPath,
       'updatedAtMs': record.updatedAtMs,
+      'rootFingerprint': folderFingerprints['']?.fingerprint ?? 'empty',
       'entries': entries.map((entry) => entry.toCompactJson()).toList(),
     };
 
     await file.writeAsString(jsonEncode(payload), flush: true);
+    _invalidateIndexCaches(record.indexFilePath);
   }
 
   Future<List<SharedFolderIndexEntry>> _indexFolder(
@@ -657,4 +853,65 @@ class _FolderProbeEntry {
   final String relativePath;
   final int sizeBytes;
   final int modifiedAtMs;
+}
+
+class _IndexFileSnapshot {
+  const _IndexFileSnapshot({
+    required this.entries,
+    required this.rootFingerprint,
+    required this.folderFingerprints,
+    required this.fileLength,
+    required this.fileModifiedAtMs,
+  });
+
+  static const _IndexFileSnapshot empty = _IndexFileSnapshot(
+    entries: <SharedFolderIndexEntry>[],
+    rootFingerprint: SharedFolderTreeFingerprint(
+      relativeFolderPath: '',
+      fingerprint: 'empty',
+      itemCount: 0,
+      totalBytes: 0,
+    ),
+    folderFingerprints: <String, SharedFolderTreeFingerprint>{},
+    fileLength: 0,
+    fileModifiedAtMs: 0,
+  );
+
+  final List<SharedFolderIndexEntry> entries;
+  final SharedFolderTreeFingerprint rootFingerprint;
+  final Map<String, SharedFolderTreeFingerprint> folderFingerprints;
+  final int fileLength;
+  final int fileModifiedAtMs;
+}
+
+class _FolderFingerprintAccumulator {
+  _FolderFingerprintAccumulator({required this.relativeFolderPath});
+
+  final String relativeFolderPath;
+  final StringBuffer _buffer = StringBuffer();
+  int _itemCount = 0;
+  int _totalBytes = 0;
+
+  void add(SharedFolderIndexEntry entry) {
+    _itemCount += 1;
+    _totalBytes += entry.sizeBytes;
+    _buffer
+      ..write(entry.relativePath)
+      ..write('|')
+      ..write(entry.sizeBytes)
+      ..write('|')
+      ..write(entry.modifiedAtMs)
+      ..write('|')
+      ..write(entry.sha256 ?? '')
+      ..write('\n');
+  }
+
+  SharedFolderTreeFingerprint build() {
+    return SharedFolderTreeFingerprint(
+      relativeFolderPath: relativeFolderPath,
+      fingerprint: sha256.convert(utf8.encode(_buffer.toString())).toString(),
+      itemCount: _itemCount,
+      totalBytes: _totalBytes,
+    );
+  }
 }
