@@ -36,6 +36,38 @@ class TransferSessionNotice {
   final bool clearError;
 }
 
+enum SharedDownloadPreparationStage {
+  preparingRequest,
+  checkingExistingLocalFiles,
+  startingReceiver,
+  waitingForRemote,
+}
+
+class SharedDownloadPreparationState {
+  const SharedDownloadPreparationState({
+    required this.requestId,
+    required this.ownerName,
+    required this.stage,
+  });
+
+  final String requestId;
+  final String ownerName;
+  final SharedDownloadPreparationStage stage;
+
+  String get message {
+    switch (stage) {
+      case SharedDownloadPreparationStage.preparingRequest:
+        return 'Подготавливаем запрос для $ownerName...';
+      case SharedDownloadPreparationStage.checkingExistingLocalFiles:
+        return 'Проверяем, какие файлы уже есть локально...';
+      case SharedDownloadPreparationStage.startingReceiver:
+        return 'Запускаем приём для $ownerName...';
+      case SharedDownloadPreparationStage.waitingForRemote:
+        return 'Ждём, пока $ownerName начнёт передачу...';
+    }
+  }
+}
+
 class TransferSessionCoordinator extends ChangeNotifier {
   TransferSessionCoordinator({
     required LanDiscoveryService lanDiscoveryService,
@@ -121,6 +153,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   int _uploadSpeedSampleBytes = 0;
   int _downloadSpeedSampleBytes = 0;
   TransferSessionNotice? _pendingNotice;
+  SharedDownloadPreparationState? _sharedDownloadPreparationState;
   bool _disposed = false;
 
   bool get isSendingTransfer => _isSendingTransfer;
@@ -153,11 +186,45 @@ class TransferSessionCoordinator extends ChangeNotifier {
   );
   List<IncomingTransferRequest> get incomingRequests =>
       List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
+  SharedDownloadPreparationState? get sharedDownloadPreparationState =>
+      _sharedDownloadPreparationState;
+  bool get isPreparingSharedDownload => _sharedDownloadPreparationState != null;
 
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;
     _pendingNotice = null;
     return notice;
+  }
+
+  void _setSharedDownloadPreparation({
+    required String requestId,
+    required String ownerName,
+    required SharedDownloadPreparationStage stage,
+  }) {
+    final next = SharedDownloadPreparationState(
+      requestId: requestId,
+      ownerName: ownerName,
+      stage: stage,
+    );
+    if (_sharedDownloadPreparationState?.requestId == next.requestId &&
+        _sharedDownloadPreparationState?.stage == next.stage &&
+        _sharedDownloadPreparationState?.ownerName == next.ownerName) {
+      return;
+    }
+    _sharedDownloadPreparationState = next;
+    _notify();
+  }
+
+  void _clearSharedDownloadPreparation({String? requestId}) {
+    final current = _sharedDownloadPreparationState;
+    if (current == null) {
+      return;
+    }
+    if (requestId != null && current.requestId != requestId) {
+      return;
+    }
+    _sharedDownloadPreparationState = null;
+    _notify();
   }
 
   Future<void> sendFilesToDevice({
@@ -361,10 +428,20 @@ class TransferSessionCoordinator extends ChangeNotifier {
           'download|$ownerIp|$cacheId|$stamp|'
           '${selectedPaths.join(",")}|${folderPrefixes.join(",")}|$_localDeviceMac',
         );
+        _setSharedDownloadPreparation(
+          requestId: requestId,
+          ownerName: ownerName,
+          stage: SharedDownloadPreparationStage.preparingRequest,
+        );
         final canUseDirectStart =
             preferDirectStart &&
             (selectedPaths.isNotEmpty || folderPrefixes.isNotEmpty);
         if (canUseDirectStart) {
+          _setSharedDownloadPreparation(
+            requestId: requestId,
+            ownerName: ownerName,
+            stage: SharedDownloadPreparationStage.startingReceiver,
+          );
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
           _resetDownloadSpeedTracking(currentBytes: 0);
@@ -374,6 +451,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
             expectedItems: null,
             destinationDirectory: destinationDirectory,
             onProgress: (received, total) {
+              if (received > 0) {
+                _clearSharedDownloadPreparation(requestId: requestId);
+              }
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
               _updateDownloadSpeedTracking(currentBytes: received);
@@ -424,9 +504,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
               selectedFolderPrefixes: folderPrefixes,
               transferPort: receiveSession.port,
             );
+            _setSharedDownloadPreparation(
+              requestId: requestId,
+              ownerName: ownerName,
+              stage: SharedDownloadPreparationStage.waitingForRemote,
+            );
           } catch (error) {
             _activeReceiveSessions.remove(requestId);
             await receiveSession.close();
+            _clearSharedDownloadPreparation(requestId: requestId);
             rethrow;
           }
         } else {
@@ -456,6 +542,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
                 selectedPaths.isEmpty && folderPrefixes.isEmpty,
             createdAt: DateTime.now(),
           );
+          _setSharedDownloadPreparation(
+            requestId: requestId,
+            ownerName: ownerName,
+            stage: SharedDownloadPreparationStage.waitingForRemote,
+          );
         }
       }
       _publishNotice(
@@ -469,6 +560,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         ),
       );
     } catch (error) {
+      _clearSharedDownloadPreparation();
       _log('Failed to request remote download: $error');
       _publishNotice(
         TransferSessionNotice(
@@ -617,6 +709,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
             itemsToReceive = <TransferFileManifestItem>[request.items.first];
           }
         } else {
+          _setSharedDownloadPreparation(
+            requestId: request.requestId,
+            ownerName: request.senderName,
+            stage: SharedDownloadPreparationStage.checkingExistingLocalFiles,
+          );
           itemsToReceive = await _filterMissingIncomingItems(
             items: request.items,
             destinationDirectory: destinationDirectory,
@@ -631,6 +728,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
 
         if (itemsToReceive.isNotEmpty) {
+          _setSharedDownloadPreparation(
+            requestId: request.requestId,
+            ownerName: request.senderName,
+            stage: SharedDownloadPreparationStage.startingReceiver,
+          );
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = expectedBytes;
           _resetDownloadSpeedTracking(currentBytes: 0);
@@ -655,6 +757,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
             destinationDirectory: destinationDirectory,
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             onProgress: (received, total) {
+              if (received > 0) {
+                _clearSharedDownloadPreparation(requestId: request.requestId);
+              }
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
               _updateDownloadSpeedTracking(currentBytes: received);
@@ -708,6 +813,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
           );
         } else {
+          _clearSharedDownloadPreparation(requestId: request.requestId);
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
           _clearDownloadSpeedTracking();
@@ -735,6 +841,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
       _incomingRequests.removeAt(index);
       if (!decisionApproved) {
+        _clearSharedDownloadPreparation(requestId: request.requestId);
         _publishNotice(
           TransferSessionNotice(
             infoMessage: isPreview
@@ -744,6 +851,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (isPreview) {
+        _clearSharedDownloadPreparation(requestId: request.requestId);
         _publishNotice(
           const TransferSessionNotice(
             infoMessage: 'Preview accepted. Waiting for file stream...',
@@ -751,6 +859,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (itemsToReceive.isEmpty) {
+        _clearSharedDownloadPreparation(requestId: request.requestId);
         _publishNotice(
           const TransferSessionNotice(
             infoMessage:
@@ -759,6 +868,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (skippedExistingCount > 0) {
+        _setSharedDownloadPreparation(
+          requestId: request.requestId,
+          ownerName: request.senderName,
+          stage: SharedDownloadPreparationStage.waitingForRemote,
+        );
         _publishNotice(
           TransferSessionNotice(
             infoMessage:
@@ -767,6 +881,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else {
+        _setSharedDownloadPreparation(
+          requestId: request.requestId,
+          ownerName: request.senderName,
+          stage: SharedDownloadPreparationStage.waitingForRemote,
+        );
         _publishNotice(
           const TransferSessionNotice(
             infoMessage: 'Transfer accepted. Waiting for file stream...',
@@ -775,6 +894,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
       }
     } catch (error) {
+      _clearSharedDownloadPreparation(requestId: request.requestId);
       if (receiveSession != null) {
         await receiveSession.close();
         _activeReceiveSessions.remove(request.requestId);
@@ -1099,6 +1219,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }) async {
     try {
       final result = await session.result;
+      _clearSharedDownloadPreparation(requestId: request.requestId);
       if (result.success) {
         var savedPaths = result.savedPaths;
         final effectiveItems = acceptedItems.isEmpty
@@ -1265,6 +1386,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
       }
     } finally {
+      _clearSharedDownloadPreparation(requestId: request.requestId);
       _activeReceiveSessions.remove(request.requestId);
       Future<void>.delayed(progressResetDelay, () {
         if (_disposed) {

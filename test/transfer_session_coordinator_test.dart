@@ -710,6 +710,46 @@ void main() {
     );
 
     test(
+      'shared download exposes waiting preparation state before transfer bytes arrive',
+      () async {
+        final fileTransferService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{'report.txt'},
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(coordinator.isPreparingSharedDownload, isTrue);
+        expect(
+          coordinator.sharedDownloadPreparationState?.stage,
+          SharedDownloadPreparationStage.waitingForRemote,
+        );
+        expect(
+          coordinator.sharedDownloadPreparationState?.message,
+          'Ждём, пока Remote peer начнёт передачу...',
+        );
+      },
+    );
+
+    test(
       'remote-share download uses picked desktop directory when standard folder setting is disabled',
       () async {
         final customRoot = Directory(
@@ -1791,6 +1831,35 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
           hashVerified: true,
         ),
       ),
+      close: () async {},
+    );
+  }
+}
+
+class PendingReceiveFileTransferService extends FileTransferService {
+  PendingReceiveFileTransferService({required this.port});
+
+  final int port;
+  int startReceiverCalls = 0;
+
+  @override
+  Future<TransferReceiveSession> startReceiver({
+    required String requestId,
+    required List<TransferFileManifestItem>? expectedItems,
+    required Directory destinationDirectory,
+    Duration timeout = const Duration(minutes: 3),
+    void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
+  }) async {
+    startReceiverCalls += 1;
+    return TransferReceiveSession(
+      port: port,
+      result: Completer<FileTransferResult>().future,
       close: () async {},
     );
   }

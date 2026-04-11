@@ -46,7 +46,8 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
           ],
           if (transferSessionCoordinator.isUploading ||
-              transferSessionCoordinator.isDownloading) ...[
+              transferSessionCoordinator.isDownloading ||
+              transferSessionCoordinator.isPreparingSharedDownload) ...[
             _TransferProgressCard(
               transferSessionCoordinator: transferSessionCoordinator,
             ),
@@ -237,6 +238,30 @@ class _TransferProgressCard extends StatelessWidget {
                 value: transferSessionCoordinator.downloadProgress,
                 minHeight: 6,
                 color: AppColors.success,
+                backgroundColor: AppColors.mutedBorder,
+              ),
+            ],
+            if (!transferSessionCoordinator.isDownloading &&
+                transferSessionCoordinator.isPreparingSharedDownload) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Download preparation',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                transferSessionCoordinator
+                        .sharedDownloadPreparationState
+                        ?.message ??
+                    'Preparing shared download...',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              const LinearProgressIndicator(
+                minHeight: 6,
+                color: AppColors.brandPrimary,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],

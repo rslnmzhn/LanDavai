@@ -224,6 +224,59 @@ void main() {
   });
 
   testWidgets(
+    'shared download browser shows preparation state before transfer starts',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'report.txt',
+      );
+
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            onRefreshRemoteShares: () async {},
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      coordinator.setPreparationState(
+        const SharedDownloadPreparationState(
+          requestId: 'download-1',
+          ownerName: 'Remote A',
+          stage: SharedDownloadPreparationStage.waitingForRemote,
+        ),
+      );
+      await _pumpForUi(tester, frames: 4);
+
+      expect(find.text('Подготовка скачивания'), findsOneWidget);
+      expect(
+        find.text('Ждём, пока Remote A начнёт передачу...'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
     'structured mode allows downloading a folder without selecting files one by one',
     (tester) async {
       _registerWidgetCleanup(tester);
@@ -955,10 +1008,41 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
   int downloadCalls = 0;
   Map<String, Set<String>>? lastSelectedByCache;
   Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
+  SharedDownloadPreparationState? _preparationState;
+  bool _isDownloading = false;
 
   @override
   List<IncomingTransferRequest> get incomingRequests =>
       const <IncomingTransferRequest>[];
+
+  @override
+  SharedDownloadPreparationState? get sharedDownloadPreparationState =>
+      _preparationState;
+
+  @override
+  bool get isPreparingSharedDownload => _preparationState != null;
+
+  @override
+  bool get isDownloading => _isDownloading;
+
+  @override
+  double get downloadProgress => 0;
+
+  @override
+  int get downloadReceivedBytes => 0;
+
+  @override
+  int get downloadTotalBytes => 0;
+
+  void setPreparationState(SharedDownloadPreparationState? state) {
+    _preparationState = state;
+    notifyListeners();
+  }
+
+  void setDownloading(bool value) {
+    _isDownloading = value;
+    notifyListeners();
+  }
 
   @override
   Future<String?> requestRemoteFilePreview({

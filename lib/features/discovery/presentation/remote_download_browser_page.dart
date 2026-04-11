@@ -181,6 +181,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     return AnimatedBuilder(
       animation: Listenable.merge(<Listenable>[
         _browser,
+        widget.transferSessionCoordinator,
         ..._ownersByFilterKey.values,
       ]),
       builder: (context, _) {
@@ -262,6 +263,21 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       minHeight: 3,
                       color: AppColors.brandPrimary,
                       backgroundColor: AppColors.mutedBorder,
+                    ),
+                  ),
+                if (widget
+                        .transferSessionCoordinator
+                        .isPreparingSharedDownload ||
+                    widget.transferSessionCoordinator.isDownloading)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      0,
+                    ),
+                    child: _SharedDownloadStatusCard(
+                      coordinator: widget.transferSessionCoordinator,
                     ),
                   ),
                 Expanded(
@@ -826,6 +842,99 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       case ExplorerMenuAction.sortSizeSmallest:
         return FilesFeatureSortOption.sizeSmallest;
     }
+  }
+}
+
+class _SharedDownloadStatusCard extends StatelessWidget {
+  const _SharedDownloadStatusCard({required this.coordinator});
+
+  final TransferSessionCoordinator coordinator;
+
+  @override
+  Widget build(BuildContext context) {
+    final preparation = coordinator.sharedDownloadPreparationState;
+    final isDownloading = coordinator.isDownloading;
+    final title = isDownloading ? 'Скачивание' : 'Подготовка скачивания';
+    final message = isDownloading
+        ? 'Передача началась. Файлы уже загружаются.'
+        : preparation?.message ?? 'Подготовка скачивания...';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isDownloading ? Icons.download_rounded : Icons.hourglass_bottom,
+                color: isDownloading
+                    ? AppColors.success
+                    : AppColors.brandPrimaryDark,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            message,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          if (isDownloading) ...[
+            LinearProgressIndicator(
+              value: coordinator.downloadProgress.clamp(0, 1),
+              minHeight: 6,
+              color: AppColors.success,
+              backgroundColor: AppColors.mutedBorder,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              '${(coordinator.downloadProgress * 100).toStringAsFixed(0)}% • '
+              '${_formatBytes(coordinator.downloadReceivedBytes)} / '
+              '${_formatBytes(coordinator.downloadTotalBytes)}',
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+          ] else
+            const LinearProgressIndicator(
+              minHeight: 6,
+              color: AppColors.brandPrimary,
+              backgroundColor: AppColors.mutedBorder,
+            ),
+        ],
+      ),
+    );
+  }
+
+  static String _formatBytes(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    }
+    final kb = bytes / 1024;
+    if (kb < 1024) {
+      return '${kb.toStringAsFixed(1)} KB';
+    }
+    final mb = kb / 1024;
+    if (mb < 1024) {
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(2)} GB';
   }
 }
 
