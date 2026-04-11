@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
@@ -43,6 +44,12 @@ enum SharedDownloadPreparationStage {
   waitingForRemote,
 }
 
+enum SharedUploadPreparationStage {
+  resolvingSelection,
+  preparingTransfer,
+  waitingForRequester,
+}
+
 class SharedDownloadPreparationState {
   const SharedDownloadPreparationState({
     required this.requestId,
@@ -64,6 +71,29 @@ class SharedDownloadPreparationState {
         return 'Запускаем приём для $ownerName...';
       case SharedDownloadPreparationStage.waitingForRemote:
         return 'Ждём, пока $ownerName начнёт передачу...';
+    }
+  }
+}
+
+class SharedUploadPreparationState {
+  const SharedUploadPreparationState({
+    required this.requestId,
+    required this.requesterName,
+    required this.stage,
+  });
+
+  final String requestId;
+  final String requesterName;
+  final SharedUploadPreparationStage stage;
+
+  String get message {
+    switch (stage) {
+      case SharedUploadPreparationStage.resolvingSelection:
+        return 'Определяем, что нужно отправить для $requesterName...';
+      case SharedUploadPreparationStage.preparingTransfer:
+        return 'Подготавливаем отправку для $requesterName...';
+      case SharedUploadPreparationStage.waitingForRequester:
+        return 'Ждём, пока $requesterName подтвердит приём...';
     }
   }
 }
@@ -125,10 +155,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
   final List<IncomingTransferRequest> _incomingRequests =
       <IncomingTransferRequest>[];
+  final List<IncomingSharedDownloadRequest> _incomingSharedDownloadRequests =
+      <IncomingSharedDownloadRequest>[];
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
   final Map<String, _PendingRemoteDownloadIntent> _pendingRemoteDownloads =
       <String, _PendingRemoteDownloadIntent>{};
+  final Map<String, _PendingRemoteDownloadIntent>
+  _pendingRemoteDownloadsByRequestId = <String, _PendingRemoteDownloadIntent>{};
   final Map<String, _PendingRemotePreviewIntent> _pendingRemotePreviewsByKey =
       <String, _PendingRemotePreviewIntent>{};
   final Map<String, Completer<String?>> _previewResultCompletersByRequestId =
@@ -156,6 +190,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   int _downloadSpeedSampleBytes = 0;
   TransferSessionNotice? _pendingNotice;
   SharedDownloadPreparationState? _sharedDownloadPreparationState;
+  SharedUploadPreparationState? _sharedUploadPreparationState;
   bool _disposed = false;
   int _preparedTransferScopeCacheHits = 0;
 
@@ -189,9 +224,16 @@ class TransferSessionCoordinator extends ChangeNotifier {
   );
   List<IncomingTransferRequest> get incomingRequests =>
       List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
+  List<IncomingSharedDownloadRequest> get incomingSharedDownloadRequests =>
+      List<IncomingSharedDownloadRequest>.unmodifiable(
+        _incomingSharedDownloadRequests,
+      );
   SharedDownloadPreparationState? get sharedDownloadPreparationState =>
       _sharedDownloadPreparationState;
   bool get isPreparingSharedDownload => _sharedDownloadPreparationState != null;
+  SharedUploadPreparationState? get sharedUploadPreparationState =>
+      _sharedUploadPreparationState;
+  bool get isPreparingSharedUpload => _sharedUploadPreparationState != null;
   @visibleForTesting
   int get preparedTransferScopeCacheEntryCount =>
       _preparedTransferFilesByScopeKey.length;
@@ -232,6 +274,37 @@ class TransferSessionCoordinator extends ChangeNotifier {
       return;
     }
     _sharedDownloadPreparationState = null;
+    _notify();
+  }
+
+  void _setSharedUploadPreparation({
+    required String requestId,
+    required String requesterName,
+    required SharedUploadPreparationStage stage,
+  }) {
+    final next = SharedUploadPreparationState(
+      requestId: requestId,
+      requesterName: requesterName,
+      stage: stage,
+    );
+    if (_sharedUploadPreparationState?.requestId == next.requestId &&
+        _sharedUploadPreparationState?.stage == next.stage &&
+        _sharedUploadPreparationState?.requesterName == next.requesterName) {
+      return;
+    }
+    _sharedUploadPreparationState = next;
+    _notify();
+  }
+
+  void _clearSharedUploadPreparation({String? requestId}) {
+    final current = _sharedUploadPreparationState;
+    if (current == null) {
+      return;
+    }
+    if (requestId != null && current.requestId != requestId) {
+      return;
+    }
+    _sharedUploadPreparationState = null;
     _notify();
   }
 
@@ -538,7 +611,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ownerIp: ownerIp,
             cacheId: cacheId,
           );
-          _pendingRemoteDownloads[pendingKey] = _PendingRemoteDownloadIntent(
+          final pendingIntent = _PendingRemoteDownloadIntent(
+            requestId: requestId,
             ownerIp: ownerIp,
             ownerMacAddress: _resolveRemoteOwnerMac(
               ownerIp: ownerIp,
@@ -550,6 +624,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
                 selectedPaths.isEmpty && folderPrefixes.isEmpty,
             createdAt: DateTime.now(),
           );
+          _pendingRemoteDownloads[pendingKey] = pendingIntent;
+          _pendingRemoteDownloadsByRequestId[requestId] = pendingIntent;
           _setSharedDownloadPreparation(
             requestId: requestId,
             ownerName: ownerName,
@@ -1022,6 +1098,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   ) async {
     if (!event.approved) {
       _pendingOutgoingTransfers.remove(event.requestId);
+      _clearSharedUploadPreparation(requestId: event.requestId);
       _publishNotice(
         TransferSessionNotice(
           infoMessage: '${event.receiverName} declined your transfer request.',
@@ -1032,6 +1109,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
     final session = _pendingOutgoingTransfers[event.requestId];
     if (session == null) {
+      _clearSharedUploadPreparation(requestId: event.requestId);
       _publishNotice(
         TransferSessionNotice(
           infoMessage: '${event.receiverName} accepted your transfer request.',
@@ -1047,6 +1125,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
     if (filteredFiles.isEmpty) {
       _pendingOutgoingTransfers.remove(event.requestId);
+      _clearSharedUploadPreparation(requestId: event.requestId);
       unawaited(_cleanupTemporaryOutgoingFiles(resolvedFiles));
       _publishNotice(
         TransferSessionNotice(
@@ -1059,6 +1138,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     if (event.transferPort == null) {
+      _clearSharedUploadPreparation(requestId: event.requestId);
       _publishNotice(
         TransferSessionNotice(
           errorMessage:
@@ -1090,10 +1170,73 @@ class TransferSessionCoordinator extends ChangeNotifier {
     unawaited(_handleDownloadRequest(event));
   }
 
+  void handleDownloadResponseEvent(DownloadResponseEvent event) {
+    final pendingDownload = _pendingRemoteDownloadsByRequestId.remove(
+      event.requestId,
+    );
+    if (pendingDownload != null) {
+      final pendingKey = _pendingRemoteDownloadKey(
+        ownerIp: pendingDownload.ownerIp,
+        cacheId: pendingDownload.cacheId,
+      );
+      _pendingRemoteDownloads.remove(pendingKey);
+    }
+
+    if (!event.approved) {
+      final activeReceiveSession = _activeReceiveSessions.remove(
+        event.requestId,
+      );
+      if (activeReceiveSession != null) {
+        unawaited(activeReceiveSession.close());
+      }
+      _clearSharedDownloadPreparation(requestId: event.requestId);
+      _publishNotice(
+        TransferSessionNotice(
+          infoMessage: '${event.responderName} отклонил запрос на скачивание.',
+          clearError: true,
+        ),
+      );
+    }
+  }
+
+  Future<void> respondToIncomingSharedDownloadRequest({
+    required String requestId,
+    required bool approved,
+  }) async {
+    final index = _incomingSharedDownloadRequests.indexWhere(
+      (request) => request.requestId == requestId,
+    );
+    if (index == -1) {
+      return;
+    }
+    final request = _incomingSharedDownloadRequests.removeAt(index);
+    _notify();
+
+    if (!approved) {
+      await _lanDiscoveryService.sendDownloadResponse(
+        targetIp: request.requesterIp,
+        requestId: request.requestId,
+        responderName: _localName,
+        approved: false,
+        message: 'Отправитель отклонил запрос на скачивание.',
+      );
+      _publishNotice(
+        TransferSessionNotice(
+          infoMessage: 'Запрос ${request.requesterName} отклонён.',
+          clearError: true,
+        ),
+      );
+      return;
+    }
+
+    await _approveIncomingSharedDownloadRequest(request);
+  }
+
   Future<void> _sendApprovedTransfer({
     required TransferDecisionEvent event,
     required _OutgoingTransferSession session,
   }) async {
+    _clearSharedUploadPreparation(requestId: event.requestId);
     _uploadSentBytes = 0;
     _uploadTotalBytes = session.files.fold<int>(
       0,
@@ -1152,6 +1295,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required int transferPort,
     required List<TransferSourceFile> files,
   }) async {
+    _clearSharedUploadPreparation(requestId: requestId);
     _uploadSentBytes = 0;
     _uploadTotalBytes = files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
     _resetUploadSpeedTracking(currentBytes: 0);
@@ -1410,8 +1554,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }
 
   Future<void> _handleDownloadRequest(DownloadRequestEvent event) async {
-    await _sharedCacheCatalog.loadOwnerCaches(ownerMacAddress: _localDeviceMac);
-    final cache = _findOwnerCacheById(event.cacheId);
+    var cache = _findOwnerCacheById(event.cacheId);
+    if (cache == null) {
+      await _sharedCacheCatalog.loadOwnerCaches(
+        ownerMacAddress: _localDeviceMac,
+      );
+      cache = _findOwnerCacheById(event.cacheId);
+    }
     if (cache == null) {
       _log(
         'Download request from ${event.requesterIp} ignored. '
@@ -1431,6 +1580,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
         ),
       );
     }
+    if (!isPreviewRequest) {
+      unawaited(SystemSound.play(SystemSoundType.alert));
+    }
 
     _publishNotice(
       TransferSessionNotice(
@@ -1440,6 +1592,31 @@ class TransferSessionCoordinator extends ChangeNotifier {
         clearError: true,
       ),
     );
+
+    if (!isPreviewRequest) {
+      _incomingSharedDownloadRequests.removeWhere(
+        (request) => request.requestId == event.requestId,
+      );
+      _incomingSharedDownloadRequests.insert(
+        0,
+        IncomingSharedDownloadRequest(
+          requestId: event.requestId,
+          requesterIp: event.requesterIp,
+          requesterName: event.requesterName,
+          requesterMacAddress: event.requesterMacAddress,
+          sharedCacheId: cache.cacheId,
+          sharedLabel: cache.displayName,
+          selectedRelativePaths: List<String>.from(event.selectedRelativePaths),
+          selectedFolderPrefixes: List<String>.from(
+            event.selectedFolderPrefixes,
+          ),
+          transferPort: event.transferPort,
+          createdAt: event.observedAt,
+        ),
+      );
+      _notify();
+      return;
+    }
 
     final relativePathFilter = event.selectedRelativePaths.isEmpty
         ? null
@@ -1570,6 +1747,132 @@ class TransferSessionCoordinator extends ChangeNotifier {
       'Transfer request sent for cache ${cache.cacheId} to ${event.requesterIp}. '
       'items=${items.length} preview=$isPreviewRequest',
     );
+  }
+
+  Future<void> _approveIncomingSharedDownloadRequest(
+    IncomingSharedDownloadRequest request,
+  ) async {
+    final cache = _findOwnerCacheById(request.sharedCacheId);
+    if (cache == null) {
+      _publishNotice(
+        const TransferSessionNotice(
+          errorMessage: 'Не удалось найти запрошенную общую папку.',
+        ),
+      );
+      return;
+    }
+
+    final relativePathFilter = request.selectedRelativePaths.isEmpty
+        ? null
+        : request.selectedRelativePaths.toSet();
+    final folderPrefixFilter = request.selectedFolderPrefixes.isEmpty
+        ? null
+        : request.selectedFolderPrefixes.toSet();
+    final deferHashesUntilAccept =
+        folderPrefixFilter == null && request.selectedRelativePaths.length == 1;
+
+    _setSharedUploadPreparation(
+      requestId: request.requestId,
+      requesterName: request.requesterName,
+      stage: SharedUploadPreparationStage.resolvingSelection,
+    );
+
+    try {
+      final preparedFiles = await _buildTransferFilesForCache(
+        cache,
+        relativePathFilter: relativePathFilter,
+        folderPrefixFilter: folderPrefixFilter,
+        includeHashes: !deferHashesUntilAccept,
+      );
+      if (preparedFiles.isEmpty) {
+        _clearSharedUploadPreparation(requestId: request.requestId);
+        await _lanDiscoveryService.sendDownloadResponse(
+          targetIp: request.requesterIp,
+          requestId: request.requestId,
+          responderName: _localName,
+          approved: false,
+          message: 'Не найдено доступных файлов для отправки.',
+        );
+        _publishNotice(
+          const TransferSessionNotice(
+            errorMessage: 'Не удалось подготовить файлы к отправке.',
+          ),
+        );
+        return;
+      }
+
+      final transferFiles = preparedFiles
+          .map(
+            (prepared) => TransferSourceFile(
+              sourcePath: prepared.sourcePath,
+              fileName: prepared.announcement.fileName,
+              sizeBytes: prepared.announcement.sizeBytes,
+              sha256: prepared.announcement.sha256,
+              deleteAfterTransfer: prepared.deleteAfterTransfer,
+            ),
+          )
+          .toList(growable: false);
+      _setSharedUploadPreparation(
+        requestId: request.requestId,
+        requesterName: request.requesterName,
+        stage: SharedUploadPreparationStage.preparingTransfer,
+      );
+
+      final directTransferPort = request.transferPort;
+      final canUseDirectStart =
+          directTransferPort != null &&
+          (request.selectedRelativePaths.isNotEmpty ||
+              request.selectedFolderPrefixes.isNotEmpty);
+      if (canUseDirectStart) {
+        _clearSharedUploadPreparation(requestId: request.requestId);
+        unawaited(
+          _sendDirectSharedDownload(
+            requestId: request.requestId,
+            targetIp: request.requesterIp,
+            receiverName: request.requesterName,
+            transferPort: directTransferPort,
+            files: transferFiles,
+          ),
+        );
+        return;
+      }
+
+      final items = preparedFiles
+          .map((prepared) => prepared.announcement)
+          .toList(growable: false);
+      final transferRequestId = _fileHashService.buildStableId(
+        'download-share|${request.requestId}|${request.requesterIp}|${cache.cacheId}',
+      );
+
+      _pendingOutgoingTransfers[transferRequestId] = _OutgoingTransferSession(
+        receiverName: request.requesterName,
+        files: transferFiles,
+        finalizedFilesFuture: deferHashesUntilAccept
+            ? _hydrateTransferSourceFilesWithHashes(transferFiles)
+            : null,
+      );
+      _setSharedUploadPreparation(
+        requestId: transferRequestId,
+        requesterName: request.requesterName,
+        stage: SharedUploadPreparationStage.waitingForRequester,
+      );
+      await _lanDiscoveryService.sendTransferRequest(
+        targetIp: request.requesterIp,
+        requestId: transferRequestId,
+        senderName: _localName,
+        senderMacAddress: _localDeviceMac,
+        sharedCacheId: cache.cacheId,
+        sharedLabel: cache.displayName,
+        items: items,
+      );
+    } catch (error) {
+      _clearSharedUploadPreparation(requestId: request.requestId);
+      _publishNotice(
+        TransferSessionNotice(
+          errorMessage: 'Не удалось подготовить отправку: $error',
+        ),
+      );
+    }
   }
 
   Future<void> _cleanupPreviewCacheBySettings() async {
@@ -2105,7 +2408,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
     if (matchedKey == null) {
       return null;
     }
-    return _pendingRemoteDownloads.remove(matchedKey);
+    final pending = _pendingRemoteDownloads.remove(matchedKey);
+    if (pending != null) {
+      _pendingRemoteDownloadsByRequestId.remove(pending.requestId);
+    }
+    return pending;
   }
 
   Future<Directory?> _resolveRemoteDownloadDestinationDirectory({
@@ -2212,10 +2519,18 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
   void _purgeExpiredPendingRemoteDownloads() {
     final now = DateTime.now();
-    _pendingRemoteDownloads.removeWhere(
-      (_, pending) =>
-          now.difference(pending.createdAt) > pendingRemoteDownloadTtl,
-    );
+    final expired = <String>[];
+    _pendingRemoteDownloads.removeWhere((_, pending) {
+      final isExpired =
+          now.difference(pending.createdAt) > pendingRemoteDownloadTtl;
+      if (isExpired) {
+        expired.add(pending.requestId);
+      }
+      return isExpired;
+    });
+    for (final requestId in expired) {
+      _pendingRemoteDownloadsByRequestId.remove(requestId);
+    }
   }
 
   void _publishNotice(TransferSessionNotice notice) {
@@ -2287,6 +2602,7 @@ class _PreparedTransferFile {
 
 class _PendingRemoteDownloadIntent {
   _PendingRemoteDownloadIntent({
+    required this.requestId,
     required this.ownerIp,
     required this.ownerMacAddress,
     required this.cacheId,
@@ -2295,6 +2611,7 @@ class _PendingRemoteDownloadIntent {
     required this.createdAt,
   });
 
+  final String requestId;
   final String ownerIp;
   final String? ownerMacAddress;
   final String cacheId;

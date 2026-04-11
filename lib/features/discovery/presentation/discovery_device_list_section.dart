@@ -5,6 +5,7 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
+import '../../transfer/domain/transfer_request.dart';
 import '../application/discovery_read_model.dart';
 import '../domain/discovered_device.dart';
 
@@ -45,9 +46,26 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             _ErrorBanner(message: errorMessage!),
             const SizedBox(height: AppSpacing.sm),
           ],
+          if (transferSessionCoordinator
+              .incomingSharedDownloadRequests
+              .isNotEmpty) ...[
+            _IncomingSharedDownloadRequestsCard(
+              requests:
+                  transferSessionCoordinator.incomingSharedDownloadRequests,
+              onRespond: ({required requestId, required approved}) {
+                return transferSessionCoordinator
+                    .respondToIncomingSharedDownloadRequest(
+                      requestId: requestId,
+                      approved: approved,
+                    );
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           if (transferSessionCoordinator.isUploading ||
               transferSessionCoordinator.isDownloading ||
-              transferSessionCoordinator.isPreparingSharedDownload) ...[
+              transferSessionCoordinator.isPreparingSharedDownload ||
+              transferSessionCoordinator.isPreparingSharedUpload) ...[
             _TransferProgressCard(
               transferSessionCoordinator: transferSessionCoordinator,
             ),
@@ -216,6 +234,30 @@ class _TransferProgressCard extends StatelessWidget {
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
+            if (!transferSessionCoordinator.isUploading &&
+                transferSessionCoordinator.isPreparingSharedUpload) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Подготовка отправки',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              Text(
+                transferSessionCoordinator
+                        .sharedUploadPreparationState
+                        ?.message ??
+                    'Подготавливаем отправку...',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.xxs),
+              const LinearProgressIndicator(
+                minHeight: 6,
+                color: AppColors.brandPrimary,
+                backgroundColor: AppColors.mutedBorder,
+              ),
+            ],
             if (transferSessionCoordinator.isDownloading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
@@ -307,6 +349,139 @@ class _TransferProgressCard extends StatelessWidget {
       return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
     }
     return '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+}
+
+class _IncomingSharedDownloadRequestsCard extends StatelessWidget {
+  const _IncomingSharedDownloadRequestsCard({
+    required this.requests,
+    required this.onRespond,
+  });
+
+  final List<IncomingSharedDownloadRequest> requests;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Запросы на скачивание',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            for (var index = 0; index < requests.length; index += 1) ...[
+              _IncomingSharedDownloadRequestTile(
+                request: requests[index],
+                onRespond: onRespond,
+              ),
+              if (index != requests.length - 1)
+                const SizedBox(height: AppSpacing.sm),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomingSharedDownloadRequestTile extends StatelessWidget {
+  const _IncomingSharedDownloadRequestTile({
+    required this.request,
+    required this.onRespond,
+  });
+
+  final IncomingSharedDownloadRequest request;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    final labels = request.requestedLabels;
+    final compactSummary = labels.take(3).map(_compactLabel).join(', ');
+    final remainingCount = labels.length - 3;
+    final summary = remainingCount > 0
+        ? '$compactSummary и ещё $remainingCount'
+        : compactSummary;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Устройство "${request.requesterName}" хочет скачать у вас ${_requestKind(request)}: $summary',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            request.requestsWholeShare
+                ? 'Будет отправлена вся общая папка "${request.sharedLabel}".'
+                : 'Источник: ${request.sharedLabel}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: true),
+                child: const Text('Отправить'),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: false),
+                child: const Text('Отказать'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _requestKind(IncomingSharedDownloadRequest request) {
+    if (request.requestsWholeShare) {
+      return 'папку';
+    }
+    if (request.isMixedSelection) {
+      return 'файлы и папки';
+    }
+    if (request.requestedFolderCount > 0) {
+      return request.requestedFolderCount == 1 ? 'папку' : 'папки';
+    }
+    return request.requestedFileCount == 1 ? 'файл' : 'файлы';
+  }
+
+  static String _compactLabel(String value) {
+    final normalized = value.replaceAll('\\', '/').trim();
+    if (normalized.isEmpty) {
+      return value;
+    }
+    final parts = normalized.split('/');
+    if (parts.length == 1) {
+      return parts.first;
+    }
+    return parts.last;
   }
 }
 

@@ -1996,6 +1996,10 @@ class DiscoveryController extends ChangeNotifier {
     _transferSessionCoordinator.handleDownloadRequestEvent(event);
   }
 
+  void _onDownloadResponse(DownloadResponseEvent event) {
+    _transferSessionCoordinator.handleDownloadResponseEvent(event);
+  }
+
   void _handleNetworkScopeChanged() {
     if (_consumeNetworkScopeState()) {
       notifyListeners();
@@ -2055,6 +2059,7 @@ class DiscoveryController extends ChangeNotifier {
       onShareQuery: _onShareQuery,
       onShareCatalog: _onShareCatalog,
       onDownloadRequest: _onDownloadRequest,
+      onDownloadResponse: _onDownloadResponse,
       onThumbnailSyncRequest: _onThumbnailSyncRequest,
       onThumbnailPacket: _onThumbnailPacket,
       onClipboardQuery: _onClipboardQuery,

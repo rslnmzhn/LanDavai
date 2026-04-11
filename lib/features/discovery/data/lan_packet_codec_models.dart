@@ -350,6 +350,21 @@ class LanDownloadRequestPacket extends LanInboundPacket {
   final bool previewMode;
 }
 
+class LanDownloadResponsePacket extends LanInboundPacket {
+  const LanDownloadResponsePacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? message;
+}
+
 class LanThumbnailSyncRequestPacket extends LanInboundPacket {
   const LanThumbnailSyncRequestPacket({
     required super.instanceId,

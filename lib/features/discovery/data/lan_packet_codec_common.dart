@@ -17,6 +17,7 @@ const String lanFriendResponsePrefix = 'LANDA_FRIEND_RESPONSE_V1';
 const String lanShareQueryPrefix = 'LANDA_SHARE_QUERY_V1';
 const String lanShareCatalogPrefix = 'LANDA_SHARE_CATALOG_V1';
 const String lanDownloadRequestPrefix = 'LANDA_DOWNLOAD_REQUEST_V1';
+const String lanDownloadResponsePrefix = 'LANDA_DOWNLOAD_RESPONSE_V1';
 const String lanThumbnailSyncRequestPrefix = 'LANDA_THUMBNAIL_SYNC_REQUEST_V1';
 const String lanThumbnailPacketPrefix = 'LANDA_THUMBNAIL_PACKET_V1';
 const String lanClipboardQueryPrefix = 'LANDA_CLIPBOARD_QUERY_V1';
@@ -32,6 +33,7 @@ const Map<String, String> lanProtocolPrefixes = <String, String>{
   'shareQuery': lanShareQueryPrefix,
   'shareCatalog': lanShareCatalogPrefix,
   'downloadRequest': lanDownloadRequestPrefix,
+  'downloadResponse': lanDownloadResponsePrefix,
   'thumbnailSyncRequest': lanThumbnailSyncRequestPrefix,
   'thumbnailPacket': lanThumbnailPacketPrefix,
   'clipboardQuery': lanClipboardQueryPrefix,

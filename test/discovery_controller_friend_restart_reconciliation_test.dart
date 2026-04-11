@@ -310,6 +310,7 @@ class _RecordingRestartLanDiscoveryService extends LanDiscoveryService {
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(DownloadResponseEvent event)? onDownloadResponse,
     void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,

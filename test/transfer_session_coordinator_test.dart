@@ -144,6 +144,14 @@ void main() {
           ),
         );
 
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        unawaited(
+          coordinator.respondToIncomingSharedDownloadRequest(
+            requestId: 'download-request-1',
+            approved: true,
+          ),
+        );
+
         for (var i = 0; i < 40; i += 1) {
           if (lanDiscoveryService.transferRequests.isNotEmpty) {
             break;
@@ -204,6 +212,13 @@ void main() {
             selectedFolderPrefixes: const <String>[],
             previewMode: false,
             observedAt: DateTime(2026),
+          ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        unawaited(
+          coordinator.respondToIncomingSharedDownloadRequest(
+            requestId: 'download-request-2',
+            approved: true,
           ),
         );
         for (var i = 0; i < 40; i += 1) {
@@ -282,6 +297,13 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        unawaited(
+          coordinator.respondToIncomingSharedDownloadRequest(
+            requestId: 'direct-download-1',
+            approved: true,
+          ),
+        );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileTransferService.sendFilesCalls, 1);
@@ -289,6 +311,188 @@ void main() {
         expect(fileTransferService.lastFiles.single.sha256, isEmpty);
         expect(fileHashService.pendingPaths, isEmpty);
         expect(lanDiscoveryService.transferRequests, isEmpty);
+      },
+    );
+
+    test(
+      'incoming shared download request waits for sender approval and exposes request summary',
+      () async {
+        final ownerFile = File(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_sender_ui',
+            'docs',
+            'a.txt',
+          ),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('hello');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'sender-approval-1',
+            requesterIp: '192.168.1.55',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>['a.txt'],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        final request = coordinator.incomingSharedDownloadRequests.single;
+        expect(request.requesterName, 'Remote peer');
+        expect(request.sharedLabel, 'Shared docs');
+        expect(request.selectedRelativePaths, <String>['a.txt']);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+      },
+    );
+
+    test(
+      'rejecting incoming shared download request prevents transfer start and notifies requester',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared_sender_reject', 'a.txt'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('hello');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'sender-reject-1',
+            requesterIp: '192.168.1.55',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>['a.txt'],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'sender-reject-1',
+          approved: false,
+        );
+
+        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(lanDiscoveryService.downloadResponses, hasLength(1));
+        expect(lanDiscoveryService.downloadResponses.single.approved, isFalse);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+      },
+    );
+
+    test(
+      'approving incoming shared download request exposes sender preparation state before sending',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared_sender_prepare', 'a.txt'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('hello');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileHashService = ControlledFileHashService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'sender-approve-1',
+            requesterIp: '192.168.1.55',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        final approveFuture = coordinator
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'sender-approve-1',
+              approved: true,
+            );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(
+          coordinator.sharedUploadPreparationState?.stage,
+          SharedUploadPreparationStage.resolvingSelection,
+        );
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+
+        fileHashService.completeAll(withHash: 'sender-hash');
+        for (var i = 0; i < 40; i += 1) {
+          if (lanDiscoveryService.transferRequests.isNotEmpty) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(
+          coordinator.sharedUploadPreparationState?.stage,
+          SharedUploadPreparationStage.waitingForRequester,
+        );
+        expect(lanDiscoveryService.transferRequests, hasLength(1));
+        await approveFuture;
       },
     );
 
@@ -337,6 +541,11 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-cache-1',
+          approved: true,
+        );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
@@ -360,6 +569,11 @@ void main() {
             previewMode: false,
             observedAt: DateTime(2026, 1, 2),
           ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-cache-2',
+          approved: true,
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -417,6 +631,11 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-root-1',
+          approved: true,
+        );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
@@ -435,6 +654,11 @@ void main() {
             previewMode: false,
             observedAt: DateTime(2026, 1, 2),
           ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-root-2',
+          approved: true,
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -492,6 +716,11 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-prefix-1',
+          approved: true,
+        );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
@@ -510,6 +739,11 @@ void main() {
             previewMode: false,
             observedAt: DateTime(2026, 1, 2),
           ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-prefix-2',
+          approved: true,
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -537,6 +771,11 @@ void main() {
             previewMode: false,
             observedAt: DateTime(2026, 1, 3),
           ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-prefix-3',
+          approved: true,
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -590,6 +829,7 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
+        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
         expect(coordinator.preparedTransferScopeCacheHits, 0);
         expect(coordinator.preparedTransferScopeCacheEntryCount, 0);
       },
@@ -657,6 +897,11 @@ void main() {
             previewMode: false,
             observedAt: DateTime(2026),
           ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-changed',
+          approved: true,
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -1753,9 +1998,11 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   final List<SentTransferRequest> transferRequests = <SentTransferRequest>[];
   final List<SentTransferDecision> transferDecisions = <SentTransferDecision>[];
   final List<SentDownloadRequest> downloadRequests = <SentDownloadRequest>[];
+  final List<SentDownloadResponse> downloadResponses = <SentDownloadResponse>[];
   void Function(TransferRequestEvent event)? onTransferRequest;
   void Function(TransferDecisionEvent event)? onTransferDecision;
   void Function(DownloadRequestEvent event)? onDownloadRequest;
+  void Function(DownloadResponseEvent event)? onDownloadResponse;
 
   @override
   Future<void> start({
@@ -1771,6 +2018,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(DownloadResponseEvent event)? onDownloadResponse,
     void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
@@ -1779,6 +2027,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     this.onTransferRequest = onTransferRequest;
     this.onTransferDecision = onTransferDecision;
     this.onDownloadRequest = onDownloadRequest;
+    this.onDownloadResponse = onDownloadResponse;
   }
 
   @override
@@ -1853,6 +2102,25 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   }
 
   @override
+  Future<void> sendDownloadResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+  }) async {
+    downloadResponses.add(
+      SentDownloadResponse(
+        targetIp: targetIp,
+        requestId: requestId,
+        responderName: responderName,
+        approved: approved,
+        message: message,
+      ),
+    );
+  }
+
+  @override
   Future<void> stop() async {}
 }
 
@@ -1916,6 +2184,22 @@ class SentDownloadRequest {
   final List<String> selectedFolderPrefixes;
   final int? transferPort;
   final bool previewMode;
+}
+
+class SentDownloadResponse {
+  const SentDownloadResponse({
+    required this.targetIp,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    required this.message,
+  });
+
+  final String targetIp;
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? message;
 }
 
 class SuccessfulReceiveFileTransferService extends FileTransferService {

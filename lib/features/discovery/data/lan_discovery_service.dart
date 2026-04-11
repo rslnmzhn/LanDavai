@@ -86,6 +86,7 @@ class LanDiscoveryService {
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(DownloadResponseEvent event)? onDownloadResponse,
     void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
@@ -117,6 +118,7 @@ class LanDiscoveryService {
           onShareQuery: onShareQuery,
           onShareCatalog: onShareCatalog,
           onDownloadRequest: onDownloadRequest,
+          onDownloadResponse: onDownloadResponse,
           onThumbnailSyncRequest: onThumbnailSyncRequest,
           onThumbnailPacket: onThumbnailPacket,
           onClipboardQuery: onClipboardQuery,
@@ -345,6 +347,27 @@ class LanDiscoveryService {
         selectedFolderPrefixes: selectedFolderPrefixes,
         transferPort: transferPort,
         previewMode: previewMode,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendDownloadResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+  }) async {
+    await _sendOutgoingPacket(
+      prefix: lanDownloadResponsePrefix,
+      packet: _packetCodec.encodeDownloadResponse(
+        instanceId: _instanceId,
+        requestId: requestId,
+        responderName: responderName,
+        approved: approved,
+        message: message,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),
       targetIp: targetIp,
@@ -618,6 +641,7 @@ class LanDiscoveryService {
     void Function(ShareQueryEvent event)? onShareQuery,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
+    void Function(DownloadResponseEvent event)? onDownloadResponse,
     void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
     void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
@@ -779,6 +803,17 @@ class LanDiscoveryService {
     if (packet is LanDownloadRequestPacket) {
       onDownloadRequest?.call(
         _shareProtocolHandler.handleDownloadRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanDownloadResponsePacket) {
+      onDownloadResponse?.call(
+        _shareProtocolHandler.handleDownloadResponsePacket(
           packet: packet,
           senderIp: senderIp,
           observedAt: observedAt,

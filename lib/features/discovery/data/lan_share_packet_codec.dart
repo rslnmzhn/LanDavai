@@ -80,6 +80,28 @@ class LanSharePacketCodec {
     );
   }
 
+  EncodedLanPacket? encodeDownloadResponse({
+    required String instanceId,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+    required int createdAtMs,
+  }) {
+    final payload = <String, Object?>{
+      'instanceId': instanceId,
+      'requestId': requestId,
+      'responderName': responderName,
+      'approved': approved,
+      'message': message,
+      'createdAtMs': createdAtMs,
+    };
+    return encodeLanEnvelopePacket(
+      prefix: lanDownloadResponsePrefix,
+      payload: payload,
+    );
+  }
+
   EncodedLanPacket? encodeThumbnailSyncRequest({
     required String instanceId,
     required String requestId,
@@ -307,6 +329,35 @@ class LanSharePacketCodec {
       selectedFolderPrefixes: selectedFolderPrefixes,
       transferPort: transferPortRaw is num ? transferPortRaw.toInt() : null,
       previewMode: previewMode,
+    );
+  }
+
+  LanDownloadResponsePacket? parseDownloadResponsePacket(String message) {
+    final decoded = decodeLanEnvelope(
+      message: message,
+      expectedPrefix: lanDownloadResponsePrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final responderName = decoded['responderName'] as String?;
+    final approved = decoded['approved'] as bool?;
+    if (instanceId == null ||
+        requestId == null ||
+        responderName == null ||
+        approved == null) {
+      return null;
+    }
+
+    return LanDownloadResponsePacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: decoded['message'] as String?,
     );
   }
 

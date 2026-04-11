@@ -239,6 +239,58 @@ void main() {
     },
   );
 
+  testWidgets(
+    'DiscoveryPage shows sender approval actions for incoming shared download requests',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      final ownerFile = File(
+        p.join(
+          harness.databaseHarness.rootDirectory.path,
+          'shared_sender_ui',
+          'docs',
+          'report.txt',
+        ),
+      );
+      await ownerFile.parent.create(recursive: true);
+      await ownerFile.writeAsString('hello');
+      final cache = await harness.sharedCacheCatalog.buildOwnerSelectionCache(
+        ownerMacAddress: harness.controller.localDeviceMac,
+        filePaths: <String>[ownerFile.path],
+        displayName: 'Shared docs',
+      );
+      await harness.sharedCacheCatalog.loadOwnerCaches(
+        ownerMacAddress: harness.controller.localDeviceMac,
+      );
+
+      await _pumpDiscoveryPage(tester, harness: harness);
+
+      harness.transferSessionCoordinator.handleDownloadRequestEvent(
+        DownloadRequestEvent(
+          requestId: 'sender-ui-1',
+          requesterIp: '192.168.1.88',
+          requesterName: 'Remote peer',
+          requesterMacAddress: '11:22:33:44:55:66',
+          cacheId: cache.cacheId,
+          selectedRelativePaths: const <String>['report.txt'],
+          selectedFolderPrefixes: const <String>[],
+          transferPort: 40404,
+          previewMode: false,
+          observedAt: DateTime(2026, 1, 1, 10),
+        ),
+      );
+      await _pumpForUi(tester);
+
+      expect(find.text('Запросы на скачивание'), findsOneWidget);
+      expect(
+        find.text('Устройство "Remote peer" хочет скачать у вас файл'),
+        findsOneWidget,
+      );
+      expect(find.text('report.txt'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Отправить'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Отказать'), findsOneWidget);
+    },
+  );
+
   testWidgets('DiscoveryPage send action opens nearby transfer entry sheet', (
     tester,
   ) async {

@@ -159,6 +159,24 @@ class DownloadRequestEvent {
   final DateTime observedAt;
 }
 
+class DownloadResponseEvent {
+  DownloadResponseEvent({
+    required this.requestId,
+    required this.responderIp,
+    required this.responderName,
+    required this.approved,
+    required this.observedAt,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderIp;
+  final String responderName;
+  final bool approved;
+  final String? message;
+  final DateTime observedAt;
+}
+
 class ClipboardQueryEvent {
   const ClipboardQueryEvent({
     required this.requestId,

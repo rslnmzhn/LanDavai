@@ -21,6 +21,7 @@ class LanPacketCodec {
   static const String shareQueryPrefix = lanShareQueryPrefix;
   static const String shareCatalogPrefix = lanShareCatalogPrefix;
   static const String downloadRequestPrefix = lanDownloadRequestPrefix;
+  static const String downloadResponsePrefix = lanDownloadResponsePrefix;
   static const String thumbnailSyncRequestPrefix =
       lanThumbnailSyncRequestPrefix;
   static const String thumbnailPacketPrefix = lanThumbnailPacketPrefix;
@@ -101,6 +102,8 @@ class LanPacketCodec {
         return _shareCodec.parseShareCatalogPacket(message);
       case lanDownloadRequestPrefix:
         return _shareCodec.parseDownloadRequestPacket(message);
+      case lanDownloadResponsePrefix:
+        return _shareCodec.parseDownloadResponsePacket(message);
       case lanThumbnailSyncRequestPrefix:
         return _shareCodec.parseThumbnailSyncRequestPacket(message);
       case lanThumbnailPacketPrefix:
@@ -246,6 +249,24 @@ class LanPacketCodec {
       selectedFolderPrefixes: selectedFolderPrefixes,
       transferPort: transferPort,
       previewMode: previewMode,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  EncodedLanPacket? encodeDownloadResponse({
+    required String instanceId,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeDownloadResponse(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: message,
       createdAtMs: createdAtMs,
     );
   }

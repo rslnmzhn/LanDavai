@@ -52,6 +52,21 @@ class LanShareProtocolHandler {
     );
   }
 
+  DownloadResponseEvent handleDownloadResponsePacket({
+    required LanDownloadResponsePacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    return DownloadResponseEvent(
+      requestId: packet.requestId,
+      responderIp: senderIp,
+      responderName: packet.responderName,
+      approved: packet.approved,
+      message: packet.message,
+      observedAt: observedAt,
+    );
+  }
+
   ThumbnailSyncRequestEvent handleThumbnailSyncRequestPacket({
     required LanThumbnailSyncRequestPacket packet,
     required String senderIp,

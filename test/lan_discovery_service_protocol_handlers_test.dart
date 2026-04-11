@@ -263,6 +263,14 @@ void main() {
       previewMode: true,
       observedAt: DateTime.fromMillisecondsSinceEpoch(8),
     );
+    final downloadResponseEvent = DownloadResponseEvent(
+      requestId: 'download-1',
+      responderIp: 'sentinel-download-response-ip',
+      responderName: 'Handled sender',
+      approved: false,
+      message: 'Rejected',
+      observedAt: DateTime.fromMillisecondsSinceEpoch(8),
+    );
     final thumbnailSyncEvent = ThumbnailSyncRequestEvent(
       requestId: 'thumb-sync-1',
       requesterIp: 'sentinel-thumb-sync-ip',
@@ -312,6 +320,7 @@ void main() {
     shareHandler.nextShareQueryEvent = shareQueryEvent;
     shareHandler.nextShareCatalogEvent = shareCatalogEvent;
     shareHandler.nextDownloadRequestEvent = downloadRequestEvent;
+    shareHandler.nextDownloadResponseEvent = downloadResponseEvent;
     shareHandler.nextThumbnailSyncRequestEvent = thumbnailSyncEvent;
     shareHandler.nextThumbnailPacketEvent = thumbnailPacketEvent;
     clipboardHandler.nextClipboardQueryEvent = clipboardQueryEvent;
@@ -320,6 +329,7 @@ void main() {
     ShareQueryEvent? receivedShareQuery;
     ShareCatalogEvent? receivedShareCatalog;
     DownloadRequestEvent? receivedDownloadRequest;
+    DownloadResponseEvent? receivedDownloadResponse;
     ThumbnailSyncRequestEvent? receivedThumbnailSyncRequest;
     ThumbnailPacketEvent? receivedThumbnailPacket;
     ClipboardQueryEvent? receivedClipboardQuery;
@@ -338,6 +348,9 @@ void main() {
       },
       onDownloadRequest: (event) {
         receivedDownloadRequest = event;
+      },
+      onDownloadResponse: (event) {
+        receivedDownloadResponse = event;
       },
       onThumbnailSyncRequest: (event) {
         receivedThumbnailSyncRequest = event;
@@ -404,6 +417,20 @@ void main() {
             selectedRelativePaths: <String>['docs/report.pdf'],
             selectedFolderPrefixes: const <String>[],
             previewMode: true,
+            createdAtMs: 7,
+          )!
+          .bytes,
+      senderIp: '192.168.1.26',
+      senderPort: LanDiscoveryService.discoveryPort,
+    );
+    transportAdapter.emitDatagram(
+      bytes: codec
+          .encodeDownloadResponse(
+            instanceId: 'remote-instance',
+            requestId: 'download-1',
+            responderName: 'Owner',
+            approved: false,
+            message: 'Rejected',
             createdAtMs: 7,
           )!
           .bytes,
@@ -484,6 +511,7 @@ void main() {
     expect(shareHandler.shareQueryCalls, 1);
     expect(shareHandler.shareCatalogCalls, 1);
     expect(shareHandler.downloadRequestCalls, 1);
+    expect(shareHandler.downloadResponseCalls, 1);
     expect(shareHandler.thumbnailSyncRequestCalls, 1);
     expect(shareHandler.thumbnailPacketCalls, 1);
     expect(clipboardHandler.clipboardQueryCalls, 1);
@@ -491,6 +519,7 @@ void main() {
     expect(receivedShareQuery, same(shareQueryEvent));
     expect(receivedShareCatalog, same(shareCatalogEvent));
     expect(receivedDownloadRequest, same(downloadRequestEvent));
+    expect(receivedDownloadResponse, same(downloadResponseEvent));
     expect(receivedThumbnailSyncRequest, same(thumbnailSyncEvent));
     expect(receivedThumbnailPacket, same(thumbnailPacketEvent));
     expect(receivedClipboardQuery, same(clipboardQueryEvent));
@@ -591,11 +620,13 @@ class RecordingShareHandler extends LanShareProtocolHandler {
   int shareQueryCalls = 0;
   int shareCatalogCalls = 0;
   int downloadRequestCalls = 0;
+  int downloadResponseCalls = 0;
   int thumbnailSyncRequestCalls = 0;
   int thumbnailPacketCalls = 0;
   ShareQueryEvent? nextShareQueryEvent;
   ShareCatalogEvent? nextShareCatalogEvent;
   DownloadRequestEvent? nextDownloadRequestEvent;
+  DownloadResponseEvent? nextDownloadResponseEvent;
   ThumbnailSyncRequestEvent? nextThumbnailSyncRequestEvent;
   ThumbnailPacketEvent? nextThumbnailPacketEvent;
 
@@ -638,6 +669,21 @@ class RecordingShareHandler extends LanShareProtocolHandler {
     downloadRequestCalls += 1;
     return nextDownloadRequestEvent ??
         super.handleDownloadRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        );
+  }
+
+  @override
+  DownloadResponseEvent handleDownloadResponsePacket({
+    required LanDownloadResponsePacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    downloadResponseCalls += 1;
+    return nextDownloadResponseEvent ??
+        super.handleDownloadResponsePacket(
           packet: packet,
           senderIp: senderIp,
           observedAt: observedAt,
