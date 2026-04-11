@@ -46,6 +46,7 @@ class LanShareProtocolHandler {
       cacheId: packet.cacheId,
       selectedRelativePaths: packet.selectedRelativePaths,
       selectedFolderPrefixes: packet.selectedFolderPrefixes,
+      transferPort: packet.transferPort,
       previewMode: packet.previewMode,
       observedAt: observedAt,
     );

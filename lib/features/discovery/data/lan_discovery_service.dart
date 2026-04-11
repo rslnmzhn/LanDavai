@@ -330,6 +330,7 @@ class LanDiscoveryService {
     required String cacheId,
     List<String> selectedRelativePaths = const <String>[],
     List<String> selectedFolderPrefixes = const <String>[],
+    int? transferPort,
     bool previewMode = false,
   }) async {
     await _sendOutgoingPacket(
@@ -342,6 +343,7 @@ class LanDiscoveryService {
         cacheId: cacheId,
         selectedRelativePaths: selectedRelativePaths,
         selectedFolderPrefixes: selectedFolderPrefixes,
+        transferPort: transferPort,
         previewMode: previewMode,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),

@@ -142,6 +142,7 @@ class DownloadRequestEvent {
     required this.cacheId,
     required this.selectedRelativePaths,
     required this.selectedFolderPrefixes,
+    this.transferPort,
     required this.previewMode,
     required this.observedAt,
   });
@@ -153,6 +154,7 @@ class DownloadRequestEvent {
   final String cacheId;
   final List<String> selectedRelativePaths;
   final List<String> selectedFolderPrefixes;
+  final int? transferPort;
   final bool previewMode;
   final DateTime observedAt;
 }

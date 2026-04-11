@@ -39,10 +39,11 @@ class TransferReceiveSession {
 }
 
 class FileTransferResult {
-  FileTransferResult({
+  const FileTransferResult({
     required this.success,
     required this.message,
     required this.savedPaths,
+    required this.receivedItems,
     required this.totalBytes,
     required this.destinationDirectory,
     required this.hashVerified,
@@ -51,6 +52,7 @@ class FileTransferResult {
   final bool success;
   final String message;
   final List<String> savedPaths;
+  final List<TransferFileManifestItem> receivedItems;
   final int totalBytes;
   final String destinationDirectory;
   final bool hashVerified;
@@ -63,7 +65,7 @@ class FileTransferService {
 
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
-    required List<TransferFileManifestItem> expectedItems,
+    required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
@@ -90,6 +92,7 @@ class FileTransferService {
             success: false,
             message: 'Transfer receiver closed.',
             savedPaths: <String>[],
+            receivedItems: <TransferFileManifestItem>[],
             totalBytes: 0,
             destinationDirectory: destinationDirectory.path,
             hashVerified: false,
@@ -110,6 +113,7 @@ class FileTransferService {
             success: false,
             message: 'Transfer receive timed out.',
             savedPaths: <String>[],
+            receivedItems: <TransferFileManifestItem>[],
             totalBytes: 0,
             destinationDirectory: destinationDirectory.path,
             hashVerified: false,
@@ -143,6 +147,7 @@ class FileTransferService {
                   success: false,
                   message: 'Transfer receive failed: $error',
                   savedPaths: <String>[],
+                  receivedItems: <TransferFileManifestItem>[],
                   totalBytes: 0,
                   destinationDirectory: destinationDirectory.path,
                   hashVerified: false,
@@ -160,6 +165,7 @@ class FileTransferService {
               success: false,
               message: 'Receiver socket error: $error',
               savedPaths: <String>[],
+              receivedItems: <TransferFileManifestItem>[],
               totalBytes: 0,
               destinationDirectory: destinationDirectory.path,
               hashVerified: false,
@@ -256,7 +262,7 @@ class FileTransferService {
   Future<FileTransferResult> _receiveFiles({
     required Socket socket,
     required String requestId,
-    required List<TransferFileManifestItem> expectedItems,
+    required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
@@ -292,15 +298,16 @@ class FileTransferService {
       throw StateError('Transfer request mismatch.');
     }
 
-    final normalizedExpected = expectedItems
-        .map(
-          (item) => _FileDescriptor(
-            name: item.fileName,
-            sizeBytes: item.sizeBytes,
-            sha256: item.sha256,
-          ),
-        )
-        .toList(growable: false);
+    final normalizedExpected =
+        (expectedItems ?? const <TransferFileManifestItem>[])
+            .map(
+              (item) => _FileDescriptor(
+                name: item.fileName,
+                sizeBytes: item.sizeBytes,
+                sha256: item.sha256,
+              ),
+            )
+            .toList(growable: false);
     final normalizedActual = headerFiles
         .whereType<Map<String, dynamic>>()
         .map(
@@ -312,22 +319,24 @@ class FileTransferService {
         )
         .toList(growable: false);
 
-    final expectedByName = <String, _FileDescriptor>{
-      for (final expected in normalizedExpected) expected.name: expected,
-    };
-    final seenActualNames = <String>{};
-    for (final actual in normalizedActual) {
-      if (!seenActualNames.add(actual.name)) {
-        throw StateError('Transfer manifest duplicate file: ${actual.name}.');
-      }
-      final expected = expectedByName[actual.name];
-      if (expected == null || expected.sizeBytes != actual.sizeBytes) {
-        throw StateError('Transfer manifest mismatch for ${actual.name}.');
-      }
-      final expectedHash = expected.sha256.trim();
-      if (expectedHash.isNotEmpty &&
-          expectedHash.toLowerCase() != actual.sha256.toLowerCase()) {
-        throw StateError('Transfer manifest mismatch for ${actual.name}.');
+    if (normalizedExpected.isNotEmpty) {
+      final expectedByName = <String, _FileDescriptor>{
+        for (final expected in normalizedExpected) expected.name: expected,
+      };
+      final seenActualNames = <String>{};
+      for (final actual in normalizedActual) {
+        if (!seenActualNames.add(actual.name)) {
+          throw StateError('Transfer manifest duplicate file: ${actual.name}.');
+        }
+        final expected = expectedByName[actual.name];
+        if (expected == null || expected.sizeBytes != actual.sizeBytes) {
+          throw StateError('Transfer manifest mismatch for ${actual.name}.');
+        }
+        final expectedHash = expected.sha256.trim();
+        if (expectedHash.isNotEmpty &&
+            expectedHash.toLowerCase() != actual.sha256.toLowerCase()) {
+          throw StateError('Transfer manifest mismatch for ${actual.name}.');
+        }
       }
     }
 
@@ -389,6 +398,15 @@ class FileTransferService {
         success: true,
         message: 'Transfer completed. Hash verified.',
         savedPaths: savedPaths,
+        receivedItems: normalizedActual
+            .map(
+              (file) => TransferFileManifestItem(
+                fileName: file.name,
+                sizeBytes: file.sizeBytes,
+                sha256: file.sha256,
+              ),
+            )
+            .toList(growable: false),
         totalBytes: totalBytes,
         destinationDirectory: destinationDirectory.path,
         hashVerified: true,

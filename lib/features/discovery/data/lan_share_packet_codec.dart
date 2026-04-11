@@ -58,6 +58,7 @@ class LanSharePacketCodec {
     required String cacheId,
     required List<String> selectedRelativePaths,
     required List<String> selectedFolderPrefixes,
+    int? transferPort,
     required bool previewMode,
     required int createdAtMs,
   }) {
@@ -69,6 +70,7 @@ class LanSharePacketCodec {
       'cacheId': cacheId,
       'selectedRelativePaths': selectedRelativePaths,
       'selectedFolderPrefixes': selectedFolderPrefixes,
+      'transferPort': transferPort,
       'previewMode': previewMode,
       'createdAtMs': createdAtMs,
     };
@@ -257,6 +259,7 @@ class LanSharePacketCodec {
     final cacheId = decoded['cacheId'] as String?;
     final selectedRelativePathsRaw = decoded['selectedRelativePaths'];
     final selectedFolderPrefixesRaw = decoded['selectedFolderPrefixes'];
+    final transferPortRaw = decoded['transferPort'];
     final previewMode = decoded['previewMode'] as bool? ?? false;
     if (instanceId == null ||
         requestId == null ||
@@ -302,6 +305,7 @@ class LanSharePacketCodec {
       cacheId: cacheId,
       selectedRelativePaths: selectedRelativePaths,
       selectedFolderPrefixes: selectedFolderPrefixes,
+      transferPort: transferPortRaw is num ? transferPortRaw.toInt() : null,
       previewMode: previewMode,
     );
   }

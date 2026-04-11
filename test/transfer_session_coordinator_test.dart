@@ -144,7 +144,12 @@ void main() {
           ),
         );
 
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        for (var i = 0; i < 40; i += 1) {
+          if (lanDiscoveryService.transferRequests.isNotEmpty) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
 
         expect(lanDiscoveryService.transferRequests, hasLength(1));
         expect(
@@ -201,7 +206,12 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 20));
+        for (var i = 0; i < 40; i += 1) {
+          if (lanDiscoveryService.transferRequests.isNotEmpty) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
         expect(lanDiscoveryService.transferRequests, hasLength(1));
 
         coordinator.handleTransferDecisionEvent(
@@ -225,6 +235,57 @@ void main() {
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileTransferService.lastFiles, hasLength(1));
         expect(fileTransferService.lastFiles.single.sha256, 'lazy-hash-2');
+      },
+    );
+
+    test(
+      'sender direct shared download connects to provided transfer port without transfer request',
+      () async {
+        final ownerFile = File(
+          p.join(harness.rootDirectory.path, 'shared_direct', 'report.txt'),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('hello');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-download-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: <String>['report.txt'],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.lastFiles.single.fileName, 'report.txt');
+        expect(lanDiscoveryService.transferRequests, isEmpty);
       },
     );
 
@@ -430,6 +491,13 @@ void main() {
             savedPaths: <String>[
               '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
             ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
             totalBytes: 12,
             destinationDirectory: destinationDirectory.path,
             hashVerified: true,
@@ -506,6 +574,13 @@ void main() {
             savedPaths: <String>[
               '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
             ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
             totalBytes: 12,
             destinationDirectory: destinationDirectory.path,
             hashVerified: true,
@@ -579,6 +654,62 @@ void main() {
     );
 
     test(
+      'direct shared download start includes transfer port and skips transfer-request round-trip',
+      () async {
+        final fileTransferService = SuccessfulReceiveFileTransferService(
+          resultBuilder: (destinationDirectory) => FileTransferResult(
+            success: true,
+            message: 'ok',
+            savedPaths: <String>[
+              '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
+            ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
+            totalBytes: 12,
+            destinationDirectory: destinationDirectory.path,
+            hashVerified: true,
+          ),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{'report.txt'},
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        expect(lanDiscoveryService.downloadRequests, hasLength(1));
+        expect(lanDiscoveryService.downloadRequests.single.transferPort, 40404);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+        expect(lanDiscoveryService.transferDecisions, isEmpty);
+        expect(fileTransferService.startReceiverCalls, 1);
+      },
+    );
+
+    test(
       'remote-share download uses picked desktop directory when standard folder setting is disabled',
       () async {
         final customRoot = Directory(
@@ -590,6 +721,13 @@ void main() {
             message: 'ok',
             savedPaths: <String>[
               '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
+            ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
             ],
             totalBytes: 12,
             destinationDirectory: destinationDirectory.path,
@@ -707,6 +845,13 @@ void main() {
             savedPaths: <String>[
               '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
             ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
             totalBytes: 12,
             destinationDirectory: destinationDirectory.path,
             hashVerified: true,
@@ -795,6 +940,18 @@ void main() {
             savedPaths: <String>[
               '${destinationDirectory.path}${Platform.pathSeparator}docs${Platform.pathSeparator}a.txt',
               '${destinationDirectory.path}${Platform.pathSeparator}docs${Platform.pathSeparator}sub${Platform.pathSeparator}b.txt',
+            ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'docs/a.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+              TransferFileManifestItem(
+                fileName: 'docs/sub/b.txt',
+                sizeBytes: 12,
+                sha256: 'def456',
+              ),
             ],
             totalBytes: 24,
             destinationDirectory: destinationDirectory.path,
@@ -1406,6 +1563,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     required String cacheId,
     List<String> selectedRelativePaths = const <String>[],
     List<String> selectedFolderPrefixes = const <String>[],
+    int? transferPort,
     bool previewMode = false,
   }) async {
     downloadRequests.add(
@@ -1417,6 +1575,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
         cacheId: cacheId,
         selectedRelativePaths: List<String>.from(selectedRelativePaths),
         selectedFolderPrefixes: List<String>.from(selectedFolderPrefixes),
+        transferPort: transferPort,
         previewMode: previewMode,
       ),
     );
@@ -1473,6 +1632,7 @@ class SentDownloadRequest {
     required this.cacheId,
     required this.selectedRelativePaths,
     required this.selectedFolderPrefixes,
+    required this.transferPort,
     required this.previewMode,
   });
 
@@ -1483,6 +1643,7 @@ class SentDownloadRequest {
   final String cacheId;
   final List<String> selectedRelativePaths;
   final List<String> selectedFolderPrefixes;
+  final int? transferPort;
   final bool previewMode;
 }
 
@@ -1497,7 +1658,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
   @override
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
-    required List<TransferFileManifestItem> expectedItems,
+    required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
@@ -1580,7 +1741,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
   @override
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
-    required List<TransferFileManifestItem> expectedItems,
+    required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
     void Function(int receivedBytes, int totalBytes)? onProgress,
@@ -1595,7 +1756,8 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
     lastDestinationDirectoryPath = destinationDirectory.path;
     lastDestinationRelativeRootPrefix = destinationRelativeRootPrefix;
     final savedPaths = <String>[];
-    for (final item in expectedItems) {
+    final manifestItems = expectedItems ?? const <TransferFileManifestItem>[];
+    for (final item in manifestItems) {
       final destinationPath = destinationPathAllocator == null
           ? destinationRelativeRootPrefix == null ||
                     destinationRelativeRootPrefix.isEmpty
@@ -1611,7 +1773,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
             );
       savedPaths.add(destinationPath);
     }
-    final totalBytes = expectedItems.fold<int>(
+    final totalBytes = manifestItems.fold<int>(
       0,
       (sum, item) => sum + item.sizeBytes,
     );
@@ -1623,6 +1785,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
           success: true,
           message: 'ok',
           savedPaths: savedPaths,
+          receivedItems: manifestItems,
           totalBytes: totalBytes,
           destinationDirectory: destinationDirectory.path,
           hashVerified: true,

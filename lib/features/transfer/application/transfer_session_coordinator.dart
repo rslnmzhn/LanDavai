@@ -267,6 +267,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required Map<String, Set<String>> selectedRelativePathsByCache,
     Map<String, Set<String>> selectedFolderPrefixesByCache =
         const <String, Set<String>>{},
+    bool preferDirectStart = false,
     required bool useStandardAppDownloadFolder,
   }) async {
     if (selectedRelativePathsByCache.isEmpty &&
@@ -360,32 +361,102 @@ class TransferSessionCoordinator extends ChangeNotifier {
           'download|$ownerIp|$cacheId|$stamp|'
           '${selectedPaths.join(",")}|${folderPrefixes.join(",")}|$_localDeviceMac',
         );
-        await _lanDiscoveryService.sendDownloadRequest(
-          targetIp: ownerIp,
-          requestId: requestId,
-          requesterName: _localName,
-          requesterMacAddress: _localDeviceMac,
-          cacheId: cacheId,
-          selectedRelativePaths: selectedPaths,
-          selectedFolderPrefixes: folderPrefixes,
-        );
+        final canUseDirectStart =
+            preferDirectStart &&
+            (selectedPaths.isNotEmpty || folderPrefixes.isNotEmpty);
+        if (canUseDirectStart) {
+          _downloadReceivedBytes = 0;
+          _downloadTotalBytes = 0;
+          _resetDownloadSpeedTracking(currentBytes: 0);
+          _notify();
+          final receiveSession = await _fileTransferService.startReceiver(
+            requestId: requestId,
+            expectedItems: null,
+            destinationDirectory: destinationDirectory,
+            onProgress: (received, total) {
+              _downloadReceivedBytes = received;
+              _downloadTotalBytes = total;
+              _updateDownloadSpeedTracking(currentBytes: received);
+              _notify();
+              unawaited(
+                _transferStorageService.showAndroidDownloadProgressNotification(
+                  requestId: requestId,
+                  senderName: ownerName,
+                  receivedBytes: received,
+                  totalBytes: total,
+                ),
+              );
+            },
+          );
+          _activeReceiveSessions[requestId] = receiveSession;
+          unawaited(
+            _waitForIncomingTransferResult(
+              request: IncomingTransferRequest(
+                requestId: requestId,
+                senderIp: ownerIp,
+                senderName: ownerName,
+                senderMacAddress:
+                    _resolveRemoteOwnerMac(
+                      ownerIp: ownerIp,
+                      cacheId: cacheId,
+                    ) ??
+                    '',
+                sharedCacheId: cacheId,
+                sharedLabel: 'Shared files',
+                items: const <TransferFileManifestItem>[],
+                createdAt: DateTime.now(),
+              ),
+              session: receiveSession,
+              acceptedItems: const <TransferFileManifestItem>[],
+              persistToUserDownloads: true,
+              recordHistory: true,
+              sendCompletionNotification: true,
+            ),
+          );
+          try {
+            await _lanDiscoveryService.sendDownloadRequest(
+              targetIp: ownerIp,
+              requestId: requestId,
+              requesterName: _localName,
+              requesterMacAddress: _localDeviceMac,
+              cacheId: cacheId,
+              selectedRelativePaths: selectedPaths,
+              selectedFolderPrefixes: folderPrefixes,
+              transferPort: receiveSession.port,
+            );
+          } catch (error) {
+            _activeReceiveSessions.remove(requestId);
+            await receiveSession.close();
+            rethrow;
+          }
+        } else {
+          await _lanDiscoveryService.sendDownloadRequest(
+            targetIp: ownerIp,
+            requestId: requestId,
+            requesterName: _localName,
+            requesterMacAddress: _localDeviceMac,
+            cacheId: cacheId,
+            selectedRelativePaths: selectedPaths,
+            selectedFolderPrefixes: folderPrefixes,
+          );
 
-        final pendingKey = _pendingRemoteDownloadKey(
-          ownerIp: ownerIp,
-          cacheId: cacheId,
-        );
-        _pendingRemoteDownloads[pendingKey] = _PendingRemoteDownloadIntent(
-          ownerIp: ownerIp,
-          ownerMacAddress: _resolveRemoteOwnerMac(
+          final pendingKey = _pendingRemoteDownloadKey(
             ownerIp: ownerIp,
             cacheId: cacheId,
-          ),
-          cacheId: cacheId,
-          destinationDirectoryPath: destinationDirectory.path,
-          preserveSharedRootOnReceive:
-              selectedPaths.isEmpty && folderPrefixes.isEmpty,
-          createdAt: DateTime.now(),
-        );
+          );
+          _pendingRemoteDownloads[pendingKey] = _PendingRemoteDownloadIntent(
+            ownerIp: ownerIp,
+            ownerMacAddress: _resolveRemoteOwnerMac(
+              ownerIp: ownerIp,
+              cacheId: cacheId,
+            ),
+            cacheId: cacheId,
+            destinationDirectoryPath: destinationDirectory.path,
+            preserveSharedRootOnReceive:
+                selectedPaths.isEmpty && folderPrefixes.isEmpty,
+            createdAt: DateTime.now(),
+          );
+        }
       }
       _publishNotice(
         TransferSessionNotice(
@@ -661,27 +732,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
                   .toList(growable: false)
             : null,
       );
-
-      if (decisionApproved && !isPreview) {
-        final entries = request.items
-            .map(
-              (item) => SharedFolderIndexEntry(
-                relativePath: item.fileName,
-                sizeBytes: item.sizeBytes,
-                modifiedAtMs: request.createdAt.millisecondsSinceEpoch,
-                sha256: item.sha256,
-              ),
-            )
-            .toList(growable: false);
-
-        await _sharedCacheCatalog.saveReceiverCache(
-          ownerMacAddress: request.senderMacAddress,
-          receiverMacAddress: _localDeviceMac,
-          remoteFolderIdentity: request.sharedCacheId,
-          remoteDisplayName: request.sharedLabel,
-          entries: entries,
-        );
-      }
 
       _incomingRequests.removeAt(index);
       if (!decisionApproved) {
@@ -967,6 +1017,60 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
   }
 
+  Future<void> _sendDirectSharedDownload({
+    required String requestId,
+    required String targetIp,
+    required String receiverName,
+    required int transferPort,
+    required List<TransferSourceFile> files,
+  }) async {
+    _uploadSentBytes = 0;
+    _uploadTotalBytes = files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
+    _resetUploadSpeedTracking(currentBytes: 0);
+    _notify();
+
+    try {
+      await _fileTransferService.sendFiles(
+        host: targetIp,
+        port: transferPort,
+        requestId: requestId,
+        files: files,
+        onProgress: (sent, total) {
+          _uploadSentBytes = sent;
+          _uploadTotalBytes = total;
+          _updateUploadSpeedTracking(currentBytes: sent);
+          _notify();
+        },
+      );
+      _uploadSentBytes = _uploadTotalBytes;
+      _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
+      _publishNotice(
+        TransferSessionNotice(
+          infoMessage: 'Transferred ${files.length} file(s) to $receiverName.',
+          clearError: true,
+        ),
+      );
+    } catch (error) {
+      _log('Direct shared download failed: $error');
+      _publishNotice(
+        TransferSessionNotice(
+          errorMessage: 'Direct shared download failed: $error',
+        ),
+      );
+    } finally {
+      await _cleanupTemporaryOutgoingFiles(files);
+      Future<void>.delayed(progressResetDelay, () {
+        if (_disposed) {
+          return;
+        }
+        _uploadSentBytes = 0;
+        _uploadTotalBytes = 0;
+        _clearUploadSpeedTracking();
+        _notify();
+      });
+    }
+  }
+
   Future<void> _cleanupTemporaryOutgoingFiles(
     List<TransferSourceFile> files,
   ) async {
@@ -997,7 +1101,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
       final result = await session.result;
       if (result.success) {
         var savedPaths = result.savedPaths;
-        final recordedRelativePaths = acceptedItems
+        final effectiveItems = acceptedItems.isEmpty
+            ? result.receivedItems
+            : acceptedItems;
+        final recordedRelativePaths = effectiveItems
             .map(
               (item) => _buildReceiveRelativePath(
                 item.fileName,
@@ -1033,6 +1140,32 @@ class TransferSessionCoordinator extends ChangeNotifier {
             : hasReceiveRootPrefix
             ? p.join(result.destinationDirectory, destinationRelativeRootPrefix)
             : result.destinationDirectory;
+
+        if (previewCompleter == null &&
+            request.sharedCacheId.trim().isNotEmpty &&
+            request.senderMacAddress.trim().isNotEmpty &&
+            result.receivedItems.isNotEmpty) {
+          try {
+            await _sharedCacheCatalog.saveReceiverCache(
+              ownerMacAddress: request.senderMacAddress,
+              receiverMacAddress: _localDeviceMac,
+              remoteFolderIdentity: request.sharedCacheId,
+              remoteDisplayName: request.sharedLabel,
+              entries: result.receivedItems
+                  .map(
+                    (item) => SharedFolderIndexEntry(
+                      relativePath: item.fileName,
+                      sizeBytes: item.sizeBytes,
+                      modifiedAtMs: request.createdAt.millisecondsSinceEpoch,
+                      sha256: item.sha256,
+                    ),
+                  )
+                  .toList(growable: false),
+            );
+          } catch (error) {
+            _log('Failed to persist receiver cache: $error');
+          }
+        }
 
         if (recordHistory) {
           try {
@@ -1211,6 +1344,38 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final items = preparedFiles
         .map((prepared) => prepared.announcement)
         .toList(growable: false);
+
+    final directTransferPort = isPreviewRequest ? null : event.transferPort;
+    final canUseDirectStart =
+        directTransferPort != null &&
+        (event.selectedRelativePaths.isNotEmpty ||
+            event.selectedFolderPrefixes.isNotEmpty);
+    if (canUseDirectStart) {
+      unawaited(
+        _sendDirectSharedDownload(
+          requestId: event.requestId,
+          targetIp: event.requesterIp,
+          receiverName: event.requesterName,
+          transferPort: directTransferPort,
+          files: preparedFiles
+              .map(
+                (prepared) => TransferSourceFile(
+                  sourcePath: prepared.sourcePath,
+                  fileName: prepared.announcement.fileName,
+                  sizeBytes: prepared.announcement.sizeBytes,
+                  sha256: prepared.announcement.sha256,
+                  deleteAfterTransfer: prepared.deleteAfterTransfer,
+                ),
+              )
+              .toList(growable: false),
+        ),
+      );
+      _log(
+        'Direct download transfer started for cache ${cache.cacheId} to ${event.requesterIp}. '
+        'items=${items.length}',
+      );
+      return;
+    }
 
     final requestId = isPreviewRequest
         ? event.requestId

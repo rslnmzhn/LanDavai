@@ -1,5 +1,5 @@
 class TransferFileManifestItem {
-  TransferFileManifestItem({
+  const TransferFileManifestItem({
     required this.fileName,
     required this.sizeBytes,
     required this.sha256,

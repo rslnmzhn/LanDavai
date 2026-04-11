@@ -705,6 +705,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           ownerName: batch.ownerName,
           selectedRelativePathsByCache: batch.selectedRelativePathsByCache,
           selectedFolderPrefixesByCache: batch.selectedFolderPrefixesByCache,
+          preferDirectStart: true,
           useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
         );
       }

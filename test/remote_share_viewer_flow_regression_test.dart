@@ -977,6 +977,7 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
     required Map<String, Set<String>> selectedRelativePathsByCache,
     Map<String, Set<String>> selectedFolderPrefixesByCache =
         const <String, Set<String>>{},
+    bool preferDirectStart = false,
     required bool useStandardAppDownloadFolder,
   }) async {
     downloadCalls += 1;

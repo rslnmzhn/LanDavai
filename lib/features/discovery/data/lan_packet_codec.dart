@@ -232,6 +232,7 @@ class LanPacketCodec {
     required String cacheId,
     required List<String> selectedRelativePaths,
     required List<String> selectedFolderPrefixes,
+    int? transferPort,
     required bool previewMode,
     required int createdAtMs,
   }) {
@@ -243,6 +244,7 @@ class LanPacketCodec {
       cacheId: cacheId,
       selectedRelativePaths: selectedRelativePaths,
       selectedFolderPrefixes: selectedFolderPrefixes,
+      transferPort: transferPort,
       previewMode: previewMode,
       createdAtMs: createdAtMs,
     );
