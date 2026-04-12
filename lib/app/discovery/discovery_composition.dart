@@ -199,7 +199,10 @@ class DiscoveryCompositionFactory {
           nearbyTransferAvailabilityStore.lanFallbackPort,
     );
     final fileTransferService = FileTransferService();
-    final sharedDownloadDiagnosticLogStore = SharedDownloadDiagnosticLogStore();
+    final sharedDownloadDiagnosticLogStore = SharedDownloadDiagnosticLogStore(
+      retainedLineCountProvider: () =>
+          settingsStore.settings.debugLogRetainedLines,
+    );
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
     );

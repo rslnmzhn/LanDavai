@@ -21,6 +21,7 @@ void main() {
     ValueChanged<int>? onPreviewCacheMaxAgeDaysChanged,
     ValueChanged<int>? onClipboardHistoryMaxEntriesChanged,
     ValueChanged<int>? onRecacheParallelWorkersChanged,
+    ValueChanged<int>? onDebugLogRetainedLinesChanged,
     Future<String?> Function()? onShowLogs,
     Future<String?> Function()? onOpenLogsFolder,
   }) async {
@@ -51,6 +52,8 @@ void main() {
                 onClipboardHistoryMaxEntriesChanged ?? (_) {},
             onRecacheParallelWorkersChanged:
                 onRecacheParallelWorkersChanged ?? (_) {},
+            onDebugLogRetainedLinesChanged:
+                onDebugLogRetainedLinesChanged ?? (_) {},
             onShowLogs: onShowLogs ?? () async => null,
             onOpenLogsFolder: onOpenLogsFolder ?? () async => null,
           ),
@@ -147,6 +150,7 @@ void main() {
                 onPreviewCacheMaxAgeDaysChanged: (_) {},
                 onClipboardHistoryMaxEntriesChanged: (_) {},
                 onRecacheParallelWorkersChanged: (_) {},
+                onDebugLogRetainedLinesChanged: (_) {},
                 onShowLogs: () async => null,
                 onOpenLogsFolder: () async => null,
               );
@@ -235,6 +239,39 @@ void main() {
 
     expect(find.text('Показать логи'), findsOneWidget);
     expect(find.text('Открыть папку с логами'), findsOneWidget);
+  });
+
+  testWidgets('settings sheet saves debug log retained line count', (
+    tester,
+  ) async {
+    int? savedValue;
+
+    await pumpSettings(
+      tester,
+      onDebugLogRetainedLinesChanged: (value) {
+        savedValue = value;
+      },
+    );
+
+    await tester.tap(find.text('Хранилище'));
+    await tester.pumpAndSettle();
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-debug-log-line-cap-field')),
+      scrollable: find.byType(ListView).first,
+    );
+    await tester.enterText(
+      find.byKey(const Key('settings-debug-log-line-cap-field')),
+      '350',
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-debug-log-line-cap-save')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-debug-log-line-cap-save')));
+    await tester.pumpAndSettle();
+
+    expect(savedValue, 350);
   });
 
   testWidgets('settings sheet shows actionable feedback for missing debug.log', (

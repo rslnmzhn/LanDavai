@@ -2003,6 +2003,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required int transferPort,
     required List<TransferSourceFile> files,
     Map<String, Object?> diagnosticDetails = const <String, Object?>{},
+    bool logWholeShareConnectAttempt = false,
+    Map<String, Object?> wholeShareConnectAttemptDetails =
+        const <String, Object?>{},
   }) async {
     _clearSharedUploadPreparation(requestId: requestId);
     _uploadSentBytes = 0;
@@ -2011,6 +2014,23 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _notify();
 
     try {
+      if (logWholeShareConnectAttempt) {
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_whole_share_direct_send_connect_attempt_start',
+          requestId: requestId,
+          details: <String, Object?>{
+            ...wholeShareConnectAttemptDetails,
+            'targetIp': targetIp,
+            'receiverName': receiverName,
+            'transferPort': transferPort,
+            'preparedFileCount': files.length,
+            'preparedTotalBytes': files.fold<int>(
+              0,
+              (sum, file) => sum + file.sizeBytes,
+            ),
+          },
+        );
+      }
       await _fileTransferService.sendFiles(
         host: targetIp,
         port: transferPort,
@@ -2791,6 +2811,36 @@ class TransferSessionCoordinator extends ChangeNotifier {
   Future<void> _approveIncomingSharedDownloadRequest(
     IncomingSharedDownloadRequest request,
   ) async {
+    final emitWholeShareDirectStartDiagnostics =
+        request.requestsWholeShare && request.transferPort != null;
+    final wholeShareDiagnosticDetails = <String, Object?>{
+      'requesterIp': request.requesterIp,
+      'requesterName': request.requesterName,
+      'sharedCacheId': request.sharedCacheId,
+      'sharedLabel': request.sharedLabel,
+      'pathKind': 'direct_start',
+      'requestsWholeShare': true,
+    };
+    final TransferRuntimeDiagnosticCallback? wholeShareDiagnosticLogger =
+        emitWholeShareDirectStartDiagnostics
+        ? ({
+            required String stage,
+            Map<String, Object?> details = const <String, Object?>{},
+            Object? error,
+            StackTrace? stackTrace,
+          }) {
+            _writeSharedDownloadDiagnostic(
+              stage: stage,
+              requestId: request.requestId,
+              details: <String, Object?>{
+                ...wholeShareDiagnosticDetails,
+                ...details,
+              },
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
+        : null;
     _writeSharedDownloadDiagnostic(
       stage: 'sender_prepare_start',
       requestId: request.requestId,
@@ -2804,6 +2854,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'requestsWholeShare': request.requestsWholeShare,
       },
     );
+    wholeShareDiagnosticLogger?.call(
+      stage: 'sender_whole_share_prepare_start',
+      details: <String, Object?>{
+        'selectedFileCount': request.selectedRelativePaths.length,
+        'selectedFolderPrefixCount': request.selectedFolderPrefixes.length,
+      },
+    );
     final cache = _findOwnerCacheById(request.sharedCacheId);
     if (cache == null) {
       _writeSharedDownloadDiagnostic(
@@ -2813,6 +2870,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
           'sharedCacheId': request.sharedCacheId,
           'reason': 'cache_not_found',
         },
+      );
+      wholeShareDiagnosticLogger?.call(
+        stage: 'sender_whole_share_prepare_failure',
+        details: const <String, Object?>{'reason': 'cache_not_found'},
       );
       _publishNotice(
         const TransferSessionNotice(
@@ -2843,6 +2904,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         relativePathFilter: relativePathFilter,
         folderPrefixFilter: folderPrefixFilter,
         includeHashes: !deferHashesUntilAccept,
+        onDiagnosticEvent: wholeShareDiagnosticLogger,
       );
       if (preparedFiles.isEmpty) {
         _clearSharedUploadPreparation(requestId: request.requestId);
@@ -2853,6 +2915,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
             'sharedCacheId': request.sharedCacheId,
             'reason': 'no_prepared_files',
           },
+        );
+        wholeShareDiagnosticLogger?.call(
+          stage: 'sender_whole_share_prepare_failure',
+          details: const <String, Object?>{'reason': 'no_prepared_files'},
         );
         await _lanDiscoveryService.sendDownloadResponse(
           targetIp: request.requesterIp,
@@ -2891,6 +2957,20 @@ class TransferSessionCoordinator extends ChangeNotifier {
         details: <String, Object?>{
           'sharedCacheId': request.sharedCacheId,
           'preparedFileCount': transferFiles.length,
+          'preparedTotalBytes': transferFiles.fold<int>(
+            0,
+            (sum, file) => sum + file.sizeBytes,
+          ),
+        },
+      );
+      wholeShareDiagnosticLogger?.call(
+        stage: 'sender_whole_share_prepare_complete',
+        details: <String, Object?>{
+          'preparedFileCount': transferFiles.length,
+          'preparedTotalBytes': transferFiles.fold<int>(
+            0,
+            (sum, file) => sum + file.sizeBytes,
+          ),
         },
       );
 
@@ -2905,6 +2985,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
             'sharedCacheId': request.sharedCacheId,
             'transferPort': directTransferPort,
             'preparedFileCount': transferFiles.length,
+            'preparedTotalBytes': transferFiles.fold<int>(
+              0,
+              (sum, file) => sum + file.sizeBytes,
+            ),
           },
         );
         unawaited(
@@ -2917,7 +3001,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
             diagnosticDetails: <String, Object?>{
               'cacheId': request.sharedCacheId,
               'sharedLabel': request.sharedLabel,
+              'requestsWholeShare': request.requestsWholeShare,
             },
+            logWholeShareConnectAttempt: emitWholeShareDirectStartDiagnostics,
+            wholeShareConnectAttemptDetails: wholeShareDiagnosticDetails,
           ),
         );
         return;
@@ -2972,6 +3059,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
         error: error,
         stackTrace: stackTrace,
       );
+      wholeShareDiagnosticLogger?.call(
+        stage: 'sender_whole_share_prepare_failure',
+        details: const <String, Object?>{},
+        error: error,
+        stackTrace: stackTrace,
+      );
       _publishNotice(
         TransferSessionNotice(
           errorMessage: 'Не удалось подготовить отправку: $error',
@@ -3021,7 +3114,17 @@ class TransferSessionCoordinator extends ChangeNotifier {
     Set<String>? relativePathFilter,
     Set<String>? folderPrefixFilter,
     bool includeHashes = true,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_scoped_selection_resolution_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'relativePathFilterCount': relativePathFilter?.length ?? 0,
+        'folderPrefixFilterCount': folderPrefixFilter?.length ?? 0,
+        'includeHashes': includeHashes,
+      },
+    );
     var scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
       cache,
       relativePathFilter: relativePathFilter,
@@ -3032,28 +3135,73 @@ class TransferSessionCoordinator extends ChangeNotifier {
       selectionFingerprint: scopedSelection.fingerprint,
       includeHashes: includeHashes,
     );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_scoped_selection_resolution_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'selectionFingerprint': scopedSelection.fingerprint,
+        'scopedEntryCount': scopedSelection.entries.length,
+      },
+    );
     final cachedPreparedFiles =
         _preparedTransferFilesByScopeKey[initialScopeCacheKey];
     if (cachedPreparedFiles != null) {
       _preparedTransferScopeCacheHits += 1;
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_prepared_scope_cache_hit',
+        details: <String, Object?>{
+          'cacheId': cache.cacheId,
+          'preparedFileCount': cachedPreparedFiles.length,
+          'preparedTotalBytes': cachedPreparedFiles.fold<int>(
+            0,
+            (sum, file) => sum + file.announcement.sizeBytes,
+          ),
+        },
+      );
       return cachedPreparedFiles;
     }
 
     final items = <_PreparedTransferFile>[];
     final refreshedManifestEntries = <SharedFolderIndexEntry>[];
+    var traversedFileCount = 0;
+    var skippedMissingSourceCount = 0;
+    var skippedNonFileCount = 0;
+    var preparedTotalBytes = 0;
+    var reusedCachedHashCount = 0;
+    var recomputedHashCount = 0;
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_live_filesystem_traversal_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'indexedEntryCount': scopedSelection.entries.length,
+      },
+    );
+    if (includeHashes) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_hash_stage_start',
+        details: <String, Object?>{
+          'cacheId': cache.cacheId,
+          'indexedEntryCount': scopedSelection.entries.length,
+        },
+      );
+    }
     for (final entry in scopedSelection.entries) {
       final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
       if (filePath == null) {
+        skippedMissingSourceCount += 1;
         continue;
       }
       final file = File(filePath);
       if (!await file.exists()) {
+        skippedMissingSourceCount += 1;
         continue;
       }
       final stat = await file.stat();
       if (stat.type != FileSystemEntityType.file) {
+        skippedNonFileCount += 1;
         continue;
       }
+      traversedFileCount += 1;
       final currentSizeBytes = stat.size;
       final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
       String sha256Hash = '';
@@ -3065,8 +3213,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
             entry.modifiedAtMs == currentModifiedAtMs;
         if (canReuseCachedManifest) {
           sha256Hash = cachedSha256;
+          reusedCachedHashCount += 1;
         } else {
           sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
+          recomputedHashCount += 1;
           refreshedManifestEntries.add(
             entry.copyWith(
               sizeBytes: currentSizeBytes,
@@ -3091,7 +3241,30 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         ),
       );
+      preparedTotalBytes += currentSizeBytes;
     }
+    if (includeHashes) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_hash_stage_complete',
+        details: <String, Object?>{
+          'cacheId': cache.cacheId,
+          'reusedCachedHashCount': reusedCachedHashCount,
+          'recomputedHashCount': recomputedHashCount,
+          'refreshedManifestEntryCount': refreshedManifestEntries.length,
+        },
+      );
+    }
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_live_filesystem_traversal_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'traversedFileCount': traversedFileCount,
+        'skippedMissingSourceCount': skippedMissingSourceCount,
+        'skippedNonFileCount': skippedNonFileCount,
+        'preparedFileCount': items.length,
+        'preparedTotalBytes': preparedTotalBytes,
+      },
+    );
     if (refreshedManifestEntries.isNotEmpty) {
       await _sharedCacheIndexStore.persistCachedManifestEntries(
         record: cache,

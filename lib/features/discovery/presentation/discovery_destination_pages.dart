@@ -206,6 +206,9 @@ class DiscoverySettingsPage extends StatelessWidget {
             onRecacheParallelWorkersChanged: (value) {
               unawaited(controller.setRecacheParallelWorkers(value));
             },
+            onDebugLogRetainedLinesChanged: (value) {
+              unawaited(controller.setDebugLogRetainedLines(value));
+            },
             onShowLogs: () async {
               final result = await debugLogAccessService.showLogs();
               return result.opened ? null : result.message;

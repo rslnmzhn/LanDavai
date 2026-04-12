@@ -69,6 +69,7 @@ class AppSettings {
     required this.previewCacheMaxAgeDays,
     required this.clipboardHistoryMaxEntries,
     required this.recacheParallelWorkers,
+    this.debugLogRetainedLines = 200,
   });
 
   final BackgroundScanIntervalOption backgroundScanInterval;
@@ -81,6 +82,7 @@ class AppSettings {
   final int previewCacheMaxAgeDays;
   final int clipboardHistoryMaxEntries;
   final int recacheParallelWorkers;
+  final int debugLogRetainedLines;
 
   static const AppSettings defaults = AppSettings(
     backgroundScanInterval: BackgroundScanIntervalOption.fiveMinutes,
@@ -93,6 +95,7 @@ class AppSettings {
     previewCacheMaxAgeDays: 30,
     clipboardHistoryMaxEntries: 120,
     recacheParallelWorkers: 0,
+    debugLogRetainedLines: 200,
   );
 
   AppSettings copyWith({
@@ -106,6 +109,7 @@ class AppSettings {
     int? previewCacheMaxAgeDays,
     int? clipboardHistoryMaxEntries,
     int? recacheParallelWorkers,
+    int? debugLogRetainedLines,
   }) {
     return AppSettings(
       backgroundScanInterval:
@@ -127,6 +131,8 @@ class AppSettings {
           clipboardHistoryMaxEntries ?? this.clipboardHistoryMaxEntries,
       recacheParallelWorkers:
           recacheParallelWorkers ?? this.recacheParallelWorkers,
+      debugLogRetainedLines:
+          debugLogRetainedLines ?? this.debugLogRetainedLines,
     );
   }
 }

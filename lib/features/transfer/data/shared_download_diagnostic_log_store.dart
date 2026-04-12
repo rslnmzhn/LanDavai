@@ -8,17 +8,21 @@ import 'package:path_provider/path_provider.dart';
 class SharedDownloadDiagnosticLogStore {
   SharedDownloadDiagnosticLogStore({
     Future<Directory> Function()? logDirectoryProvider,
+    int Function()? retainedLineCountProvider,
     this.enabled = true,
-  }) : _logDirectoryProvider = logDirectoryProvider ?? _defaultLogDirectory;
+  }) : _logDirectoryProvider = logDirectoryProvider ?? _defaultLogDirectory,
+       _retainedLineCountProvider = retainedLineCountProvider;
 
   SharedDownloadDiagnosticLogStore.disabled()
     : _logDirectoryProvider = null,
+      _retainedLineCountProvider = null,
       enabled = false;
 
   static const String _logFileName = 'debug.log';
-  static const int _maxLogLines = 200;
+  static const int _defaultRetainedLineCount = 200;
 
   final Future<Directory> Function()? _logDirectoryProvider;
+  final int Function()? _retainedLineCountProvider;
   final bool enabled;
 
   Future<void> _pendingWrite = Future<void>.value();
@@ -83,10 +87,19 @@ class SharedDownloadDiagnosticLogStore {
       ...existingLines.where((value) => value.trim().isNotEmpty),
       line.trimRight(),
     ];
-    final trimmed = nextLines.length <= _maxLogLines
+    final retainedLineCount = _resolveRetainedLineCount();
+    final trimmed = nextLines.length <= retainedLineCount
         ? nextLines
-        : nextLines.sublist(nextLines.length - _maxLogLines);
+        : nextLines.sublist(nextLines.length - retainedLineCount);
     await file.writeAsString('${trimmed.join('\n')}\n', flush: true);
+  }
+
+  int _resolveRetainedLineCount() {
+    final raw = _retainedLineCountProvider?.call();
+    if (raw == null || raw <= 0) {
+      return _defaultRetainedLineCount;
+    }
+    return raw;
   }
 
   static Future<Directory> _defaultLogDirectory() async {

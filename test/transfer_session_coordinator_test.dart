@@ -484,6 +484,135 @@ void main() {
     );
 
     test(
+      'sender whole-share direct-start logs granular prepare stages before connect attempt',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_direct_whole_share_logs'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'Workspace', 'sub'),
+        ).create(recursive: true);
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'a.txt'),
+        ).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => Directory(
+            p.join(harness.rootDirectory.path, 'whole_share_prepare_logs'),
+          ),
+        );
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-logs',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-logs',
+          approved: true,
+        );
+        for (var index = 0; index < 20; index += 1) {
+          if (fileTransferService.sendFilesCalls > 0) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(fileTransferService.sendFilesCalls, 1);
+        var logContents = '';
+        for (var index = 0; index < 20; index += 1) {
+          final logFile = await diagnosticStore.resolveLogFile();
+          logContents = logFile == null ? '' : await logFile.readAsString();
+          if (logContents.contains(
+            '"stage":"sender_whole_share_prepare_complete"',
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_prepare_start"'),
+        );
+        expect(
+          logContents,
+          contains(
+            '"stage":"sender_whole_share_scoped_selection_resolution_start"',
+          ),
+        );
+        expect(
+          logContents,
+          contains(
+            '"stage":"sender_whole_share_scoped_selection_resolution_complete"',
+          ),
+        );
+        expect(
+          logContents,
+          contains(
+            '"stage":"sender_whole_share_live_filesystem_traversal_start"',
+          ),
+        );
+        expect(
+          logContents,
+          contains(
+            '"stage":"sender_whole_share_live_filesystem_traversal_complete"',
+          ),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_hash_stage_start"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_hash_stage_complete"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_prepare_complete"'),
+        );
+        expect(
+          logContents,
+          contains(
+            '"stage":"sender_whole_share_direct_send_connect_attempt_start"',
+          ),
+        );
+      },
+    );
+
+    test(
       'incoming shared download request waits for sender approval and exposes request summary',
       () async {
         final ownerFile = File(
@@ -1978,28 +2107,40 @@ void main() {
       },
     );
 
-    test('shared download debug log keeps only the latest 200 lines', () async {
-      final diagnosticDirectory = Directory(
-        p.join(harness.rootDirectory.path, 'debug_log_trim'),
-      );
-      final diagnosticStore = SharedDownloadDiagnosticLogStore(
-        logDirectoryProvider: () async => diagnosticDirectory,
-      );
-
-      for (var index = 0; index < 205; index += 1) {
-        await diagnosticStore.appendEvent(
-          stage: 'event-$index',
-          requestId: 'req-$index',
+    test(
+      'shared download debug log keeps only the configured last N lines',
+      () async {
+        final diagnosticDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'debug_log_trim'),
         );
-      }
+        var retainedLineCount = 3;
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => diagnosticDirectory,
+          retainedLineCountProvider: () => retainedLineCount,
+        );
 
-      final logFile = await diagnosticStore.resolveLogFile();
-      expect(logFile, isNotNull);
-      final lines = await logFile!.readAsLines();
-      expect(lines, hasLength(200));
-      expect(lines.first, contains('"stage":"event-5"'));
-      expect(lines.last, contains('"stage":"event-204"'));
-    });
+        for (var index = 0; index < 5; index += 1) {
+          await diagnosticStore.appendEvent(
+            stage: 'event-$index',
+            requestId: 'req-$index',
+          );
+        }
+
+        final logFile = await diagnosticStore.resolveLogFile();
+        expect(logFile, isNotNull);
+        final lines = await logFile!.readAsLines();
+        expect(lines, hasLength(3));
+        expect(lines.first, contains('"stage":"event-2"'));
+        expect(lines.last, contains('"stage":"event-4"'));
+
+        retainedLineCount = 2;
+        await diagnosticStore.appendEvent(stage: 'event-5', requestId: 'req-5');
+        final updatedLines = await logFile.readAsLines();
+        expect(updatedLines, hasLength(2));
+        expect(updatedLines.first, contains('"stage":"event-4"'));
+        expect(updatedLines.last, contains('"stage":"event-5"'));
+      },
+    );
 
     test(
       'shared download exposes waiting preparation state before transfer bytes arrive',

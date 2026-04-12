@@ -665,6 +665,18 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  Future<void> setDebugLogRetainedLines(int value) async {
+    final normalized = value <= 0
+        ? AppSettings.defaults.debugLogRetainedLines
+        : value;
+    if (_currentSettings.debugLogRetainedLines == normalized) {
+      return;
+    }
+    await _persistSettingsViaStore(
+      _currentSettings.copyWith(debugLogRetainedLines: normalized),
+    );
+  }
+
   void setAppForegroundState(bool isForeground) {
     if (_isAppInForeground == isForeground) {
       return;
