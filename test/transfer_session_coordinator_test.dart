@@ -1625,6 +1625,14 @@ void main() {
                   ownerMacAddress: ownerMacAddress,
                   entries: entries,
                 ));
+                return RemoteShareAccessProjectionLoadResult(
+                  ownerIp: ownerIp,
+                  cacheCount: entries.length,
+                  fileCount: entries.fold<int>(
+                    0,
+                    (sum, entry) => sum + entry.files.length,
+                  ),
+                );
               },
           sharedDownloadDiagnosticLogStore: diagnosticStore,
         );
@@ -1653,6 +1661,10 @@ void main() {
         expect(
           logContents,
           contains('"stage":"share_access_snapshot_applied"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"share_access_projection_load_result"'),
         );
       },
     );
@@ -2633,7 +2645,7 @@ TransferSessionCoordinator _buildCoordinator({
   required Directory rootDirectory,
   FileTransferService? fileTransferService,
   TransferStorageService? transferStorageService,
-  Future<void> Function({
+  Future<RemoteShareAccessProjectionLoadResult> Function({
     required String ownerIp,
     required String ownerName,
     required String ownerMacAddress,

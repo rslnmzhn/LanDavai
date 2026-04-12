@@ -144,13 +144,32 @@ class RemoteShareAccessState {
   }
 }
 
+class RemoteShareAccessProjectionLoadResult {
+  const RemoteShareAccessProjectionLoadResult({
+    required this.ownerIp,
+    required this.cacheCount,
+    required this.fileCount,
+  });
+
+  final String ownerIp;
+  final int cacheCount;
+  final int fileCount;
+}
+
 class TransferSessionCoordinator extends ChangeNotifier {
-  static Future<void> _noopApplyRemoteShareAccessSnapshot({
+  static Future<RemoteShareAccessProjectionLoadResult>
+  _noopApplyRemoteShareAccessSnapshot({
     required String ownerIp,
     required String ownerName,
     required String ownerMacAddress,
     required List<SharedCatalogEntryItem> entries,
-  }) async {}
+  }) async {
+    return RemoteShareAccessProjectionLoadResult(
+      ownerIp: ownerIp,
+      cacheCount: entries.length,
+      fileCount: entries.fold<int>(0, (sum, entry) => sum + entry.files.length),
+    );
+  }
 
   TransferSessionCoordinator({
     required LanDiscoveryService lanDiscoveryService,
@@ -171,7 +190,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       required String cacheId,
     })
     resolveRemoteOwnerMac,
-    Future<void> Function({
+    Future<RemoteShareAccessProjectionLoadResult> Function({
       required String ownerIp,
       required String ownerName,
       required String ownerMacAddress,
@@ -219,7 +238,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final bool Function(String? normalizedMac) _isTrustedSender;
   final String? Function({required String ownerIp, required String cacheId})
   _resolveRemoteOwnerMac;
-  final Future<void> Function({
+  final Future<RemoteShareAccessProjectionLoadResult> Function({
     required String ownerIp,
     required String ownerName,
     required String ownerMacAddress,
@@ -2104,7 +2123,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       }
 
       final snapshot = await _parseRemoteShareAccessSnapshot(result.savedPaths);
-      await _applyRemoteShareAccessSnapshot(
+      final projectionResult = await _applyRemoteShareAccessSnapshot(
         ownerIp: pendingIntent.ownerIp,
         ownerName: snapshot.ownerName,
         ownerMacAddress: snapshot.ownerMacAddress,
@@ -2116,6 +2135,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
         details: <String, Object?>{
           'ownerIp': pendingIntent.ownerIp,
           'entryCount': snapshot.entries.length,
+        },
+      );
+      _writeSharedDownloadDiagnostic(
+        stage: 'share_access_projection_load_result',
+        requestId: requestId,
+        details: <String, Object?>{
+          'ownerIp': projectionResult.ownerIp,
+          'cacheCount': projectionResult.cacheCount,
+          'fileCount': projectionResult.fileCount,
         },
       );
       _remoteShareAccessState = null;

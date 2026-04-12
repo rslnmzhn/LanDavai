@@ -483,7 +483,7 @@ void main() {
   );
 
   testWidgets(
-    'all-devices structured view shows share folders and allows navigation without switching to a device filter',
+    'per-device structured view shows share folders and allows navigation',
     (tester) async {
       _registerWidgetCleanup(tester);
       await _seedCatalogWithFiles(
@@ -518,14 +518,15 @@ void main() {
       );
       await _pumpForUi(tester, frames: 20);
 
-      expect(find.textContaining('Remote A • Share'), findsWidgets);
+      expect(find.text('Все устройства'), findsNothing);
+      expect(find.text('Share'), findsWidgets);
 
-      await tester.tap(find.textContaining('Remote A • Share').first);
+      await tester.tap(find.text('Share').first);
       await _pumpForUi(tester, frames: 8);
 
       expect(find.text('docs'), findsOneWidget);
       expect(find.text('top.txt'), findsOneWidget);
-      expect(find.text('Remote A / Share / top.txt • 12 B'), findsOneWidget);
+      expect(find.text('Share / top.txt • 12 B'), findsOneWidget);
     },
   );
 
@@ -577,8 +578,9 @@ void main() {
   });
 
   testWidgets(
-    'long press and selection circle both toggle file selection while tap stays preview',
+    'long press selects, selection circle toggles, and tap stays preview',
     (tester) async {
+      await _setLargeSurface(tester);
       _registerWidgetCleanup(tester);
       final previewFile = File(
         '${harness.databaseHarness.rootDirectory.path}/selection-preview.txt',
@@ -622,11 +624,22 @@ void main() {
       await tester.tap(find.text('Без структуры'));
       await _pumpForUi(tester, frames: 8);
 
+      await _pumpUntilFound(
+        tester,
+        find.text('report.txt'),
+        failureMessage: 'Flat-mode file entry did not appear for selection.',
+      );
+      await tester.ensureVisible(find.text('report.txt'));
+      await _pumpForUi(tester, frames: 2);
       await tester.longPress(find.text('report.txt'));
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsOneWidget);
 
-      await tester.longPress(find.text('report.txt'));
+      await tester.tap(
+        find.byKey(
+          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
+        ),
+      );
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsNothing);
 
@@ -637,14 +650,6 @@ void main() {
       );
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(
-          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
-        ),
-      );
-      await _pumpForUi(tester, frames: 4);
-      expect(find.text('Скачать выбранные (1)'), findsNothing);
 
       await tester.tap(find.text('report.txt'));
       await _pumpUntilFound(

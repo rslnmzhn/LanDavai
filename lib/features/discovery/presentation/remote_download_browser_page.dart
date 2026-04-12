@@ -364,183 +364,13 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                         )
                       : Padding(
                           padding: const EdgeInsets.all(AppSpacing.md),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              ExplorerPathHeader(
-                                rootLabel: _rootLabelForActiveFilter,
-                                relativePath: activeOwner.relativePathLabel(),
-                                canGoUp: activeOwner.canGoUp,
-                                onGoUp: activeOwner.canGoUp
-                                    ? () => activeOwner.goUp()
-                                    : null,
-                                canSelectRoot: false,
-                                onSelectRoot: null,
-                              ),
-                              const SizedBox(height: AppSpacing.xs),
-                              Row(
-                                children: [
-                                  DisplayModeToggle(
-                                    isGrid:
-                                        state!.viewMode ==
-                                        FilesFeatureViewMode.grid,
-                                    onToggle: activeOwner.toggleViewMode,
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 40,
-                                      child: TextField(
-                                        controller: _searchController,
-                                        onChanged: activeOwner.setSearchQuery,
-                                        decoration: const InputDecoration(
-                                          isDense: true,
-                                          border: OutlineInputBorder(),
-                                          hintText: 'Search files',
-                                          prefixIcon: Icon(
-                                            Icons.search_rounded,
-                                            size: 18,
-                                          ),
-                                          prefixIconConstraints: BoxConstraints(
-                                            minWidth: 34,
-                                            minHeight: 34,
-                                          ),
-                                          contentPadding: EdgeInsets.symmetric(
-                                            horizontal: AppSpacing.sm,
-                                            vertical: AppSpacing.sm,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: AppSpacing.xs),
-                                  PopupMenuButton<ExplorerMenuAction>(
-                                    tooltip: 'Sort',
-                                    onSelected: (action) =>
-                                        activeOwner.setSortOption(
-                                          _sortOptionFromMenuAction(action),
-                                        ),
-                                    itemBuilder: (context) =>
-                                        _sortMenuItems(state, activeOwner),
-                                    padding: EdgeInsets.zero,
-                                    child: Container(
-                                      height: 40,
-                                      width: 40,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.surface,
-                                        border: Border.all(
-                                          color: AppColors.mutedBorder,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          AppRadius.md,
-                                        ),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: const Icon(
-                                        Icons.sort_rounded,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
-                              if (state.errorMessage != null) ...[
-                                ExplorerErrorBanner(
-                                  message: state.errorMessage!,
-                                  onRetry: activeOwner.refreshCurrentRoot,
-                                ),
-                                const SizedBox(height: AppSpacing.sm),
-                              ],
-                              if (directory.isFileListCapped)
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    bottom: AppSpacing.sm,
-                                  ),
-                                  child: Text(
-                                    'Показаны первые ${directory.entries.files.length} файлов '
-                                    '(скрыто: ${directory.hiddenFilesCount}) для стабильной работы.',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppColors.textSecondary,
-                                        ),
-                                  ),
-                                ),
-                              Expanded(
-                                child: visibleEntries.isEmpty
-                                    ? _RemoteDownloadEmptyState(
-                                        hasOwners: owners.isNotEmpty,
-                                        hasQuery: state.searchQuery
-                                            .trim()
-                                            .isNotEmpty,
-                                        hasLoadedCatalog:
-                                            _hasLoadedCatalogForActiveDevice,
-                                      )
-                                    : state.viewMode ==
-                                          FilesFeatureViewMode.list
-                                    ? ListView.separated(
-                                        itemCount: visibleEntries.length,
-                                        separatorBuilder: (context, index) =>
-                                            const SizedBox(
-                                              height: AppSpacing.xs,
-                                            ),
-                                        itemBuilder: (context, index) {
-                                          final entry = visibleEntries[index];
-                                          return _RemoteDownloadListTile(
-                                            entry: entry,
-                                            previewCacheOwner:
-                                                widget.previewCacheOwner,
-                                            isSelected: _isSelected(entry),
-                                            isBusy:
-                                                _previewingToken ==
-                                                    entry.sourceToken ||
-                                                _isDownloading,
-                                            onTap: () => _openEntry(entry),
-                                            onSelectChanged:
-                                                entry.sourceToken == null
-                                                ? null
-                                                : (value) => _toggleSelection(
-                                                    entry,
-                                                    value,
-                                                  ),
-                                          );
-                                        },
-                                      )
-                                    : GridView.builder(
-                                        itemCount: visibleEntries.length,
-                                        gridDelegate:
-                                            SliverGridDelegateWithMaxCrossAxisExtent(
-                                              maxCrossAxisExtent:
-                                                  state.gridTileExtent,
-                                              mainAxisSpacing: AppSpacing.xs,
-                                              crossAxisSpacing: AppSpacing.xs,
-                                              childAspectRatio: 0.9,
-                                            ),
-                                        itemBuilder: (context, index) {
-                                          final entry = visibleEntries[index];
-                                          return _RemoteDownloadGridTile(
-                                            entry: entry,
-                                            tileExtent: state.gridTileExtent,
-                                            previewCacheOwner:
-                                                widget.previewCacheOwner,
-                                            isSelected: _isSelected(entry),
-                                            isBusy:
-                                                _previewingToken ==
-                                                    entry.sourceToken ||
-                                                _isDownloading,
-                                            onTap: () => _openEntry(entry),
-                                            onSelectChanged:
-                                                entry.sourceToken == null
-                                                ? null
-                                                : (value) => _toggleSelection(
-                                                    entry,
-                                                    value,
-                                                  ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            ],
+                          child: _buildExplorerContent(
+                            context: context,
+                            activeOwner: activeOwner,
+                            state: state!,
+                            owners: owners,
+                            directory: directory,
+                            visibleEntries: visibleEntries,
                           ),
                         ),
                 ),
@@ -600,6 +430,175 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         );
       },
     );
+  }
+
+  Widget _buildExplorerContent({
+    required BuildContext context,
+    required FilesFeatureStateOwner activeOwner,
+    required FilesFeatureState state,
+    required List<RemoteBrowseOwnerChoice> owners,
+    required RemoteBrowseExplorerDirectory directory,
+    required List<FilesFeatureEntry> visibleEntries,
+  }) {
+    final slivers = <Widget>[
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ExplorerPathHeader(
+              rootLabel: _rootLabelForActiveFilter,
+              relativePath: activeOwner.relativePathLabel(),
+              canGoUp: activeOwner.canGoUp,
+              onGoUp: activeOwner.canGoUp ? () => activeOwner.goUp() : null,
+              canSelectRoot: false,
+              onSelectRoot: null,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                DisplayModeToggle(
+                  isGrid: state.viewMode == FilesFeatureViewMode.grid,
+                  onToggle: activeOwner.toggleViewMode,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: activeOwner.setSearchQuery,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        hintText: 'Search files',
+                        prefixIcon: Icon(Icons.search_rounded, size: 18),
+                        prefixIconConstraints: BoxConstraints(
+                          minWidth: 34,
+                          minHeight: 34,
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                          vertical: AppSpacing.sm,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                PopupMenuButton<ExplorerMenuAction>(
+                  tooltip: 'Sort',
+                  onSelected: (action) => activeOwner.setSortOption(
+                    _sortOptionFromMenuAction(action),
+                  ),
+                  itemBuilder: (context) => _sortMenuItems(state, activeOwner),
+                  padding: EdgeInsets.zero,
+                  child: Container(
+                    height: 40,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      border: Border.all(color: AppColors.mutedBorder),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.sort_rounded, size: 18),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (state.errorMessage != null) ...[
+              ExplorerErrorBanner(
+                message: state.errorMessage!,
+                onRetry: activeOwner.refreshCurrentRoot,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (directory.isFileListCapped)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: Text(
+                  'Показаны первые ${directory.entries.files.length} файлов '
+                  '(скрыто: ${directory.hiddenFilesCount}) для стабильной работы.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ];
+
+    if (visibleEntries.isEmpty) {
+      slivers.add(
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _RemoteDownloadEmptyState(
+            hasOwners: owners.isNotEmpty,
+            hasQuery: state.searchQuery.trim().isNotEmpty,
+            hasLoadedCatalog: _hasLoadedCatalogForActiveDevice,
+          ),
+        ),
+      );
+      return CustomScrollView(slivers: slivers);
+    }
+
+    if (state.viewMode == FilesFeatureViewMode.list) {
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.only(top: AppSpacing.sm),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              if (index.isOdd) {
+                return const SizedBox(height: AppSpacing.xs);
+              }
+              final entry = visibleEntries[index ~/ 2];
+              return _RemoteDownloadListTile(
+                entry: entry,
+                previewCacheOwner: widget.previewCacheOwner,
+                isSelected: _isSelected(entry),
+                isBusy: _previewingToken == entry.sourceToken || _isDownloading,
+                onTap: () => _openEntry(entry),
+                onSelectChanged: entry.sourceToken == null
+                    ? null
+                    : (value) => _toggleSelection(entry, value),
+              );
+            }, childCount: visibleEntries.length * 2 - 1),
+          ),
+        ),
+      );
+      return CustomScrollView(slivers: slivers);
+    }
+
+    slivers.add(
+      SliverPadding(
+        padding: const EdgeInsets.only(top: AppSpacing.sm),
+        sliver: SliverGrid(
+          delegate: SliverChildBuilderDelegate((context, index) {
+            final entry = visibleEntries[index];
+            return _RemoteDownloadGridTile(
+              entry: entry,
+              tileExtent: state.gridTileExtent,
+              previewCacheOwner: widget.previewCacheOwner,
+              isSelected: _isSelected(entry),
+              isBusy: _previewingToken == entry.sourceToken || _isDownloading,
+              onTap: () => _openEntry(entry),
+              onSelectChanged: entry.sourceToken == null
+                  ? null
+                  : (value) => _toggleSelection(entry, value),
+            );
+          }, childCount: visibleEntries.length),
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: state.gridTileExtent,
+            mainAxisSpacing: AppSpacing.xs,
+            crossAxisSpacing: AppSpacing.xs,
+            childAspectRatio: 0.9,
+          ),
+        ),
+      ),
+    );
+    return CustomScrollView(slivers: slivers);
   }
 
   Future<void> _handleFilterSelected(String nextKey) async {

@@ -268,12 +268,27 @@ class DiscoveryCompositionFactory {
             required String ownerName,
             required String ownerMacAddress,
             required List<SharedCatalogEntryItem> entries,
-          }) => remoteShareBrowser.applyAccessSnapshot(
-            ownerIp: ownerIp,
-            ownerDisplayName: ownerName,
-            ownerMacAddress: ownerMacAddress,
-            entries: entries,
-          ),
+          }) async {
+            await remoteShareBrowser.applyAccessSnapshot(
+              ownerIp: ownerIp,
+              ownerDisplayName: ownerName,
+              ownerMacAddress: ownerMacAddress,
+              entries: entries,
+            );
+            final appliedOptions = remoteShareBrowser
+                .currentBrowseProjection
+                .options
+                .where((option) => option.ownerIp == ownerIp)
+                .toList(growable: false);
+            return RemoteShareAccessProjectionLoadResult(
+              ownerIp: ownerIp,
+              cacheCount: appliedOptions.length,
+              fileCount: appliedOptions.fold<int>(
+                0,
+                (sum, option) => sum + option.entry.files.length,
+              ),
+            );
+          },
       sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
     );
     controller = DiscoveryController(
