@@ -1171,7 +1171,7 @@ class RemoteShareBrowser extends ChangeNotifier {
         ? '*'
         : cacheId.trim();
     return 'folder|$ownerIp|$normalizedCacheId|'
-        '${_normalizeRelativePath(relativeFolderPath).toLowerCase()}';
+        '${_normalizeRelativePath(relativeFolderPath)}';
   }
 
   _ParsedFolderToken? _parseFolderToken(String token) {
@@ -1187,7 +1187,7 @@ class RemoteShareBrowser extends ChangeNotifier {
     return _ParsedFolderToken(
       ownerIp: ownerIp,
       cacheId: cacheId == '*' ? null : cacheId,
-      relativeFolderPath: _normalizeRelativePath(parts[3]).toLowerCase(),
+      relativeFolderPath: _normalizeRelativePath(parts[3]),
     );
   }
 

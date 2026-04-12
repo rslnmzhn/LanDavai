@@ -533,6 +533,80 @@ void main() {
   );
 
   test(
+    'mixed-case nested folder download target preserves exact folder prefix casing',
+    () async {
+      await browser.startBrowse(
+        targets: const <DiscoveredDevice>[],
+        receiverMacAddress: 'AA-BB-CC-DD-EE-FF',
+        requesterName: 'Receiver',
+        requestId: 'request-mixed-case-folder',
+        responseWindow: Duration.zero,
+        sendShareQuery:
+            ({
+              required String targetIp,
+              required String requestId,
+              required String requesterName,
+            }) async {},
+      );
+      await browser.applyRemoteCatalog(
+        event: ShareCatalogEvent(
+          requestId: 'request-mixed-case-folder',
+          ownerIp: '192.168.1.20',
+          ownerName: 'Device A',
+          ownerMacAddress: '11:22:33:44:55:66',
+          observedAt: DateTime(2026),
+          removedCacheIds: const <String>[],
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: 'remote-cache-1',
+              displayName: 'Workspace',
+              itemCount: 2,
+              totalBytes: 2,
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(
+                  relativePath: 'ReactProjects/AppOne/src/main.dart',
+                  sizeBytes: 1,
+                ),
+                SharedCatalogFileItem(
+                  relativePath: 'ReactProjects/AppTwo/src/main.dart',
+                  sizeBytes: 1,
+                ),
+              ],
+            ),
+          ],
+        ),
+        ownerDisplayName: 'Device A',
+        ownerMacAddress: '11:22:33:44:55:66',
+      );
+
+      final root = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final shareFolder = root.entries.folders.firstWhere(
+        (folder) => folder.name.startsWith('Workspace'),
+      );
+      final shareDirectory = browser.buildExplorerDirectory(
+        filterKey: '192.168.1.20',
+        folderPath: shareFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      final nestedFolder = shareDirectory.entries.folders.firstWhere(
+        (folder) => folder.name == 'ReactProjects',
+      );
+
+      final target = browser.resolveDownloadToken(nestedFolder.sourceToken!);
+
+      expect(target, isNotNull);
+      expect(target!.selectedRelativePathsByCache, isEmpty);
+      expect(target.selectedFolderPrefixesByCache, <String, Set<String>>{
+        'remote-cache-1': <String>{'ReactProjects'},
+      });
+    },
+  );
+
+  test(
     'records preview-path projection updates through owner-backed batch writes',
     () async {
       await browser.startBrowse(

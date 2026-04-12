@@ -787,6 +787,93 @@ void main() {
     );
 
     test(
+      'approving mixed-case nested folder shared download prepares sender transfer files successfully',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_mixed_case_folder'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'ReactProjects', 'AppOne', 'src'),
+        ).create(recursive: true);
+        await Directory(
+          p.join(ownerRoot.path, 'ReactProjects', 'AppTwo', 'src'),
+        ).create(recursive: true);
+        for (var index = 0; index < 80; index += 1) {
+          await File(
+            p.join(
+              ownerRoot.path,
+              'ReactProjects',
+              'AppOne',
+              'src',
+              'file_$index.txt',
+            ),
+          ).writeAsString('app-one-$index');
+          await File(
+            p.join(
+              ownerRoot.path,
+              'ReactProjects',
+              'AppTwo',
+              'src',
+              'file_$index.txt',
+            ),
+          ).writeAsString('app-two-$index');
+        }
+
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: ownerRoot.path,
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'download-request-mixed-case-folder',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>['ReactProjects'],
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'download-request-mixed-case-folder',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+
+        expect(lanDiscoveryService.downloadResponses, isEmpty);
+        expect(lanDiscoveryService.transferRequests, hasLength(1));
+        expect(lanDiscoveryService.transferRequests.single.items, isNotEmpty);
+        expect(
+          lanDiscoveryService.transferRequests.single.items.every(
+            (item) => item.fileName.startsWith('ReactProjects/'),
+          ),
+          isTrue,
+        );
+        expect(coordinator.takePendingNotice()?.errorMessage, isNull);
+      },
+    );
+
+    test(
       'preview requests stay outside prepared transfer scope reuse cache',
       () async {
         final ownerFile = File(
@@ -1444,7 +1531,79 @@ void main() {
     );
 
     test(
-      'custom desktop root remains the history root for multi-file folder-preserving downloads',
+      'single file-only remote download preserves its relative path by default',
+      () async {
+        final transferStorageService = RecordingTransferStorageService(
+          rootDirectory: harness.rootDirectory,
+        );
+        final fileTransferService = AllocatingReceiveFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          transferStorageService: transferStorageService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{'docs/sub/report.txt'},
+          },
+          useStandardAppDownloadFolder: true,
+        );
+
+        coordinator.handleTransferRequestEvent(
+          TransferRequestEvent(
+            requestId: lanDiscoveryService.downloadRequests.single.requestId,
+            senderIp: '192.168.1.40',
+            senderName: 'Remote peer',
+            senderMacAddress: '11:22:33:44:55:66',
+            sharedCacheId: 'remote-cache',
+            sharedLabel: 'Docs',
+            observedAt: DateTime(2026),
+            items: <TransferAnnouncementItem>[
+              TransferAnnouncementItem(
+                fileName: 'docs/sub/report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
+          ),
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        final history = downloadHistoryBoundary.records.single;
+        expect(fileTransferService.lastDestinationRelativeRootPrefix, isNull);
+        expect(
+          history.rootPath,
+          transferStorageService.standardReceiveDirectory.path,
+        );
+        expect(
+          history.savedPaths.map(p.normalize).toList(growable: false),
+          <String>[
+            p.join(
+              transferStorageService.standardReceiveDirectory.path,
+              'docs',
+              'sub',
+              'report.txt',
+            ),
+          ].map(p.normalize).toList(growable: false),
+        );
+      },
+    );
+
+    test(
+      'multi-file file-only remote downloads preserve relative paths by default and keep custom desktop root as history root',
       () async {
         final customRoot = Directory(
           '${harness.rootDirectory.path}${Platform.pathSeparator}picked_root',

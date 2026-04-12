@@ -50,6 +50,11 @@ enum SharedUploadPreparationStage {
   waitingForRequester,
 }
 
+enum SharedDownloadReceiveLayout {
+  preserveRelativeStructure,
+  preserveSharedRoot,
+}
+
 class SharedDownloadPreparationState {
   const SharedDownloadPreparationState({
     required this.requestId,
@@ -517,6 +522,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
         final canUseDirectStart =
             preferDirectStart &&
             (selectedPaths.isNotEmpty || folderPrefixes.isNotEmpty);
+        final receiveLayout = _resolveSharedDownloadReceiveLayout(
+          selectedRelativePaths: selectedPaths,
+          selectedFolderPrefixes: folderPrefixes,
+        );
         if (canUseDirectStart) {
           _setSharedDownloadPreparation(
             requestId: requestId,
@@ -620,8 +629,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
             cacheId: cacheId,
             destinationDirectoryPath: destinationDirectory.path,
-            preserveSharedRootOnReceive:
-                selectedPaths.isEmpty && folderPrefixes.isEmpty,
+            receiveLayout: receiveLayout,
             createdAt: DateTime.now(),
           );
           _pendingRemoteDownloads[pendingKey] = pendingIntent;
@@ -744,7 +752,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     bool forPreview = false,
     String? previewRelativePath,
     String? destinationDirectoryOverridePath,
-    bool preserveSharedRootOnReceive = false,
+    SharedDownloadReceiveLayout receiveLayout =
+        SharedDownloadReceiveLayout.preserveRelativeStructure,
   }) async {
     final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
     if (index < 0) {
@@ -771,7 +780,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
                 appFolderName: 'Landa',
               );
         final destinationRelativeRootPrefix =
-            !isPreview && preserveSharedRootOnReceive
+            !isPreview &&
+                receiveLayout == SharedDownloadReceiveLayout.preserveSharedRoot
             ? _resolveReceiveRootPrefix(request.sharedLabel)
             : null;
 
@@ -1039,8 +1049,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           approved: true,
           destinationDirectoryOverridePath:
               pendingRemoteDownload.destinationDirectoryPath,
-          preserveSharedRootOnReceive:
-              pendingRemoteDownload.preserveSharedRootOnReceive,
+          receiveLayout: pendingRemoteDownload.receiveLayout,
         ),
       );
       return;
@@ -2250,6 +2259,18 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return p.joinAll(common);
   }
 
+  SharedDownloadReceiveLayout _resolveSharedDownloadReceiveLayout({
+    required List<String> selectedRelativePaths,
+    required List<String> selectedFolderPrefixes,
+  }) {
+    // File-only and nested-folder selections keep their relative paths.
+    // Only whole-share downloads recreate the shared root as a top-level folder.
+    if (selectedRelativePaths.isEmpty && selectedFolderPrefixes.isEmpty) {
+      return SharedDownloadReceiveLayout.preserveSharedRoot;
+    }
+    return SharedDownloadReceiveLayout.preserveRelativeStructure;
+  }
+
   Duration? _estimateEta({
     required int totalBytes,
     required int transferredBytes,
@@ -2607,7 +2628,7 @@ class _PendingRemoteDownloadIntent {
     required this.ownerMacAddress,
     required this.cacheId,
     required this.destinationDirectoryPath,
-    required this.preserveSharedRootOnReceive,
+    required this.receiveLayout,
     required this.createdAt,
   });
 
@@ -2616,7 +2637,7 @@ class _PendingRemoteDownloadIntent {
   final String? ownerMacAddress;
   final String cacheId;
   final String destinationDirectoryPath;
-  final bool preserveSharedRootOnReceive;
+  final SharedDownloadReceiveLayout receiveLayout;
   final DateTime createdAt;
 }
 
