@@ -484,6 +484,185 @@ void main() {
     );
 
     test(
+      'sender whole-share direct-start reaches send without full pre-send hash fill',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_no_hash_barrier',
+          ),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'Workspace', 'sub'),
+        ).create(recursive: true);
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'a.txt'),
+        ).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileHashService = ControlledFileHashService();
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-no-hash-barrier',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-no-hash-barrier',
+          approved: true,
+        );
+        for (var index = 0; index < 20; index += 1) {
+          if (fileTransferService.sendFilesCalls > 0) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileHashService.pendingPaths, isEmpty);
+        expect(
+          fileTransferService.lastFiles.every(
+            (file) => file.sha256.trim().isEmpty,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'sender whole-share direct-start reuses valid cached hashes without blocking on missing ones',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_cached_hash_reuse',
+          ),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'Workspace', 'sub'),
+        ).create(recursive: true);
+        final firstFile = File(p.join(ownerRoot.path, 'Workspace', 'a.txt'));
+        final secondFile = File(
+          p.join(ownerRoot.path, 'Workspace', 'sub', 'b.txt'),
+        );
+        await firstFile.writeAsString('alpha');
+        await secondFile.writeAsString('beta');
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final cachedHash = await FileHashService().computeSha256ForPath(
+          firstFile.path,
+        );
+        await sharedCacheIndexStore.persistCachedManifestEntries(
+          record: cache,
+          entries: <SharedFolderIndexEntry>[
+            SharedFolderIndexEntry(
+              relativePath: 'a.txt',
+              sizeBytes: firstFile.lengthSync(),
+              modifiedAtMs: firstFile
+                  .statSync()
+                  .modified
+                  .millisecondsSinceEpoch,
+              sha256: cachedHash,
+            ),
+          ],
+        );
+
+        final fileHashService = CountingFileHashService();
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-cached-hash-reuse',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-cached-hash-reuse',
+          approved: true,
+        );
+        for (var index = 0; index < 20; index += 1) {
+          if (fileTransferService.sendFilesCalls > 0) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileHashService.computeCalls, 0);
+        expect(
+          fileTransferService.lastFiles
+              .firstWhere((file) => file.fileName == 'a.txt')
+              .sha256,
+          cachedHash,
+        );
+        expect(
+          fileTransferService.lastFiles
+              .firstWhere((file) => file.fileName == 'sub/b.txt')
+              .sha256,
+          isEmpty,
+        );
+      },
+    );
+
+    test(
       'sender whole-share direct-start logs granular prepare stages before connect attempt',
       () async {
         final ownerRoot = Directory(
@@ -593,15 +772,15 @@ void main() {
         );
         expect(
           logContents,
-          contains('"stage":"sender_whole_share_hash_stage_start"'),
-        );
-        expect(
-          logContents,
-          contains('"stage":"sender_whole_share_hash_stage_complete"'),
+          contains('"stage":"sender_whole_share_hash_stage_deferred"'),
         );
         expect(
           logContents,
           contains('"stage":"sender_whole_share_prepare_complete"'),
+        );
+        expect(
+          logContents,
+          isNot(contains('"stage":"sender_whole_share_hash_stage_start"')),
         );
         expect(
           logContents,
@@ -3387,6 +3566,7 @@ class CapturingSendFileTransferService extends FileTransferService {
     required List<TransferSourceFile> files,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     sendFilesCalls += 1;
     lastFiles = List<TransferSourceFile>.from(files);
@@ -3411,6 +3591,7 @@ class InspectingSendFileTransferService extends FileTransferService {
     required List<TransferSourceFile> files,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     sendFilesCalls += 1;
     lastFiles = List<TransferSourceFile>.from(files);

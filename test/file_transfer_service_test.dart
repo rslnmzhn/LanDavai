@@ -29,6 +29,8 @@ void main() {
         final sourceFile = File(p.join(rootDirectory.path, 'source', 'a.7z'));
         await sourceFile.parent.create(recursive: true);
         await sourceFile.writeAsBytes(List<int>.filled(1024, 7));
+        final expectedReceivedHash = await FileHashService()
+            .computeSha256ForPath(sourceFile.path);
 
         final destinationDirectory = Directory(
           p.join(rootDirectory.path, 'destination'),
@@ -57,7 +59,8 @@ void main() {
         expect(result.success, isTrue);
         expect(result.savedPaths, hasLength(1));
         expect(File(result.savedPaths.single).existsSync(), isTrue);
-        expect(result.receivedItems.single.sha256, isEmpty);
+        expect(result.hashVerified, isFalse);
+        expect(result.receivedItems.single.sha256, expectedReceivedHash);
       },
     );
 
@@ -96,6 +99,7 @@ void main() {
         final result = await receiveSession.result;
 
         expect(result.success, isTrue);
+        expect(result.hashVerified, isTrue);
         expect(result.receivedItems.single.sha256, expectedHash);
       },
     );
