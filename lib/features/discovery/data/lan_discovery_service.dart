@@ -87,6 +87,8 @@ class LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,
@@ -119,6 +121,8 @@ class LanDiscoveryService {
           onFriendRequest: onFriendRequest,
           onFriendResponse: onFriendResponse,
           onShareQuery: onShareQuery,
+          onShareAccessRequest: onShareAccessRequest,
+          onShareAccessResponse: onShareAccessResponse,
           onShareCatalog: onShareCatalog,
           onDownloadRequest: onDownloadRequest,
           onDownloadResponse: onDownloadResponse,
@@ -283,6 +287,48 @@ class LanDiscoveryService {
         instanceId: _instanceId,
         requestId: requestId,
         requesterName: requesterName,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendShareAccessRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+  }) async {
+    await _sendOutgoingPacket(
+      prefix: lanShareAccessRequestPrefix,
+      packet: _packetCodec.encodeShareAccessRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        transferPort: transferPort,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendShareAccessResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+  }) async {
+    await _sendOutgoingPacket(
+      prefix: lanShareAccessResponsePrefix,
+      packet: _packetCodec.encodeShareAccessResponse(
+        instanceId: _instanceId,
+        requestId: requestId,
+        responderName: responderName,
+        approved: approved,
+        message: message,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),
       targetIp: targetIp,
@@ -652,6 +698,8 @@ class LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,
@@ -794,6 +842,28 @@ class LanDiscoveryService {
     if (packet is LanShareQueryPacket) {
       onShareQuery?.call(
         _shareProtocolHandler.handleShareQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanShareAccessRequestPacket) {
+      onShareAccessRequest?.call(
+        _shareProtocolHandler.handleShareAccessRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanShareAccessResponsePacket) {
+      onShareAccessResponse?.call(
+        _shareProtocolHandler.handleShareAccessResponsePacket(
           packet: packet,
           senderIp: senderIp,
           observedAt: observedAt,

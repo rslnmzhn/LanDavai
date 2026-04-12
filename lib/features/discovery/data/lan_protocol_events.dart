@@ -113,6 +113,42 @@ class ShareQueryEvent {
   final DateTime observedAt;
 }
 
+class ShareAccessRequestEvent {
+  const ShareAccessRequestEvent({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+  final DateTime observedAt;
+}
+
+class ShareAccessResponseEvent {
+  const ShareAccessResponseEvent({
+    required this.requestId,
+    required this.responderIp,
+    required this.responderName,
+    required this.approved,
+    required this.observedAt,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderIp;
+  final String responderName;
+  final bool approved;
+  final DateTime observedAt;
+  final String? message;
+}
+
 class ShareCatalogEvent {
   ShareCatalogEvent({
     required this.requestId,

@@ -19,6 +19,8 @@ class LanPacketCodec {
   static const String friendRequestPrefix = lanFriendRequestPrefix;
   static const String friendResponsePrefix = lanFriendResponsePrefix;
   static const String shareQueryPrefix = lanShareQueryPrefix;
+  static const String shareAccessRequestPrefix = lanShareAccessRequestPrefix;
+  static const String shareAccessResponsePrefix = lanShareAccessResponsePrefix;
   static const String shareCatalogPrefix = lanShareCatalogPrefix;
   static const String downloadRequestPrefix = lanDownloadRequestPrefix;
   static const String downloadResponsePrefix = lanDownloadResponsePrefix;
@@ -98,6 +100,10 @@ class LanPacketCodec {
         return _friendCodec.parseFriendResponsePacket(message);
       case lanShareQueryPrefix:
         return _shareCodec.parseShareQueryPacket(message);
+      case lanShareAccessRequestPrefix:
+        return _shareCodec.parseShareAccessRequestPacket(message);
+      case lanShareAccessResponsePrefix:
+        return _shareCodec.parseShareAccessResponsePacket(message);
       case lanShareCatalogPrefix:
         return _shareCodec.parseShareCatalogPacket(message);
       case lanDownloadRequestPrefix:
@@ -203,6 +209,42 @@ class LanPacketCodec {
       instanceId: instanceId,
       requestId: requestId,
       requesterName: requesterName,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  EncodedLanPacket? encodeShareAccessRequest({
+    required String instanceId,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareAccessRequest(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      transferPort: transferPort,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  EncodedLanPacket? encodeShareAccessResponse({
+    required String instanceId,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareAccessResponse(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: message,
       createdAtMs: createdAtMs,
     );
   }

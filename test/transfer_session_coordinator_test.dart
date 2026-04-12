@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -1543,6 +1544,251 @@ void main() {
     );
 
     test(
+      'remote share access request sends explicit request and applies received snapshot',
+      () async {
+        final diagnosticDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'debug_log_access_request'),
+        );
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => diagnosticDirectory,
+        );
+        final appliedSnapshots =
+            <
+              ({
+                String ownerIp,
+                String ownerName,
+                String ownerMacAddress,
+                List<SharedCatalogEntryItem> entries,
+              })
+            >[];
+        final fileTransferService = SuccessfulReceiveFileTransferService(
+          resultBuilder: (destinationDirectory) {
+            final snapshotFile = File(
+              p.join(destinationDirectory.path, 'share-access.json.gz'),
+            )..createSync(recursive: true);
+            final payload = jsonEncode(<String, Object?>{
+              'ownerName': 'Remote peer',
+              'ownerMacAddress': 'aa:bb:cc:dd:ee:ff',
+              'entries': <Map<String, Object?>>[
+                SharedCatalogEntryItem(
+                  cacheId: 'remote-cache',
+                  displayName: 'Workspace',
+                  itemCount: 1,
+                  totalBytes: 12,
+                  files: <SharedCatalogFileItem>[
+                    SharedCatalogFileItem(
+                      relativePath: 'src/main.dart',
+                      sizeBytes: 12,
+                    ),
+                  ],
+                ).toJson(),
+              ],
+            });
+            final bytes = gzip.encode(utf8.encode(payload));
+            snapshotFile.writeAsBytesSync(bytes);
+            return FileTransferResult(
+              success: true,
+              message: 'ok',
+              savedPaths: <String>[snapshotFile.path],
+              receivedItems: <TransferFileManifestItem>[
+                TransferFileManifestItem(
+                  fileName: 'share-access.json.gz',
+                  sizeBytes: bytes.length,
+                  sha256: '',
+                ),
+              ],
+              totalBytes: bytes.length,
+              destinationDirectory: destinationDirectory.path,
+              hashVerified: false,
+            );
+          },
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          applyRemoteShareAccessSnapshot:
+              ({
+                required String ownerIp,
+                required String ownerName,
+                required String ownerMacAddress,
+                required List<SharedCatalogEntryItem> entries,
+              }) async {
+                appliedSnapshots.add((
+                  ownerIp: ownerIp,
+                  ownerName: ownerName,
+                  ownerMacAddress: ownerMacAddress,
+                  entries: entries,
+                ));
+              },
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestRemoteShareAccess(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        expect(lanDiscoveryService.shareAccessRequests, hasLength(1));
+        expect(
+          lanDiscoveryService.shareAccessRequests.single.targetIp,
+          '192.168.1.40',
+        );
+        expect(fileTransferService.startReceiverCalls, 1);
+        expect(appliedSnapshots, hasLength(1));
+        expect(appliedSnapshots.single.ownerIp, '192.168.1.40');
+        expect(appliedSnapshots.single.entries.single.cacheId, 'remote-cache');
+
+        final logFile = await diagnosticStore.resolveLogFile();
+        expect(logFile, isNotNull);
+        final logContents = await logFile!.readAsString();
+        expect(logContents, contains('"stage":"share_access_request_sent"'));
+        expect(
+          logContents,
+          contains('"stage":"share_access_snapshot_applied"'),
+        );
+      },
+    );
+
+    test(
+      'remote share access reject reaches requester and closes receiver',
+      () async {
+        final fileTransferService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestRemoteShareAccess(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+        );
+        final request = lanDiscoveryService.shareAccessRequests.single;
+
+        coordinator.handleShareAccessResponseEvent(
+          ShareAccessResponseEvent(
+            requestId: request.requestId,
+            responderIp: '192.168.1.40',
+            responderName: 'Remote peer',
+            approved: false,
+            observedAt: DateTime(2026, 1, 3),
+            message: 'declined',
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(fileTransferService.closeCalls, 1);
+        expect(
+          coordinator.remoteShareAccessState?.stage,
+          RemoteShareAccessStage.rejected,
+        );
+      },
+    );
+
+    test(
+      'sender-side access approval sends explicit response and snapshot over direct send',
+      () async {
+        final sharedRoot = Directory(
+          p.join(harness.rootDirectory.path, 'sender_share_root'),
+        )..createSync(recursive: true);
+        final fileA = File(p.join(sharedRoot.path, 'a.txt'))
+          ..writeAsStringSync('a');
+        final fileB = File(p.join(sharedRoot.path, 'sub', 'b.txt'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('b');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[fileA.path, fileB.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: 'access-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+            transferPort: 40404,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        expect(coordinator.incomingRemoteShareAccessRequests, hasLength(1));
+
+        await coordinator.respondToIncomingRemoteShareAccessRequest(
+          requestId: 'access-1',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
+        expect(
+          lanDiscoveryService.shareAccessResponses.single.approved,
+          isTrue,
+        );
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(
+          fileTransferService.lastFiles.single.fileName,
+          contains('share-access-access-1.json.gz'),
+        );
+      },
+    );
+
+    test('shared download debug log keeps only the latest 200 lines', () async {
+      final diagnosticDirectory = Directory(
+        p.join(harness.rootDirectory.path, 'debug_log_trim'),
+      );
+      final diagnosticStore = SharedDownloadDiagnosticLogStore(
+        logDirectoryProvider: () async => diagnosticDirectory,
+      );
+
+      for (var index = 0; index < 205; index += 1) {
+        await diagnosticStore.appendEvent(
+          stage: 'event-$index',
+          requestId: 'req-$index',
+        );
+      }
+
+      final logFile = await diagnosticStore.resolveLogFile();
+      expect(logFile, isNotNull);
+      final lines = await logFile!.readAsLines();
+      expect(lines, hasLength(200));
+      expect(lines.first, contains('"stage":"event-5"'));
+      expect(lines.last, contains('"stage":"event-204"'));
+    });
+
+    test(
       'shared download exposes waiting preparation state before transfer bytes arrive',
       () async {
         final fileTransferService = PendingReceiveFileTransferService(
@@ -2387,6 +2633,13 @@ TransferSessionCoordinator _buildCoordinator({
   required Directory rootDirectory,
   FileTransferService? fileTransferService,
   TransferStorageService? transferStorageService,
+  Future<void> Function({
+    required String ownerIp,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+  })?
+  applyRemoteShareAccessSnapshot,
   SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
 }) {
   return TransferSessionCoordinator(
@@ -2409,6 +2662,7 @@ TransferSessionCoordinator _buildCoordinator({
         ({required String ownerIp, required String cacheId}) {
           return null;
         },
+    applyRemoteShareAccessSnapshot: applyRemoteShareAccessSnapshot,
     sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
   );
 }
@@ -2430,10 +2684,16 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   final List<SentTransferDecision> transferDecisions = <SentTransferDecision>[];
   final List<SentDownloadRequest> downloadRequests = <SentDownloadRequest>[];
   final List<SentDownloadResponse> downloadResponses = <SentDownloadResponse>[];
+  final List<SentShareAccessRequest> shareAccessRequests =
+      <SentShareAccessRequest>[];
+  final List<SentShareAccessResponse> shareAccessResponses =
+      <SentShareAccessResponse>[];
   void Function(TransferRequestEvent event)? onTransferRequest;
   void Function(TransferDecisionEvent event)? onTransferDecision;
   void Function(DownloadRequestEvent event)? onDownloadRequest;
   void Function(DownloadResponseEvent event)? onDownloadResponse;
+  void Function(ShareAccessRequestEvent event)? onShareAccessRequest;
+  void Function(ShareAccessResponseEvent event)? onShareAccessResponse;
 
   @override
   Future<void> start({
@@ -2447,6 +2707,8 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,
@@ -2459,6 +2721,8 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     this.onTransferDecision = onTransferDecision;
     this.onDownloadRequest = onDownloadRequest;
     this.onDownloadResponse = onDownloadResponse;
+    this.onShareAccessRequest = onShareAccessRequest;
+    this.onShareAccessResponse = onShareAccessResponse;
   }
 
   @override
@@ -2552,6 +2816,44 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
   }
 
   @override
+  Future<void> sendShareAccessRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+  }) async {
+    shareAccessRequests.add(
+      SentShareAccessRequest(
+        targetIp: targetIp,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        transferPort: transferPort,
+      ),
+    );
+  }
+
+  @override
+  Future<void> sendShareAccessResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+  }) async {
+    shareAccessResponses.add(
+      SentShareAccessResponse(
+        targetIp: targetIp,
+        requestId: requestId,
+        responderName: responderName,
+        approved: approved,
+        message: message,
+      ),
+    );
+  }
+
+  @override
   Future<void> stop() async {}
 }
 
@@ -2619,6 +2921,38 @@ class SentDownloadRequest {
 
 class SentDownloadResponse {
   const SentDownloadResponse({
+    required this.targetIp,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    required this.message,
+  });
+
+  final String targetIp;
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? message;
+}
+
+class SentShareAccessRequest {
+  const SentShareAccessRequest({
+    required this.targetIp,
+    required this.requestId,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+  });
+
+  final String targetIp;
+  final String requestId;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+}
+
+class SentShareAccessResponse {
+  const SentShareAccessResponse({
     required this.targetIp,
     required this.requestId,
     required this.responderName,
@@ -2792,6 +3126,9 @@ class PendingReceiveFileTransferService extends FileTransferService {
 
   final int port;
   int startReceiverCalls = 0;
+  int closeCalls = 0;
+  final List<Completer<FileTransferResult>> _completers =
+      <Completer<FileTransferResult>>[];
 
   @override
   Future<TransferReceiveSession> startReceiver({
@@ -2809,10 +3146,27 @@ class PendingReceiveFileTransferService extends FileTransferService {
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     startReceiverCalls += 1;
+    final completer = Completer<FileTransferResult>();
+    _completers.add(completer);
     return TransferReceiveSession(
       port: port,
-      result: Completer<FileTransferResult>().future,
-      close: () async {},
+      result: completer.future,
+      close: () async {
+        closeCalls += 1;
+        if (!completer.isCompleted) {
+          completer.complete(
+            FileTransferResult(
+              success: false,
+              message: 'closed',
+              savedPaths: const <String>[],
+              receivedItems: const <TransferFileManifestItem>[],
+              totalBytes: 0,
+              destinationDirectory: destinationDirectory.path,
+              hashVerified: false,
+            ),
+          );
+        }
+      },
     );
   }
 }
@@ -2859,6 +3213,17 @@ class RecordingTransferStorageService extends TransferStorageService {
     if (directory == null) {
       return null;
     }
+    await directory.create(recursive: true);
+    return directory;
+  }
+
+  @override
+  Future<Directory> resolveRemoteShareAccessDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final directory = Directory(
+      '${rootDirectory.path}${Platform.pathSeparator}remote_share_access',
+    );
     await directory.create(recursive: true);
     return directory;
   }

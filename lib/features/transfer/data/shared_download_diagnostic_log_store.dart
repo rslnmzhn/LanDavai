@@ -15,8 +15,8 @@ class SharedDownloadDiagnosticLogStore {
     : _logDirectoryProvider = null,
       enabled = false;
 
-  static const String _logFileName = 'shared_download_runtime.log';
-  static const int _maxLogBytes = 1024 * 1024;
+  static const String _logFileName = 'debug.log';
+  static const int _maxLogLines = 200;
 
   final Future<Directory> Function()? _logDirectoryProvider;
   final bool enabled;
@@ -34,7 +34,7 @@ class SharedDownloadDiagnosticLogStore {
 
   Future<void> appendEvent({
     required String stage,
-    required String requestId,
+    String? requestId,
     Map<String, Object?> details = const <String, Object?>{},
     Object? error,
     StackTrace? stackTrace,
@@ -45,9 +45,11 @@ class SharedDownloadDiagnosticLogStore {
     final payload = <String, Object?>{
       'ts': DateTime.now().toUtc().toIso8601String(),
       'stage': stage,
-      'requestId': requestId,
       ...details,
     };
+    if (requestId != null && requestId.trim().isNotEmpty) {
+      payload['requestId'] = requestId;
+    }
     if (error != null) {
       payload['error'] = error.toString();
     }
@@ -64,23 +66,17 @@ class SharedDownloadDiagnosticLogStore {
     if (file == null) {
       return;
     }
-    await _rotateIfNeeded(file);
-    await file.writeAsString(line, mode: FileMode.append, flush: true);
-  }
-
-  Future<void> _rotateIfNeeded(File file) async {
-    if (!await file.exists()) {
-      return;
-    }
-    final length = await file.length();
-    if (length < _maxLogBytes) {
-      return;
-    }
-    final rotated = File('${file.path}.1');
-    if (await rotated.exists()) {
-      await rotated.delete();
-    }
-    await file.rename(rotated.path);
+    final existingLines = await file.exists()
+        ? await file.readAsLines()
+        : const <String>[];
+    final nextLines = <String>[
+      ...existingLines.where((value) => value.trim().isNotEmpty),
+      line.trimRight(),
+    ];
+    final trimmed = nextLines.length <= _maxLogLines
+        ? nextLines
+        : nextLines.sublist(nextLines.length - _maxLogLines);
+    await file.writeAsString('${trimmed.join('\n')}\n', flush: true);
   }
 
   static Future<Directory> _defaultLogDirectory() async {

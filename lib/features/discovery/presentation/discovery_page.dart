@@ -394,11 +394,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   }
 
   Future<void> _openDownloadBrowser() async {
-    unawaited(_controller.loadRemoteShareOptions());
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: _controller.loadRemoteShareOptions,
+          readModel: _readModel,
           remoteShareBrowser: _remoteShareBrowser,
           previewCacheOwner: _previewCacheOwner,
           transferSessionCoordinator: _transferSessionCoordinator,

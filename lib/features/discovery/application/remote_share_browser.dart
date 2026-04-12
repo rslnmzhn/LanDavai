@@ -340,19 +340,58 @@ class RemoteShareBrowser extends ChangeNotifier {
       return;
     }
 
+    await _applyCatalogEntries(
+      ownerIp: event.ownerIp,
+      requestId: event.requestId,
+      ownerDisplayName: ownerDisplayName,
+      ownerMacAddress: ownerMacAddress,
+      entries: event.entries,
+    );
+  }
+
+  Future<void> applyAccessSnapshot({
+    required String ownerIp,
+    required String ownerDisplayName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+  }) async {
+    await _applyCatalogEntries(
+      ownerIp: ownerIp,
+      requestId: 'access-snapshot:$ownerIp',
+      ownerDisplayName: ownerDisplayName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+    );
+  }
+
+  void clearBrowseProjection() {
+    _activeRequestId = null;
+    _isLoading = false;
+    _options.clear();
+    _previewPathsByFileKey.clear();
+    notifyListeners();
+  }
+
+  Future<void> _applyCatalogEntries({
+    required String ownerIp,
+    required String requestId,
+    required String ownerDisplayName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+  }) async {
     final normalizedOwnerMac =
         DeviceAliasRepository.normalizeMac(ownerMacAddress) ?? ownerMacAddress;
     await _refreshReceiverSnapshots(ownerMacAddress: normalizedOwnerMac);
 
-    _options.removeWhere((option) => option.ownerIp == event.ownerIp);
-    _clearOwnerPreviewPaths(ownerIp: event.ownerIp, notify: false);
+    _options.removeWhere((option) => option.ownerIp == ownerIp);
+    _clearOwnerPreviewPaths(ownerIp: ownerIp, notify: false);
 
-    final dedupedEntries = _dedupeEntriesForProjection(event.entries);
+    final dedupedEntries = _dedupeEntriesForProjection(entries);
     for (final entry in dedupedEntries) {
       _options.add(
         RemoteShareOption(
-          requestId: event.requestId,
-          ownerIp: event.ownerIp,
+          requestId: requestId,
+          ownerIp: ownerIp,
           ownerName: ownerDisplayName,
           ownerMacAddress: normalizedOwnerMac,
           entry: entry,

@@ -27,6 +27,7 @@ import '../../features/discovery/data/configured_discovery_targets_repository.da
 import '../../features/discovery/data/discovery_network_interface_catalog.dart';
 import '../../features/discovery/data/friend_repository.dart';
 import '../../features/discovery/data/lan_discovery_service.dart';
+import '../../features/discovery/data/lan_packet_codec.dart';
 import '../../features/discovery/data/network_host_scanner.dart';
 import '../../features/files/application/preview_cache_owner.dart';
 import '../../features/history/application/download_history_boundary.dart';
@@ -261,6 +262,18 @@ class DiscoveryCompositionFactory {
                 ownerIp: ownerIp,
                 cacheId: cacheId,
               ),
+      applyRemoteShareAccessSnapshot:
+          ({
+            required String ownerIp,
+            required String ownerName,
+            required String ownerMacAddress,
+            required List<SharedCatalogEntryItem> entries,
+          }) => remoteShareBrowser.applyAccessSnapshot(
+            ownerIp: ownerIp,
+            ownerDisplayName: ownerName,
+            ownerMacAddress: ownerMacAddress,
+            entries: entries,
+          ),
       sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
     );
     controller = DiscoveryController(

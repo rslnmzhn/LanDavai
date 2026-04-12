@@ -310,6 +310,36 @@ class LanShareQueryPacket extends LanInboundPacket {
   final String requesterName;
 }
 
+class LanShareAccessRequestPacket extends LanInboundPacket {
+  const LanShareAccessRequestPacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+  });
+
+  final String requestId;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+}
+
+class LanShareAccessResponsePacket extends LanInboundPacket {
+  const LanShareAccessResponsePacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? message;
+}
+
 class LanShareCatalogPacket extends LanInboundPacket {
   const LanShareCatalogPacket({
     required super.instanceId,

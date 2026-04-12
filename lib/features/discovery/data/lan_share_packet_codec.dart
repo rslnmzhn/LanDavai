@@ -29,6 +29,50 @@ class LanSharePacketCodec {
     );
   }
 
+  EncodedLanPacket? encodeShareAccessRequest({
+    required String instanceId,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+    required int createdAtMs,
+  }) {
+    final payload = <String, Object?>{
+      'instanceId': instanceId,
+      'requestId': requestId,
+      'requesterName': requesterName,
+      'requesterMacAddress': requesterMacAddress,
+      'transferPort': transferPort,
+      'createdAtMs': createdAtMs,
+    };
+    return encodeLanEnvelopePacket(
+      prefix: lanShareAccessRequestPrefix,
+      payload: payload,
+    );
+  }
+
+  EncodedLanPacket? encodeShareAccessResponse({
+    required String instanceId,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+    required int createdAtMs,
+  }) {
+    final payload = <String, Object?>{
+      'instanceId': instanceId,
+      'requestId': requestId,
+      'responderName': responderName,
+      'approved': approved,
+      'message': message,
+      'createdAtMs': createdAtMs,
+    };
+    return encodeLanEnvelopePacket(
+      prefix: lanShareAccessResponsePrefix,
+      payload: payload,
+    );
+  }
+
   EncodedLanPacket? encodeShareCatalog({
     required String instanceId,
     required String requestId,
@@ -393,6 +437,71 @@ class LanSharePacketCodec {
       instanceId: instanceId,
       requestId: requestId,
       requesterName: requesterName,
+    );
+  }
+
+  LanShareAccessRequestPacket? parseShareAccessRequestPacket(String message) {
+    final decoded = decodeLanEnvelope(
+      message: message,
+      expectedPrefix: lanShareAccessRequestPrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final requesterName = decoded['requesterName'] as String?;
+    final requesterMacAddress = decoded['requesterMacAddress'] as String?;
+    final transferPortRaw = decoded['transferPort'];
+    if (instanceId == null ||
+        requestId == null ||
+        requesterName == null ||
+        requesterMacAddress == null ||
+        transferPortRaw is! num) {
+      return null;
+    }
+
+    final transferPort = transferPortRaw.toInt();
+    if (transferPort <= 0 || transferPort > 65535) {
+      return null;
+    }
+
+    return LanShareAccessRequestPacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      transferPort: transferPort,
+    );
+  }
+
+  LanShareAccessResponsePacket? parseShareAccessResponsePacket(String message) {
+    final decoded = decodeLanEnvelope(
+      message: message,
+      expectedPrefix: lanShareAccessResponsePrefix,
+    );
+    if (decoded == null) {
+      return null;
+    }
+
+    final instanceId = decoded['instanceId'] as String?;
+    final requestId = decoded['requestId'] as String?;
+    final responderName = decoded['responderName'] as String?;
+    final approved = decoded['approved'];
+    if (instanceId == null ||
+        requestId == null ||
+        responderName == null ||
+        approved is! bool) {
+      return null;
+    }
+
+    return LanShareAccessResponsePacket(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: decoded['message'] as String?,
     );
   }
 

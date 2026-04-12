@@ -93,3 +93,21 @@ class IncomingSharedDownloadRequest {
     ].toList(growable: false);
   }
 }
+
+class IncomingRemoteShareAccessRequest {
+  IncomingRemoteShareAccessRequest({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+    required this.createdAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+  final DateTime createdAt;
+}

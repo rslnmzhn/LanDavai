@@ -252,6 +252,22 @@ void main() {
       removedCacheIds: <String>['stale'],
       observedAt: DateTime.fromMillisecondsSinceEpoch(7),
     );
+    final shareAccessRequestEvent = ShareAccessRequestEvent(
+      requestId: 'share-access-1',
+      requesterIp: 'sentinel-share-access-ip',
+      requesterName: 'Handled share access requester',
+      requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+      transferPort: 45454,
+      observedAt: DateTime.fromMillisecondsSinceEpoch(7),
+    );
+    final shareAccessResponseEvent = ShareAccessResponseEvent(
+      requestId: 'share-access-1',
+      responderIp: 'sentinel-share-access-response-ip',
+      responderName: 'Handled share access responder',
+      approved: true,
+      observedAt: DateTime.fromMillisecondsSinceEpoch(7),
+      message: 'ok',
+    );
     final downloadRequestEvent = DownloadRequestEvent(
       requestId: 'download-1',
       requesterIp: 'sentinel-download-ip',
@@ -318,6 +334,8 @@ void main() {
       observedAt: DateTime.fromMillisecondsSinceEpoch(12),
     );
     shareHandler.nextShareQueryEvent = shareQueryEvent;
+    shareHandler.nextShareAccessRequestEvent = shareAccessRequestEvent;
+    shareHandler.nextShareAccessResponseEvent = shareAccessResponseEvent;
     shareHandler.nextShareCatalogEvent = shareCatalogEvent;
     shareHandler.nextDownloadRequestEvent = downloadRequestEvent;
     shareHandler.nextDownloadResponseEvent = downloadResponseEvent;
@@ -327,6 +345,8 @@ void main() {
     clipboardHandler.nextClipboardCatalogEvent = clipboardCatalogEvent;
 
     ShareQueryEvent? receivedShareQuery;
+    ShareAccessRequestEvent? receivedShareAccessRequest;
+    ShareAccessResponseEvent? receivedShareAccessResponse;
     ShareCatalogEvent? receivedShareCatalog;
     DownloadRequestEvent? receivedDownloadRequest;
     DownloadResponseEvent? receivedDownloadResponse;
@@ -342,6 +362,12 @@ void main() {
       onAppDetected: (_) {},
       onShareQuery: (event) {
         receivedShareQuery = event;
+      },
+      onShareAccessRequest: (event) {
+        receivedShareAccessRequest = event;
+      },
+      onShareAccessResponse: (event) {
+        receivedShareAccessResponse = event;
       },
       onShareCatalog: (event) {
         receivedShareCatalog = event;
@@ -373,6 +399,34 @@ void main() {
             requestId: 'share-1',
             requesterName: 'Owner',
             createdAtMs: 5,
+          )!
+          .bytes,
+      senderIp: '192.168.1.26',
+      senderPort: LanDiscoveryService.discoveryPort,
+    );
+    transportAdapter.emitDatagram(
+      bytes: codec
+          .encodeShareAccessRequest(
+            instanceId: 'remote-instance',
+            requestId: 'share-access-1',
+            requesterName: 'Owner',
+            requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+            transferPort: 45454,
+            createdAtMs: 6,
+          )!
+          .bytes,
+      senderIp: '192.168.1.26',
+      senderPort: LanDiscoveryService.discoveryPort,
+    );
+    transportAdapter.emitDatagram(
+      bytes: codec
+          .encodeShareAccessResponse(
+            instanceId: 'remote-instance',
+            requestId: 'share-access-1',
+            responderName: 'Owner',
+            approved: true,
+            message: 'ok',
+            createdAtMs: 6,
           )!
           .bytes,
       senderIp: '192.168.1.26',
@@ -509,6 +563,8 @@ void main() {
     );
 
     expect(shareHandler.shareQueryCalls, 1);
+    expect(shareHandler.shareAccessRequestCalls, 1);
+    expect(shareHandler.shareAccessResponseCalls, 1);
     expect(shareHandler.shareCatalogCalls, 1);
     expect(shareHandler.downloadRequestCalls, 1);
     expect(shareHandler.downloadResponseCalls, 1);
@@ -517,6 +573,8 @@ void main() {
     expect(clipboardHandler.clipboardQueryCalls, 1);
     expect(clipboardHandler.clipboardCatalogCalls, 1);
     expect(receivedShareQuery, same(shareQueryEvent));
+    expect(receivedShareAccessRequest, same(shareAccessRequestEvent));
+    expect(receivedShareAccessResponse, same(shareAccessResponseEvent));
     expect(receivedShareCatalog, same(shareCatalogEvent));
     expect(receivedDownloadRequest, same(downloadRequestEvent));
     expect(receivedDownloadResponse, same(downloadResponseEvent));
@@ -677,12 +735,16 @@ class RecordingFriendHandler extends LanFriendProtocolHandler {
 
 class RecordingShareHandler extends LanShareProtocolHandler {
   int shareQueryCalls = 0;
+  int shareAccessRequestCalls = 0;
+  int shareAccessResponseCalls = 0;
   int shareCatalogCalls = 0;
   int downloadRequestCalls = 0;
   int downloadResponseCalls = 0;
   int thumbnailSyncRequestCalls = 0;
   int thumbnailPacketCalls = 0;
   ShareQueryEvent? nextShareQueryEvent;
+  ShareAccessRequestEvent? nextShareAccessRequestEvent;
+  ShareAccessResponseEvent? nextShareAccessResponseEvent;
   ShareCatalogEvent? nextShareCatalogEvent;
   DownloadRequestEvent? nextDownloadRequestEvent;
   DownloadResponseEvent? nextDownloadResponseEvent;
@@ -698,6 +760,36 @@ class RecordingShareHandler extends LanShareProtocolHandler {
     shareQueryCalls += 1;
     return nextShareQueryEvent ??
         super.handleShareQueryPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        );
+  }
+
+  @override
+  ShareAccessRequestEvent handleShareAccessRequestPacket({
+    required LanShareAccessRequestPacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    shareAccessRequestCalls += 1;
+    return nextShareAccessRequestEvent ??
+        super.handleShareAccessRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        );
+  }
+
+  @override
+  ShareAccessResponseEvent handleShareAccessResponsePacket({
+    required LanShareAccessResponsePacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    shareAccessResponseCalls += 1;
+    return nextShareAccessResponseEvent ??
+        super.handleShareAccessResponsePacket(
           packet: packet,
           senderIp: senderIp,
           observedAt: observedAt,
