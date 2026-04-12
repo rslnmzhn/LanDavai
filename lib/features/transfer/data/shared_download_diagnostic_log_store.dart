@@ -23,12 +23,22 @@ class SharedDownloadDiagnosticLogStore {
 
   Future<void> _pendingWrite = Future<void>.value();
 
-  Future<File?> resolveLogFile() async {
+  Future<Directory?> resolveLogDirectory({bool create = true}) async {
     if (!enabled || _logDirectoryProvider == null) {
       return null;
     }
     final directory = await _logDirectoryProvider();
-    await directory.create(recursive: true);
+    if (create) {
+      await directory.create(recursive: true);
+    }
+    return directory;
+  }
+
+  Future<File?> resolveLogFile({bool createDirectory = true}) async {
+    final directory = await resolveLogDirectory(create: createDirectory);
+    if (directory == null) {
+      return null;
+    }
     return File(p.join(directory.path, _logFileName));
   }
 

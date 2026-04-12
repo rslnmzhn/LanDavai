@@ -21,6 +21,8 @@ void main() {
     ValueChanged<int>? onPreviewCacheMaxAgeDaysChanged,
     ValueChanged<int>? onClipboardHistoryMaxEntriesChanged,
     ValueChanged<int>? onRecacheParallelWorkersChanged,
+    Future<String?> Function()? onShowLogs,
+    Future<String?> Function()? onOpenLogsFolder,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -49,6 +51,8 @@ void main() {
                 onClipboardHistoryMaxEntriesChanged ?? (_) {},
             onRecacheParallelWorkersChanged:
                 onRecacheParallelWorkersChanged ?? (_) {},
+            onShowLogs: onShowLogs ?? () async => null,
+            onOpenLogsFolder: onOpenLogsFolder ?? () async => null,
           ),
         ),
       ),
@@ -143,6 +147,8 @@ void main() {
                 onPreviewCacheMaxAgeDaysChanged: (_) {},
                 onClipboardHistoryMaxEntriesChanged: (_) {},
                 onRecacheParallelWorkersChanged: (_) {},
+                onShowLogs: () async => null,
+                onOpenLogsFolder: () async => null,
               );
             },
           ),
@@ -209,4 +215,137 @@ void main() {
     expect(find.text('Preview-кэш'), findsOneWidget);
     expect(find.text('Веб-ссылка'), findsNothing);
   });
+
+  testWidgets('settings sheet shows both log actions in storage tab', (
+    tester,
+  ) async {
+    await pumpSettings(tester);
+
+    await tester.tap(find.text('Хранилище'));
+    await tester.pumpAndSettle();
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-show-logs-action')),
+      scrollable: find.byType(ListView).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-show-logs-action')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Показать логи'), findsOneWidget);
+    expect(find.text('Открыть папку с логами'), findsOneWidget);
+  });
+
+  testWidgets('settings sheet shows actionable feedback for missing debug.log', (
+    tester,
+  ) async {
+    await pumpSettings(
+      tester,
+      onShowLogs: () async =>
+          'debug.log ещё не создан. Сначала воспроизведите проблему и попробуйте снова.',
+    );
+
+    await tester.tap(find.text('Хранилище'));
+    await tester.pumpAndSettle();
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-show-logs-action')),
+      scrollable: find.byType(ListView).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-show-logs-action')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('settings-show-logs-action')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('debug.log ещё не создан'), findsOneWidget);
+  });
+
+  testWidgets('settings sheet shows actionable feedback for missing log folder', (
+    tester,
+  ) async {
+    await pumpSettings(
+      tester,
+      onOpenLogsFolder: () async =>
+          'Папка логов ещё не создана. Сначала воспроизведите проблему и попробуйте снова.',
+    );
+
+    await tester.tap(find.text('Хранилище'));
+    await tester.pumpAndSettle();
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-show-logs-action')),
+      scrollable: find.byType(ListView).first,
+    );
+
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-open-logs-folder-action')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-open-logs-folder-action')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.textContaining('Папка логов ещё не создана'), findsOneWidget);
+  });
+
+  testWidgets('settings sheet wires supported log actions correctly', (
+    tester,
+  ) async {
+    var showLogsCalls = 0;
+    var openFolderCalls = 0;
+
+    await pumpSettings(
+      tester,
+      onShowLogs: () async {
+        showLogsCalls += 1;
+        return null;
+      },
+      onOpenLogsFolder: () async {
+        openFolderCalls += 1;
+        return null;
+      },
+    );
+
+    await tester.tap(find.text('Хранилище'));
+    await tester.pumpAndSettle();
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-show-logs-action')),
+      scrollable: find.byType(ListView).first,
+    );
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-show-logs-action')),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const Key('settings-show-logs-action')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const Key('settings-open-logs-folder-action')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('settings-open-logs-folder-action')));
+    await tester.pumpAndSettle();
+
+    expect(showLogsCalls, 1);
+    expect(openFolderCalls, 1);
+  });
+}
+
+Future<void> _scrollUntilFound(
+  WidgetTester tester,
+  Finder target, {
+  required Finder scrollable,
+}) async {
+  for (var index = 0; index < 6; index += 1) {
+    if (target.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.drag(scrollable, const Offset(0, -220));
+    await tester.pumpAndSettle();
+  }
+  expect(target, findsOneWidget);
 }

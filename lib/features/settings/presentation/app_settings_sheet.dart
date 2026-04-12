@@ -25,6 +25,8 @@ class AppSettingsSheet extends StatefulWidget {
     required this.onPreviewCacheMaxAgeDaysChanged,
     required this.onClipboardHistoryMaxEntriesChanged,
     required this.onRecacheParallelWorkersChanged,
+    required this.onShowLogs,
+    required this.onOpenLogsFolder,
     super.key,
   });
 
@@ -43,6 +45,8 @@ class AppSettingsSheet extends StatefulWidget {
   final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
   final ValueChanged<int> onClipboardHistoryMaxEntriesChanged;
   final ValueChanged<int> onRecacheParallelWorkersChanged;
+  final Future<String?> Function() onShowLogs;
+  final Future<String?> Function() onOpenLogsFolder;
 
   @override
   State<AppSettingsSheet> createState() => _AppSettingsSheetState();
@@ -55,6 +59,8 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _recacheWorkersController;
   late final TextEditingController _videoLinkPasswordController;
   late final TextEditingController _configuredTargetController;
+  bool _isShowingLogs = false;
+  bool _isOpeningLogsFolder = false;
 
   @override
   void initState() {
@@ -166,6 +172,27 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     widget.onVideoLinkPasswordChanged(_videoLinkPasswordController.text.trim());
   }
 
+  Future<void> _runLogAction({
+    required Future<String?> Function() action,
+    required void Function(bool value) setBusy,
+  }) async {
+    setState(() {
+      setBusy(true);
+    });
+    try {
+      final message = await action();
+      if (message != null && mounted) {
+        _showValidationMessage(message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          setBusy(false);
+        });
+      }
+    }
+  }
+
   Future<void> _addConfiguredTarget() async {
     final raw = _configuredTargetController.text;
     final error = widget.configuredTargetValidator(raw);
@@ -261,6 +288,16 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                   onSaveCacheAge: _saveCacheAge,
                   onSaveClipboardLimit: _saveClipboardLimit,
                   onSaveRecacheParallelWorkers: _saveRecacheParallelWorkers,
+                  onShowLogs: () => _runLogAction(
+                    action: widget.onShowLogs,
+                    setBusy: (value) => _isShowingLogs = value,
+                  ),
+                  onOpenLogsFolder: () => _runLogAction(
+                    action: widget.onOpenLogsFolder,
+                    setBusy: (value) => _isOpeningLogsFolder = value,
+                  ),
+                  isShowingLogs: _isShowingLogs,
+                  isOpeningLogsFolder: _isOpeningLogsFolder,
                 ),
                 AppSettingsAccessTab(
                   videoLinkPasswordController: _videoLinkPasswordController,

@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../../core/utils/desktop_window_service.dart';
+import '../../../core/utils/path_opener.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../files/application/preview_cache_owner.dart';
@@ -17,6 +18,8 @@ import '../../nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
+import '../../transfer/data/debug_log_access_service.dart';
+import '../../transfer/data/shared_download_diagnostic_log_store.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../application/discovery_controller.dart';
 import '../application/configured_discovery_targets_store.dart';
@@ -53,6 +56,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.transferStorageService,
     required this.createNearbyTransferSessionStore,
     required this.isBoundaryReady,
+    this.debugLogAccessService,
     super.key,
   });
 
@@ -73,6 +77,7 @@ class DiscoveryPage extends StatefulWidget {
   final TransferStorageService transferStorageService;
   final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
   final bool isBoundaryReady;
+  final DebugLogAccessService? debugLogAccessService;
 
   @override
   State<DiscoveryPage> createState() => _DiscoveryPageState();
@@ -108,6 +113,12 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       widget.transferStorageService;
   NearbyTransferSessionStore Function() get _createNearbyTransferSessionStore =>
       widget.createNearbyTransferSessionStore;
+  DebugLogAccessService get _debugLogAccessService =>
+      widget.debugLogAccessService ??
+      DebugLogAccessService(
+        logStore: SharedDownloadDiagnosticLogStore(),
+        pathOpener: PathOpener(),
+      );
 
   @override
   void initState() {
@@ -321,6 +332,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           readModel: _readModel,
           configuredDiscoveryTargetsStore: _configuredDiscoveryTargetsStore,
           desktopWindowService: _desktopWindowService,
+          debugLogAccessService: _debugLogAccessService,
         ),
       ),
     );

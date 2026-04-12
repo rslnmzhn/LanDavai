@@ -8,6 +8,7 @@ import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/presentation/clipboard_sheet.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../settings/presentation/app_settings_sheet.dart';
+import '../../transfer/data/debug_log_access_service.dart';
 import '../application/configured_discovery_targets_store.dart';
 import '../application/discovery_controller.dart';
 import '../application/discovery_read_model.dart';
@@ -143,6 +144,7 @@ class DiscoverySettingsPage extends StatelessWidget {
     required this.readModel,
     required this.configuredDiscoveryTargetsStore,
     required this.desktopWindowService,
+    required this.debugLogAccessService,
     super.key,
   });
 
@@ -150,6 +152,7 @@ class DiscoverySettingsPage extends StatelessWidget {
   final DiscoveryReadModel readModel;
   final ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   final DesktopWindowService desktopWindowService;
+  final DebugLogAccessService debugLogAccessService;
 
   @override
   Widget build(BuildContext context) {
@@ -202,6 +205,14 @@ class DiscoverySettingsPage extends StatelessWidget {
             },
             onRecacheParallelWorkersChanged: (value) {
               unawaited(controller.setRecacheParallelWorkers(value));
+            },
+            onShowLogs: () async {
+              final result = await debugLogAccessService.showLogs();
+              return result.opened ? null : result.message;
+            },
+            onOpenLogsFolder: () async {
+              final result = await debugLogAccessService.openLogsFolder();
+              return result.opened ? null : result.message;
             },
           );
         },

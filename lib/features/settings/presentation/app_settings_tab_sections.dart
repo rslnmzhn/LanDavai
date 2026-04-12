@@ -294,6 +294,10 @@ class AppSettingsStorageTab extends StatelessWidget {
     required this.onSaveCacheAge,
     required this.onSaveClipboardLimit,
     required this.onSaveRecacheParallelWorkers,
+    required this.onShowLogs,
+    required this.onOpenLogsFolder,
+    this.isShowingLogs = false,
+    this.isOpeningLogsFolder = false,
     super.key,
   });
 
@@ -305,6 +309,10 @@ class AppSettingsStorageTab extends StatelessWidget {
   final VoidCallback onSaveCacheAge;
   final VoidCallback onSaveClipboardLimit;
   final VoidCallback onSaveRecacheParallelWorkers;
+  final Future<void> Function() onShowLogs;
+  final Future<void> Function() onOpenLogsFolder;
+  final bool isShowingLogs;
+  final bool isOpeningLogsFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -356,6 +364,48 @@ class AppSettingsStorageTab extends StatelessWidget {
               controller: recacheWorkersController,
               label: 'Параллельные воркеры re-cache',
               onSave: onSaveRecacheParallelWorkers,
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        AppSettingsSectionCard(
+          title: 'Диагностика',
+          description:
+              'debug.log помогает разбирать проблемы shared-download и runtime-сбоев.',
+          children: [
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                FilledButton.icon(
+                  key: const Key('settings-show-logs-action'),
+                  onPressed: isShowingLogs
+                      ? null
+                      : () => unawaited(onShowLogs()),
+                  icon: isShowingLogs
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.description_outlined),
+                  label: const Text('Показать логи'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('settings-open-logs-folder-action'),
+                  onPressed: isOpeningLogsFolder
+                      ? null
+                      : () => unawaited(onOpenLogsFolder()),
+                  icon: isOpeningLogsFolder
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.folder_open_rounded),
+                  label: const Text('Открыть папку с логами'),
+                ),
+              ],
             ),
           ],
         ),
