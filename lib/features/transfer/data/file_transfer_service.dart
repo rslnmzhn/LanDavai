@@ -241,6 +241,7 @@ class FileTransferService {
       port,
       timeout: const Duration(seconds: 10),
     );
+    TransferSourceFile? currentFile;
     try {
       final payload = <String, Object?>{
         'requestId': requestId,
@@ -294,6 +295,7 @@ class FileTransferService {
       var sentBytes = 0;
       onProgress?.call(0, totalBytes);
       for (final file in files) {
+        currentFile = file;
         final source = File(file.sourcePath);
         if (!await source.exists()) {
           throw StateError('Source file does not exist: ${file.sourcePath}');
@@ -336,6 +338,8 @@ class FileTransferService {
           'host': host,
           'port': port,
           'fileCount': files.length,
+          if (currentFile != null) 'currentFileName': currentFile.fileName,
+          if (currentFile != null) 'currentSourcePath': currentFile.sourcePath,
         },
         error: error,
         stackTrace: stackTrace,

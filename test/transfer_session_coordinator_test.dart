@@ -1777,6 +1777,207 @@ void main() {
       },
     );
 
+    test(
+      'sender-side access snapshot is finalized atomically and hashed from final gzip bytes',
+      () async {
+        final sharedRoot = Directory(
+          p.join(harness.rootDirectory.path, 'sender_share_root_atomic'),
+        )..createSync(recursive: true);
+        final fileA = File(p.join(sharedRoot.path, 'a.txt'))
+          ..writeAsStringSync('a');
+        final fileB = File(p.join(sharedRoot.path, 'sub', 'b.txt'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('b');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[fileA.path, fileB.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'debug_log_snapshot_atomic'),
+        );
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => diagnosticDirectory,
+        );
+        final fileTransferService = InspectingSendFileTransferService(
+          fileHashService: fileHashService,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: 'access-atomic',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+            transferPort: 40404,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+
+        await coordinator.respondToIncomingRemoteShareAccessRequest(
+          requestId: 'access-atomic',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(
+          fileTransferService.lastFiles.single.fileName,
+          contains('share-access-access-atomic.json.gz'),
+        );
+        expect(fileTransferService.observedSourcePath, isNotNull);
+        expect(
+          fileTransferService.observedSourcePath!,
+          endsWith('share-access-access-atomic.json.gz'),
+        );
+        expect(
+          fileTransferService.observedSourcePath!,
+          isNot(contains('.tmp')),
+        );
+        expect(
+          fileTransferService.observedSourceSha256,
+          fileTransferService.lastFiles.single.sha256,
+        );
+        expect(
+          fileTransferService.observedSourceSizeBytes,
+          fileTransferService.lastFiles.single.sizeBytes,
+        );
+
+        final entries = await _readDiagnosticEntries(diagnosticStore);
+        final prepareComplete = entries.lastWhere(
+          (entry) => entry['stage'] == 'share_access_snapshot_prepare_complete',
+        );
+        final preflight = entries.lastWhere(
+          (entry) => entry['stage'] == 'share_access_snapshot_send_preflight',
+        );
+        expect(
+          prepareComplete['tempPath'],
+          isNot(equals(prepareComplete['finalPath'])),
+        );
+        expect(
+          prepareComplete['finalizedSha256'],
+          fileTransferService.lastFiles.single.sha256,
+        );
+        expect(
+          prepareComplete['finalizedBytes'],
+          fileTransferService.lastFiles.single.sizeBytes,
+        );
+        expect(preflight['preSendSha256'], prepareComplete['finalizedSha256']);
+        expect(preflight['preSendBytes'], prepareComplete['finalizedBytes']);
+        expect(preflight['sameFinalPathReopened'], isTrue);
+      },
+    );
+
+    test(
+      'sender-side access snapshot direct send no longer fails with immediate sha mismatch',
+      () async {
+        final sharedRoot = Directory(
+          p.join(harness.rootDirectory.path, 'sender_share_root_e2e'),
+        )..createSync(recursive: true);
+        final fileA = File(p.join(sharedRoot.path, 'src', 'main.dart'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('void main() {}');
+        final fileB = File(p.join(sharedRoot.path, 'README.md'))
+          ..writeAsStringSync('# Workspace');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[fileA.path, fileB.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'debug_log_snapshot_e2e'),
+        );
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => diagnosticDirectory,
+        );
+        final fileTransferService = FileTransferService();
+        final receiverDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'snapshot_receiver'),
+        );
+        final receiveSession = await fileTransferService.startReceiver(
+          requestId: 'access-e2e',
+          expectedItems: null,
+          destinationDirectory: receiverDirectory,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+        addTearDown(receiveSession.close);
+
+        coordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: 'access-e2e',
+            requesterIp: InternetAddress.loopbackIPv4.address,
+            requesterName: 'Remote peer',
+            requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+            transferPort: receiveSession.port,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+
+        await coordinator.respondToIncomingRemoteShareAccessRequest(
+          requestId: 'access-e2e',
+          approved: true,
+        );
+
+        final result = await receiveSession.result.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(result.success, isTrue);
+        expect(result.savedPaths, hasLength(1));
+        final savedSnapshot = File(result.savedPaths.single);
+        expect(await savedSnapshot.exists(), isTrue);
+
+        final snapshotPayload =
+            jsonDecode(
+                  utf8.decode(gzip.decode(await savedSnapshot.readAsBytes())),
+                )
+                as Map<String, Object?>;
+        expect(snapshotPayload['ownerName'], 'Local device');
+        expect(snapshotPayload['entries'], isA<List<dynamic>>());
+
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        final logFile = await diagnosticStore.resolveLogFile();
+        expect(logFile, isNotNull);
+        final logContents = await logFile!.readAsString();
+        expect(
+          logContents,
+          contains('"stage":"share_access_snapshot_send_preflight"'),
+        );
+        expect(logContents, contains('"stage":"send_complete"'));
+        expect(logContents.contains('"stage":"send_failure"'), isFalse);
+      },
+    );
+
     test('shared download debug log keeps only the latest 200 lines', () async {
       final diagnosticDirectory = Directory(
         p.join(harness.rootDirectory.path, 'debug_log_trim'),
@@ -2691,6 +2892,23 @@ Future<void> _waitForDownloadHistoryRecords({
   }
 }
 
+Future<List<Map<String, Object?>>> _readDiagnosticEntries(
+  SharedDownloadDiagnosticLogStore store,
+) async {
+  final file = await store.resolveLogFile();
+  if (file == null || !await file.exists()) {
+    return const <Map<String, Object?>>[];
+  }
+  final lines = await file.readAsLines();
+  return lines
+      .where((line) => line.trim().isNotEmpty)
+      .map(
+        (line) =>
+            Map<String, Object?>.from(jsonDecode(line) as Map<String, dynamic>),
+      )
+      .toList(growable: false);
+}
+
 class CapturingLanDiscoveryService extends LanDiscoveryService {
   final List<SentTransferRequest> transferRequests = <SentTransferRequest>[];
   final List<SentTransferDecision> transferDecisions = <SentTransferDecision>[];
@@ -3031,6 +3249,37 @@ class CapturingSendFileTransferService extends FileTransferService {
   }) async {
     sendFilesCalls += 1;
     lastFiles = List<TransferSourceFile>.from(files);
+  }
+}
+
+class InspectingSendFileTransferService extends FileTransferService {
+  InspectingSendFileTransferService({required this.fileHashService});
+
+  final FileHashService fileHashService;
+  int sendFilesCalls = 0;
+  List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
+  String? observedSourcePath;
+  int? observedSourceSizeBytes;
+  String? observedSourceSha256;
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+  }) async {
+    sendFilesCalls += 1;
+    lastFiles = List<TransferSourceFile>.from(files);
+    final snapshot = files.single;
+    final sourceFile = File(snapshot.sourcePath);
+    observedSourcePath = sourceFile.path;
+    observedSourceSizeBytes = await sourceFile.length();
+    observedSourceSha256 = await fileHashService.computeSha256ForPath(
+      sourceFile.path,
+    );
   }
 }
 

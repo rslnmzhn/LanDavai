@@ -1846,8 +1846,35 @@ class TransferSessionCoordinator extends ChangeNotifier {
           'requesterName': request.requesterName,
           'snapshotPath': snapshotFile.sourcePath,
           'snapshotBytes': snapshotFile.announcement.sizeBytes,
+          'snapshotSha256': snapshotFile.announcement.sha256,
+          ...snapshotFile.diagnosticDetails,
         },
       );
+      final preSendSnapshotMetrics = await _readPreparedFileMetrics(
+        snapshotFile.sourcePath,
+      );
+      _writeSharedDownloadDiagnostic(
+        stage: 'share_access_snapshot_send_preflight',
+        requestId: request.requestId,
+        details: <String, Object?>{
+          'requesterIp': request.requesterIp,
+          'requesterName': request.requesterName,
+          'snapshotPath': snapshotFile.sourcePath,
+          'preSendBytes': preSendSnapshotMetrics.sizeBytes,
+          'preSendSha256': preSendSnapshotMetrics.sha256,
+          'preSendModifiedAtMs': preSendSnapshotMetrics.modifiedAtMs,
+          'sameFinalPathReopened':
+              snapshotFile.diagnosticDetails['finalPath'] ==
+              snapshotFile.sourcePath,
+          ...snapshotFile.diagnosticDetails,
+        },
+      );
+      if (preSendSnapshotMetrics.sizeBytes !=
+              snapshotFile.announcement.sizeBytes ||
+          preSendSnapshotMetrics.sha256.toLowerCase() !=
+              snapshotFile.announcement.sha256.toLowerCase()) {
+        throw StateError('Shared-access snapshot changed after preparation.');
+      }
       await _lanDiscoveryService.sendShareAccessResponse(
         targetIp: request.requesterIp,
         requestId: request.requestId,
@@ -1874,6 +1901,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           diagnosticDetails: <String, Object?>{
             'pathKind': 'share_access_snapshot',
             'snapshot': true,
+            ...snapshotFile.diagnosticDetails,
           },
         ),
       );
@@ -2074,18 +2102,66 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final encodedBytes = gzip.encode(utf8.encode(payload));
     final directory = await _transferStorageService
         .resolveRemoteShareAccessDirectory();
-    final file = File(
-      p.join(directory.path, 'share-access-$requestId.json.gz'),
-    );
-    await file.writeAsBytes(encodedBytes, flush: true);
-    return _PreparedTransferFile(
-      sourcePath: file.path,
-      announcement: TransferAnnouncementItem(
-        fileName: p.basename(file.path),
-        sizeBytes: encodedBytes.length,
-        sha256: _fileHashService.buildStableId(payload),
+    final finalPath = p.join(directory.path, 'share-access-$requestId.json.gz');
+    final tempFile = File(
+      p.join(
+        directory.path,
+        'share-access-$requestId.${DateTime.now().microsecondsSinceEpoch}.tmp',
       ),
-      deleteAfterTransfer: true,
+    );
+    File? finalizedFile;
+    final existingFinalFile = File(finalPath);
+    final replacedExistingFinalPath = await existingFinalFile.exists();
+    try {
+      await tempFile.writeAsBytes(encodedBytes, flush: true);
+      if (replacedExistingFinalPath) {
+        await existingFinalFile.delete();
+      }
+      finalizedFile = await tempFile.rename(finalPath);
+      final finalizedStat = await finalizedFile.stat();
+      final finalizedSha256 = await _fileHashService.computeSha256ForPath(
+        finalizedFile.path,
+      );
+      return _PreparedTransferFile(
+        sourcePath: finalizedFile.path,
+        announcement: TransferAnnouncementItem(
+          fileName: p.basename(finalizedFile.path),
+          sizeBytes: finalizedStat.size,
+          sha256: finalizedSha256,
+        ),
+        deleteAfterTransfer: true,
+        diagnosticDetails: <String, Object?>{
+          'tempPath': tempFile.path,
+          'finalPath': finalizedFile.path,
+          'finalizedBytes': finalizedStat.size,
+          'finalizedSha256': finalizedSha256,
+          'finalizedModifiedAtMs':
+              finalizedStat.modified.millisecondsSinceEpoch,
+          'replacedExistingFinalPath': replacedExistingFinalPath,
+        },
+      );
+    } finally {
+      if (finalizedFile == null && await tempFile.exists()) {
+        await tempFile.delete();
+      }
+    }
+  }
+
+  Future<({int sizeBytes, String sha256, int modifiedAtMs})>
+  _readPreparedFileMetrics(String filePath) async {
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw StateError('Prepared transfer file does not exist: $filePath');
+    }
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file) {
+      throw StateError('Prepared transfer path is not a file: $filePath');
+    }
+    final sha256 = await _fileHashService.computeSha256ForPath(filePath);
+    return (
+      sizeBytes: stat.size,
+      sha256: sha256,
+      modifiedAtMs: stat.modified.millisecondsSinceEpoch,
     );
   }
 
@@ -3638,11 +3714,13 @@ class _PreparedTransferFile {
     required this.sourcePath,
     required this.announcement,
     this.deleteAfterTransfer = false,
+    this.diagnosticDetails = const <String, Object?>{},
   });
 
   final String sourcePath;
   final TransferAnnouncementItem announcement;
   final bool deleteAfterTransfer;
+  final Map<String, Object?> diagnosticDetails;
 }
 
 class _PendingRemoteDownloadIntent {
