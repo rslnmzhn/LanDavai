@@ -1061,6 +1061,7 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
     required Map<String, Set<String>> selectedRelativePathsByCache,
     Map<String, Set<String>> selectedFolderPrefixesByCache =
         const <String, Set<String>>{},
+    Map<String, String> sharedLabelsByCache = const <String, String>{},
     bool preferDirectStart = false,
     required bool useStandardAppDownloadFolder,
   }) async {

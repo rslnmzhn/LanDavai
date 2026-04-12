@@ -245,12 +245,14 @@ class RemoteBrowseResolvedDownloadTarget {
     required this.ownerName,
     required this.selectedRelativePathsByCache,
     required this.selectedFolderPrefixesByCache,
+    required this.sharedLabelsByCache,
   });
 
   final String ownerIp;
   final String ownerName;
   final Map<String, Set<String>> selectedRelativePathsByCache;
   final Map<String, Set<String>> selectedFolderPrefixesByCache;
+  final Map<String, String> sharedLabelsByCache;
 }
 
 class RemoteShareBrowser extends ChangeNotifier {
@@ -444,6 +446,9 @@ class RemoteShareBrowser extends ChangeNotifier {
           file.cacheId: <String>{file.relativePath},
         },
         selectedFolderPrefixesByCache: const <String, Set<String>>{},
+        sharedLabelsByCache: <String, String>{
+          file.cacheId: file.cacheDisplayName,
+        },
       );
     }
     final folder = _parseFolderToken(token);
@@ -454,6 +459,7 @@ class RemoteShareBrowser extends ChangeNotifier {
     String? ownerName;
     final selectedRelativePathsByCache = <String, Set<String>>{};
     final selectedFolderPrefixesByCache = <String, Set<String>>{};
+    final sharedLabelsByCache = <String, String>{};
     for (final option in _options) {
       if (option.ownerIp != folder.ownerIp) {
         continue;
@@ -462,6 +468,7 @@ class RemoteShareBrowser extends ChangeNotifier {
       if (folder.cacheId != null && option.entry.cacheId != folder.cacheId) {
         continue;
       }
+      sharedLabelsByCache[option.entry.cacheId] = option.entry.displayName;
       if (folder.cacheId != null && folder.relativeFolderPath.isEmpty) {
         selectedRelativePathsByCache[option.entry.cacheId] = <String>{};
         continue;
@@ -487,6 +494,7 @@ class RemoteShareBrowser extends ChangeNotifier {
       ownerName: ownerName,
       selectedRelativePathsByCache: selectedRelativePathsByCache,
       selectedFolderPrefixesByCache: selectedFolderPrefixesByCache,
+      sharedLabelsByCache: sharedLabelsByCache,
     );
   }
 

@@ -49,6 +49,7 @@ import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
 import '../../features/transfer/data/file_hash_service.dart';
 import '../../features/transfer/data/file_transfer_service.dart';
+import '../../features/transfer/data/shared_download_diagnostic_log_store.dart';
 import '../../features/transfer/data/shared_folder_cache_repository.dart';
 import '../../features/transfer/data/thumbnail_cache_service.dart';
 import '../../features/transfer/data/transfer_storage_service.dart';
@@ -197,6 +198,7 @@ class DiscoveryCompositionFactory {
           nearbyTransferAvailabilityStore.lanFallbackPort,
     );
     final fileTransferService = FileTransferService();
+    final sharedDownloadDiagnosticLogStore = SharedDownloadDiagnosticLogStore();
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
     );
@@ -259,6 +261,7 @@ class DiscoveryCompositionFactory {
                 ownerIp: ownerIp,
                 cacheId: cacheId,
               ),
+      sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
     );
     controller = DiscoveryController(
       deviceRegistry: deviceRegistry,

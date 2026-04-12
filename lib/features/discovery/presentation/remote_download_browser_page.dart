@@ -706,6 +706,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           folderPrefixes: entry.value,
         );
       }
+      for (final entry in target.sharedLabelsByCache.entries) {
+        batch.addSharedLabel(cacheId: entry.key, sharedLabel: entry.value);
+      }
     }
     if (requests.isEmpty) {
       return;
@@ -721,6 +724,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           ownerName: batch.ownerName,
           selectedRelativePathsByCache: batch.selectedRelativePathsByCache,
           selectedFolderPrefixesByCache: batch.selectedFolderPrefixesByCache,
+          sharedLabelsByCache: batch.sharedLabelsByCache,
           preferDirectStart: true,
           useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
         );
@@ -1264,6 +1268,7 @@ class _RemoteDownloadBatch {
       <String, Set<String>>{};
   final Map<String, Set<String>> selectedFolderPrefixesByCache =
       <String, Set<String>>{};
+  final Map<String, String> sharedLabelsByCache = <String, String>{};
 
   void addSelection({
     required String cacheId,
@@ -1296,5 +1301,13 @@ class _RemoteDownloadBatch {
       () => <String>{},
     );
     existing.addAll(folderPrefixes);
+  }
+
+  void addSharedLabel({required String cacheId, required String sharedLabel}) {
+    final normalized = sharedLabel.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    sharedLabelsByCache.putIfAbsent(cacheId, () => normalized);
   }
 }

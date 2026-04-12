@@ -33,6 +33,7 @@ import 'package:landa/features/transfer/application/shared_cache_index_store.dar
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
+import 'package:landa/features/transfer/data/shared_download_diagnostic_log_store.dart';
 import 'package:landa/features/transfer/data/shared_folder_cache_repository.dart';
 import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
@@ -402,6 +403,82 @@ void main() {
           isTrue,
         );
         expect(lanDiscoveryService.transferRequests, isEmpty);
+      },
+    );
+
+    test(
+      'sender whole-share approval uses direct-start and avoids legacy transfer request',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_direct_whole_share'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'Workspace', 'sub'),
+        ).create(recursive: true);
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'a.txt'),
+        ).writeAsString('a');
+        await File(
+          p.join(ownerRoot.path, 'Workspace', 'sub', 'b.txt'),
+        ).writeAsString('b');
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-1',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+        expect(
+          fileTransferService.lastFiles.map((file) => file.fileName),
+          containsAll(<String>['a.txt', 'sub/b.txt']),
+        );
+        expect(
+          fileTransferService.lastFiles.every(
+            (file) =>
+                !p.isAbsolute(file.fileName) &&
+                !file.fileName.contains(ownerRoot.path),
+          ),
+          isTrue,
+        );
       },
     );
 
@@ -1364,6 +1441,108 @@ void main() {
     );
 
     test(
+      'whole-share direct download uses shared label for root preservation and writes diagnostics',
+      () async {
+        final diagnosticDirectory = Directory(
+          p.join(harness.rootDirectory.path, 'shared_download_diagnostics'),
+        );
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => diagnosticDirectory,
+        );
+        final transferStorageService = RecordingTransferStorageService(
+          rootDirectory: harness.rootDirectory,
+        );
+        final fileTransferService = SuccessfulReceiveFileTransferService(
+          resultBuilder: (destinationDirectory) => FileTransferResult(
+            success: true,
+            message: 'ok',
+            savedPaths: <String>[
+              p.join(destinationDirectory.path, 'Workspace', 'a.txt'),
+              p.join(destinationDirectory.path, 'Workspace', 'sub', 'b.txt'),
+            ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'a.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+              TransferFileManifestItem(
+                fileName: 'sub/b.txt',
+                sizeBytes: 24,
+                sha256: 'def456',
+              ),
+            ],
+            totalBytes: 36,
+            destinationDirectory: destinationDirectory.path,
+            hashVerified: true,
+          ),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          transferStorageService: transferStorageService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{},
+          },
+          sharedLabelsByCache: const <String, String>{
+            'remote-cache': 'Workspace',
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        expect(lanDiscoveryService.downloadRequests, hasLength(1));
+        expect(lanDiscoveryService.downloadRequests.single.transferPort, 40404);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+        expect(fileTransferService.startReceiverCalls, 1);
+        expect(
+          fileTransferService.lastDestinationRelativeRootPrefix,
+          'Workspace',
+        );
+
+        final history = downloadHistoryBoundary.records.single;
+        final expectedRoot = p.join(
+          transferStorageService.standardReceiveDirectory.path,
+          'Workspace',
+        );
+        expect(history.rootPath, expectedRoot);
+        expect(
+          history.savedPaths,
+          containsAll(<String>[
+            p.join(expectedRoot, 'a.txt'),
+            p.join(expectedRoot, 'sub', 'b.txt'),
+          ]),
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+        final logFile = await diagnosticStore.resolveLogFile();
+        expect(logFile, isNotNull);
+        final logContents = await logFile!.readAsString();
+        expect(logContents, contains('"stage":"download_request_preparing"'));
+        expect(logContents, contains('"pathKind":"direct_start"'));
+        expect(logContents, contains('"stage":"download_request_sent"'));
+        expect(logContents, contains('"stage":"receiver_result"'));
+      },
+    );
+
+    test(
       'shared download exposes waiting preparation state before transfer bytes arrive',
       () async {
         final fileTransferService = PendingReceiveFileTransferService(
@@ -2208,6 +2387,7 @@ TransferSessionCoordinator _buildCoordinator({
   required Directory rootDirectory,
   FileTransferService? fileTransferService,
   TransferStorageService? transferStorageService,
+  SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
 }) {
   return TransferSessionCoordinator(
     lanDiscoveryService: lanDiscoveryService,
@@ -2229,6 +2409,7 @@ TransferSessionCoordinator _buildCoordinator({
         ({required String ownerIp, required String cacheId}) {
           return null;
         },
+    sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
   );
 }
 
@@ -2459,6 +2640,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
   resultBuilder;
   int startReceiverCalls = 0;
   String? lastDestinationDirectoryPath;
+  String? lastDestinationRelativeRootPrefix;
 
   @override
   Future<TransferReceiveSession> startReceiver({
@@ -2473,9 +2655,11 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
       required String relativePath,
     })?
     destinationPathAllocator,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     startReceiverCalls += 1;
     lastDestinationDirectoryPath = destinationDirectory.path;
+    lastDestinationRelativeRootPrefix = destinationRelativeRootPrefix;
     final result = resultBuilder(destinationDirectory);
     onProgress?.call(result.totalBytes, result.totalBytes);
     return TransferReceiveSession(
@@ -2497,6 +2681,7 @@ class CapturingSendFileTransferService extends FileTransferService {
     required String requestId,
     required List<TransferSourceFile> files,
     void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     sendFilesCalls += 1;
     lastFiles = List<TransferSourceFile>.from(files);
@@ -2556,6 +2741,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
       required String relativePath,
     })?
     destinationPathAllocator,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     startReceiverCalls += 1;
     lastDestinationDirectoryPath = destinationDirectory.path;
@@ -2620,6 +2806,7 @@ class PendingReceiveFileTransferService extends FileTransferService {
       required String relativePath,
     })?
     destinationPathAllocator,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     startReceiverCalls += 1;
     return TransferReceiveSession(
