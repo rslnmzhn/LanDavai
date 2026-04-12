@@ -60,8 +60,9 @@ class FileTransferResult {
 
 class FileTransferService {
   static const int _headerLengthBytes = 4;
-  static const int _maxHeaderBytes = 1024 * 1024;
+  static const int _maxHeaderBytes = 8 * 1024 * 1024;
   static const int _chunkBytes = 64 * 1024;
+  static const int _manifestCompressionThresholdBytes = 128 * 1024;
 
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
@@ -212,7 +213,7 @@ class FileTransferService {
             )
             .toList(growable: false),
       };
-      final headerBytes = utf8.encode(jsonEncode(payload));
+      final headerBytes = _encodeTransferHeaderBytes(payload);
       if (headerBytes.length > _maxHeaderBytes) {
         throw StateError('Transfer header is too large.');
       }
@@ -286,7 +287,7 @@ class FileTransferService {
     }
 
     final headerBytes = await reader.readExact(headerLength);
-    final decoded = jsonDecode(utf8.decode(headerBytes));
+    final decoded = _decodeTransferHeader(headerBytes);
     if (decoded is! Map<String, dynamic>) {
       throw StateError('Invalid transfer header payload.');
     }
@@ -427,6 +428,30 @@ class FileTransferService {
       await reader.close();
       await socket.close();
     }
+  }
+
+  Uint8List _encodeTransferHeaderBytes(Map<String, Object?> payload) {
+    final jsonBytes = utf8.encode(jsonEncode(payload));
+    if (jsonBytes.length < _manifestCompressionThresholdBytes) {
+      return Uint8List.fromList(jsonBytes);
+    }
+
+    final compressed = gzip.encode(jsonBytes);
+    if (compressed.length >= jsonBytes.length) {
+      return Uint8List.fromList(jsonBytes);
+    }
+    return Uint8List.fromList(compressed);
+  }
+
+  Object? _decodeTransferHeader(Uint8List headerBytes) {
+    final decodedBytes = _looksLikeGzip(headerBytes)
+        ? gzip.decode(headerBytes)
+        : headerBytes;
+    return jsonDecode(utf8.decode(decodedBytes));
+  }
+
+  bool _looksLikeGzip(Uint8List bytes) {
+    return bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
   }
 
   Future<void> _cleanupFailedTransferFiles(List<String> paths) async {

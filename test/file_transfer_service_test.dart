@@ -99,5 +99,62 @@ void main() {
         expect(result.receivedItems.single.sha256, expectedHash);
       },
     );
+
+    test(
+      'large direct transfer manifest succeeds with relative selector names only',
+      () async {
+        final sourceFile = File(
+          p.join(rootDirectory.path, 'source', 'placeholder.bin'),
+        );
+        await sourceFile.parent.create(recursive: true);
+        await sourceFile.writeAsBytes(const <int>[]);
+
+        const itemCount = 15000;
+        final files = List<TransferSourceFile>.generate(
+          itemCount,
+          (index) => TransferSourceFile(
+            sourcePath: sourceFile.path,
+            fileName: 'ReactProjects/App_$index/src/file_$index.txt',
+            sizeBytes: 0,
+            sha256: '',
+          ),
+          growable: false,
+        );
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-large-manifest',
+          expectedItems: null,
+          destinationDirectory: destinationDirectory,
+        );
+
+        await service.sendFiles(
+          host: InternetAddress.loopbackIPv4.address,
+          port: receiveSession.port,
+          requestId: 'request-large-manifest',
+          files: files,
+        );
+        final result = await receiveSession.result;
+
+        expect(result.success, isTrue);
+        expect(result.receivedItems, hasLength(itemCount));
+        expect(
+          result.receivedItems.every(
+            (item) =>
+                item.fileName.startsWith('ReactProjects/') &&
+                !item.fileName.contains(sourceFile.parent.path),
+          ),
+          isTrue,
+        );
+        expect(
+          result.savedPaths.every(
+            (path) => path.startsWith(destinationDirectory.path),
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 }

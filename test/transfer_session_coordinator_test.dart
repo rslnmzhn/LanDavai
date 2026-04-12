@@ -315,6 +315,97 @@ void main() {
     );
 
     test(
+      'sender direct large folder download keeps relative selector file names and avoids absolute path leakage',
+      () async {
+        final ownerRoot = Directory(
+          p.join(harness.rootDirectory.path, 'shared_direct_large_folder'),
+        );
+        await Directory(
+          p.join(ownerRoot.path, 'ReactProjects', 'AppOne', 'src'),
+        ).create(recursive: true);
+        await Directory(
+          p.join(ownerRoot.path, 'ReactProjects', 'AppTwo', 'src'),
+        ).create(recursive: true);
+        for (var index = 0; index < 300; index += 1) {
+          await File(
+            p.join(
+              ownerRoot.path,
+              'ReactProjects',
+              'AppOne',
+              'src',
+              'file_$index.txt',
+            ),
+          ).writeAsString('app-one-$index');
+          await File(
+            p.join(
+              ownerRoot.path,
+              'ReactProjects',
+              'AppTwo',
+              'src',
+              'file_$index.txt',
+            ),
+          ).writeAsString('app-two-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: ownerRoot.path,
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-large-folder-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>['ReactProjects'],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-large-folder-1',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.lastFiles.length, 600);
+        expect(
+          fileTransferService.lastFiles.every(
+            (file) =>
+                file.fileName.startsWith('ReactProjects/') &&
+                !p.isAbsolute(file.fileName) &&
+                !file.fileName.contains(ownerRoot.path),
+          ),
+          isTrue,
+        );
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+      },
+    );
+
+    test(
       'incoming shared download request waits for sender approval and exposes request summary',
       () async {
         final ownerFile = File(
