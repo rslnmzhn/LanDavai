@@ -984,6 +984,130 @@ void main() {
     );
 
     test(
+      'sender whole-share direct-start rate-limits ui-facing progress churn while keeping progress checkpoints',
+      () async {
+        const totalFileCount = 600;
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_progress',
+          ),
+        );
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => Directory(
+            p.join(harness.rootDirectory.path, 'whole_share_progress_logs'),
+          ),
+        );
+        final fileTransferService = FloodingProgressSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        var notifyCount = 0;
+        coordinator.addListener(() {
+          notifyCount += 1;
+        });
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-progress-throttled',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-progress-throttled',
+          approved: true,
+        );
+
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.completed) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.progressEventCount, 120);
+        expect(fileTransferService.sawResolveBatch, isTrue);
+        expect(fileTransferService.completed, isTrue);
+        expect(coordinator.uploadSentBytes, coordinator.uploadTotalBytes);
+        expect(coordinator.uploadTotalBytes, greaterThan(0));
+        expect(notifyCount, lessThan(60));
+
+        var entries = const <Map<String, Object?>>[];
+        for (var index = 0; index < 50; index += 1) {
+          entries = await _readDiagnosticEntries(diagnosticStore);
+          if (entries.any(
+            (entry) =>
+                entry['stage'] == 'sender_whole_share_progress_checkpoint',
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        final progressCheckpoints = entries
+            .where(
+              (entry) =>
+                  entry['stage'] == 'sender_whole_share_progress_checkpoint',
+            )
+            .toList(growable: false);
+        expect(progressCheckpoints, isNotEmpty);
+        expect(progressCheckpoints.length, lessThan(30));
+        expect(
+          entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_batch_sent',
+          ),
+          isTrue,
+        );
+        expect(
+          entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_session_complete',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
       'incoming shared download request waits for sender approval and exposes request summary',
       () async {
         final ownerFile = File(
@@ -3951,6 +4075,68 @@ class InspectingSendFileTransferService extends FileTransferService {
     observedSourceSha256 = await fileHashService.computeSha256ForPath(
       sourceFile.path,
     );
+  }
+}
+
+class FloodingProgressSendFileTransferService extends FileTransferService {
+  int sendFilesCalls = 0;
+  int progressEventCount = 0;
+  bool sawResolveBatch = false;
+  bool completed = false;
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
+  }) async {
+    sendFilesCalls += 1;
+    sawResolveBatch = resolveBatch != null;
+    final total = (manifestItems ?? const <TransferFileManifestItem>[])
+        .fold<int>(0, (sum, item) => sum + item.sizeBytes);
+    var preparedCount = files.length;
+    if (resolveBatch != null && manifestItems != null) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': 1,
+          'batchFileCount': files.length,
+          'batchStartIndex': 0,
+          'cumulativeSentFileCount': files.length,
+          'totalManifestFileCount': manifestItems.length,
+        },
+      );
+      var nextIndex = files.length;
+      while (nextIndex < manifestItems.length) {
+        final batch = await resolveBatch(nextIndex);
+        preparedCount += batch.files.length;
+        onDiagnosticEvent?.call(
+          stage: 'sender_whole_share_batch_sent',
+          details: <String, Object?>{
+            'batchNumber': batch.batchNumber,
+            'batchFileCount': batch.files.length,
+            'batchStartIndex': batch.startIndex,
+            'cumulativeSentFileCount': preparedCount,
+            'totalManifestFileCount': manifestItems.length,
+          },
+        );
+        nextIndex += batch.files.length;
+      }
+    }
+
+    for (var index = 1; index <= 120; index += 1) {
+      progressEventCount += 1;
+      final sent = ((total * index) / 120).round();
+      onProgress?.call(sent, total);
+    }
+    completed = true;
   }
 }
 

@@ -159,6 +159,10 @@ class RemoteShareAccessProjectionLoadResult {
 
 class TransferSessionCoordinator extends ChangeNotifier {
   static const int _wholeShareDirectStartFirstBatchFileCount = 256;
+  static const Duration _wholeShareUploadProgressMinEmitInterval = Duration(
+    milliseconds: 250,
+  );
+  static const int _wholeShareUploadProgressMinEmitBytes = 512 * 1024;
 
   static Future<RemoteShareAccessProjectionLoadResult>
   _noopApplyRemoteShareAccessSnapshot({
@@ -2050,6 +2054,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _notify();
 
     try {
+      final throttledWholeShareProgress =
+          resolveBatch != null && manifestItems != null;
+      final progressEmitter = _buildUploadProgressEmitter(
+        requestId: requestId,
+        diagnosticDetails: diagnosticDetails,
+        throttleForWholeShare: throttledWholeShareProgress,
+      );
       if (logWholeShareConnectAttempt) {
         _writeSharedDownloadDiagnostic(
           stage: 'sender_whole_share_direct_send_connect_attempt_start',
@@ -2086,15 +2097,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ...diagnosticDetails,
           },
         ),
-        onProgress: (sent, total) {
-          _uploadSentBytes = sent;
-          _uploadTotalBytes = total;
-          _updateUploadSpeedTracking(currentBytes: sent);
-          _notify();
-        },
+        onProgress: progressEmitter,
       );
       _uploadSentBytes = _uploadTotalBytes;
       _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
+      _notify();
       if (logWholeShareConnectAttempt) {
         _writeSharedDownloadDiagnostic(
           stage: 'sender_whole_share_session_complete',
@@ -2133,6 +2140,62 @@ class TransferSessionCoordinator extends ChangeNotifier {
         _notify();
       });
     }
+  }
+
+  void Function(int sentBytes, int totalBytes) _buildUploadProgressEmitter({
+    required String requestId,
+    required Map<String, Object?> diagnosticDetails,
+    required bool throttleForWholeShare,
+  }) {
+    if (!throttleForWholeShare) {
+      return (sent, total) {
+        _uploadSentBytes = sent;
+        _uploadTotalBytes = total;
+        _updateUploadSpeedTracking(currentBytes: sent);
+        _notify();
+      };
+    }
+
+    var lastEmittedAt = DateTime.fromMillisecondsSinceEpoch(0);
+    var lastEmittedBytes = 0;
+    var lastLoggedBucket = -1;
+
+    return (sent, total) {
+      final now = DateTime.now();
+      final elapsed = now.difference(lastEmittedAt);
+      final deltaBytes = sent - lastEmittedBytes;
+      final bucket = total <= 0 ? 100 : ((sent * 20) ~/ total) * 5;
+      final isTerminal = total > 0 && sent >= total;
+      final shouldEmit =
+          lastEmittedAt.millisecondsSinceEpoch == 0 ||
+          isTerminal ||
+          deltaBytes >= _wholeShareUploadProgressMinEmitBytes ||
+          elapsed >= _wholeShareUploadProgressMinEmitInterval;
+      if (!shouldEmit) {
+        return;
+      }
+
+      _uploadSentBytes = sent;
+      _uploadTotalBytes = total;
+      _updateUploadSpeedTracking(currentBytes: sent);
+      _notify();
+      lastEmittedAt = now;
+      lastEmittedBytes = sent;
+
+      if (bucket > lastLoggedBucket || isTerminal) {
+        lastLoggedBucket = bucket;
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_whole_share_progress_checkpoint',
+          requestId: requestId,
+          details: <String, Object?>{
+            ...diagnosticDetails,
+            'sentBytes': sent,
+            'totalBytes': total,
+            'progressPercent': total <= 0 ? 100 : ((sent * 100) / total),
+          },
+        );
+      }
+    };
   }
 
   Future<_PreparedTransferFile> _buildRemoteShareAccessSnapshotFile({
