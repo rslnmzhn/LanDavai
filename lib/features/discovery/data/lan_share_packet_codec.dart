@@ -180,6 +180,7 @@ class LanSharePacketCodec {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
     required int createdAtMs,
   }) {
@@ -188,6 +189,7 @@ class LanSharePacketCodec {
       'requestId': requestId,
       'responderName': responderName,
       'approved': approved,
+      'phase': phase,
       'message': message,
       'createdAtMs': createdAtMs,
     };
@@ -661,6 +663,7 @@ class LanSharePacketCodec {
       requestId: requestId,
       responderName: responderName,
       approved: approved,
+      phase: decoded['phase'] as String?,
       message: decoded['message'] as String?,
     );
   }

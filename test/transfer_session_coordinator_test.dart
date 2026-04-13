@@ -468,6 +468,12 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(lanDiscoveryService.transferRequests, isEmpty);
+        expect(lanDiscoveryService.downloadResponses, hasLength(1));
+        expect(lanDiscoveryService.downloadResponses.single.approved, isTrue);
+        expect(
+          lanDiscoveryService.downloadResponses.single.phase,
+          'ready_to_connect',
+        );
         expect(
           fileTransferService.lastFiles.map((file) => file.fileName),
           containsAll(<String>['a.txt', 'sub/b.txt']),
@@ -736,7 +742,7 @@ void main() {
           final logFile = await diagnosticStore.resolveLogFile();
           logContents = logFile == null ? '' : await logFile.readAsString();
           if (logContents.contains(
-            '"stage":"sender_whole_share_prepare_complete"',
+            '"stage":"sender_whole_share_direct_send_connect_attempt_start"',
           )) {
             break;
           }
@@ -782,6 +788,7 @@ void main() {
           logContents,
           isNot(contains('"stage":"sender_whole_share_hash_stage_start"')),
         );
+        expect(logContents, contains('"stage":"sender_ready_to_connect_sent"'));
         expect(
           logContents,
           contains(
@@ -1848,6 +1855,91 @@ void main() {
         expect(logContents, contains('"pathKind":"direct_start"'));
         expect(logContents, contains('"stage":"download_request_sent"'));
         expect(logContents, contains('"stage":"receiver_result"'));
+      },
+    );
+
+    test(
+      'whole-share direct download defers receiver timeout until sender ready response',
+      () async {
+        final fileTransferService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{},
+          },
+          sharedLabelsByCache: const <String, String>{
+            'remote-cache': 'Workspace',
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(fileTransferService.startReceiverCalls, 1);
+        expect(fileTransferService.lastArmTimeoutImmediately, isFalse);
+        expect(fileTransferService.armTimeoutCalls, 0);
+
+        coordinator.handleDownloadResponseEvent(
+          DownloadResponseEvent(
+            requestId: lanDiscoveryService.downloadRequests.single.requestId,
+            responderIp: '192.168.1.40',
+            responderName: 'Remote peer',
+            approved: true,
+            phase: 'ready_to_connect',
+            observedAt: DateTime(2026),
+            message: 'ready',
+          ),
+        );
+
+        expect(fileTransferService.armTimeoutCalls, 1);
+      },
+    );
+
+    test(
+      'file-only direct download still arms receiver timeout immediately',
+      () async {
+        final fileTransferService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        await coordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Remote peer',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            'remote-cache': <String>{'report.txt'},
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(fileTransferService.startReceiverCalls, 1);
+        expect(fileTransferService.lastArmTimeoutImmediately, isTrue);
+        expect(fileTransferService.armTimeoutCalls, 1);
       },
     );
 
@@ -3352,6 +3444,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
   }) async {
     downloadResponses.add(
@@ -3360,6 +3453,7 @@ class CapturingLanDiscoveryService extends LanDiscoveryService {
         requestId: requestId,
         responderName: responderName,
         approved: approved,
+        phase: phase,
         message: message,
       ),
     );
@@ -3475,6 +3569,7 @@ class SentDownloadResponse {
     required this.requestId,
     required this.responderName,
     required this.approved,
+    required this.phase,
     required this.message,
   });
 
@@ -3482,6 +3577,7 @@ class SentDownloadResponse {
   final String requestId;
   final String responderName;
   final bool approved;
+  final String? phase;
   final String? message;
 }
 
@@ -3532,6 +3628,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
@@ -3549,6 +3646,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     return TransferReceiveSession(
       port: 40404,
       result: Future<FileTransferResult>.value(result),
+      armTimeout: () {},
       close: () async {},
     );
   }
@@ -3651,6 +3749,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
@@ -3699,6 +3798,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
           hashVerified: true,
         ),
       ),
+      armTimeout: () {},
       close: () async {},
     );
   }
@@ -3709,6 +3809,8 @@ class PendingReceiveFileTransferService extends FileTransferService {
 
   final int port;
   int startReceiverCalls = 0;
+  int armTimeoutCalls = 0;
+  bool? lastArmTimeoutImmediately;
   int closeCalls = 0;
   final List<Completer<FileTransferResult>> _completers =
       <Completer<FileTransferResult>>[];
@@ -3719,6 +3821,7 @@ class PendingReceiveFileTransferService extends FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
@@ -3729,11 +3832,18 @@ class PendingReceiveFileTransferService extends FileTransferService {
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     startReceiverCalls += 1;
+    lastArmTimeoutImmediately = armTimeoutImmediately;
     final completer = Completer<FileTransferResult>();
     _completers.add(completer);
+    if (armTimeoutImmediately) {
+      armTimeoutCalls += 1;
+    }
     return TransferReceiveSession(
       port: port,
       result: completer.future,
+      armTimeout: () {
+        armTimeoutCalls += 1;
+      },
       close: () async {
         closeCalls += 1;
         if (!completer.isCompleted) {

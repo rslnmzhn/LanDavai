@@ -397,6 +397,7 @@ class LanDiscoveryService {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
   }) async {
     await _sendOutgoingPacket(
@@ -406,6 +407,7 @@ class LanDiscoveryService {
         requestId: requestId,
         responderName: responderName,
         approved: approved,
+        phase: phase,
         message: message,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),

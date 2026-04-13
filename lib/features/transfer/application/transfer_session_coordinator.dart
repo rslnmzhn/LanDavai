@@ -746,6 +746,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           },
         );
         if (canUseDirectStart) {
+          final deferReceiverTimeoutUntilSenderReady = requestsWholeShare;
           _setSharedDownloadPreparation(
             requestId: requestId,
             ownerName: ownerName,
@@ -759,6 +760,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             requestId: requestId,
             expectedItems: null,
             destinationDirectory: destinationDirectory,
+            armTimeoutImmediately: !deferReceiverTimeoutUntilSenderReady,
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             onProgress: (received, total) {
               if (received > 0) {
@@ -789,6 +791,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
           );
           _activeReceiveSessions[requestId] = receiveSession;
+          _writeSharedDownloadDiagnostic(
+            stage: deferReceiverTimeoutUntilSenderReady
+                ? 'requester_receiver_wait_deferred_until_sender_ready'
+                : 'requester_receiver_wait_started_immediately',
+            requestId: requestId,
+            details: <String, Object?>{
+              'pathKind': 'direct_start',
+              'ownerIp': ownerIp,
+              'cacheId': cacheId,
+              'requestsWholeShare': requestsWholeShare,
+              'transferPort': receiveSession.port,
+            },
+          );
           unawaited(
             _waitForIncomingTransferResult(
               request: IncomingTransferRequest(
@@ -1704,9 +1719,22 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'responderIp': event.responderIp,
         'responderName': event.responderName,
         'approved': event.approved,
+        'phase': event.phase,
         'message': event.message,
       },
     );
+    if (event.approved && event.phase == 'ready_to_connect') {
+      final activeReceiveSession = _activeReceiveSessions[event.requestId];
+      activeReceiveSession?.armTimeout();
+      _writeSharedDownloadDiagnostic(
+        stage: 'requester_receiver_timeout_armed_from_sender_ready',
+        requestId: event.requestId,
+        details: <String, Object?>{
+          'responderIp': event.responderIp,
+          'responderName': event.responderName,
+        },
+      );
+    }
   }
 
   Future<void> respondToIncomingRemoteShareAccessRequest({
@@ -3000,6 +3028,25 @@ class TransferSessionCoordinator extends ChangeNotifier {
       final canUseDirectStart = directTransferPort != null;
       if (canUseDirectStart) {
         _clearSharedUploadPreparation(requestId: request.requestId);
+        if (request.requestsWholeShare) {
+          await _lanDiscoveryService.sendDownloadResponse(
+            targetIp: request.requesterIp,
+            requestId: request.requestId,
+            responderName: _localName,
+            approved: true,
+            phase: 'ready_to_connect',
+            message: 'Отправитель подготовил отправку. Начинаем соединение.',
+          );
+          _writeSharedDownloadDiagnostic(
+            stage: 'sender_ready_to_connect_sent',
+            requestId: request.requestId,
+            details: <String, Object?>{
+              'sharedCacheId': request.sharedCacheId,
+              'transferPort': directTransferPort,
+              'preparedFileCount': transferFiles.length,
+            },
+          );
+        }
         _writeSharedDownloadDiagnostic(
           stage: 'sender_direct_start_selected',
           requestId: request.requestId,

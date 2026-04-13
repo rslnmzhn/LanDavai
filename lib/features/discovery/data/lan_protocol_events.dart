@@ -202,6 +202,7 @@ class DownloadResponseEvent {
     required this.responderName,
     required this.approved,
     required this.observedAt,
+    this.phase,
     this.message,
   });
 
@@ -209,6 +210,7 @@ class DownloadResponseEvent {
   final String responderIp;
   final String responderName;
   final bool approved;
+  final String? phase;
   final String? message;
   final DateTime observedAt;
 }

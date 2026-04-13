@@ -44,11 +44,13 @@ class TransferReceiveSession {
   TransferReceiveSession({
     required this.port,
     required this.result,
+    required this.armTimeout,
     required this.close,
   });
 
   final int port;
   final Future<FileTransferResult> result;
+  final void Function() armTimeout;
   final Future<void> Function() close;
 }
 
@@ -83,6 +85,7 @@ class FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
@@ -133,29 +136,50 @@ class FileTransferService {
     }
 
     Timer? timeoutTimer;
-    timeoutTimer = Timer(timeout, () {
-      if (closed) {
+    var timeoutArmed = false;
+
+    void armTimeout() {
+      if (closed || timeoutArmed) {
         return;
       }
+      timeoutArmed = true;
       onDiagnosticEvent?.call(
-        stage: 'receiver_timeout',
+        stage: 'receiver_timeout_armed',
         details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
       );
-      unawaited(closeSession());
-      if (!resultCompleter.isCompleted) {
-        resultCompleter.complete(
-          FileTransferResult(
-            success: false,
-            message: 'Transfer receive timed out.',
-            savedPaths: <String>[],
-            receivedItems: <TransferFileManifestItem>[],
-            totalBytes: 0,
-            destinationDirectory: destinationDirectory.path,
-            hashVerified: false,
-          ),
+      timeoutTimer = Timer(timeout, () {
+        if (closed) {
+          return;
+        }
+        onDiagnosticEvent?.call(
+          stage: 'receiver_timeout',
+          details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
         );
-      }
-    });
+        unawaited(closeSession());
+        if (!resultCompleter.isCompleted) {
+          resultCompleter.complete(
+            FileTransferResult(
+              success: false,
+              message: 'Transfer receive timed out.',
+              savedPaths: <String>[],
+              receivedItems: <TransferFileManifestItem>[],
+              totalBytes: 0,
+              destinationDirectory: destinationDirectory.path,
+              hashVerified: false,
+            ),
+          );
+        }
+      });
+    }
+
+    if (armTimeoutImmediately) {
+      armTimeout();
+    } else {
+      onDiagnosticEvent?.call(
+        stage: 'receiver_timeout_deferred',
+        details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
+      );
+    }
 
     server.listen(
       (socket) {
@@ -230,6 +254,7 @@ class FileTransferService {
     return TransferReceiveSession(
       port: server.port,
       result: resultCompleter.future,
+      armTimeout: armTimeout,
       close: closeSession,
     );
   }
