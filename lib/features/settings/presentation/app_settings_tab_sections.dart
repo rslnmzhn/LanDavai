@@ -290,10 +290,16 @@ class AppSettingsStorageTab extends StatelessWidget {
     required this.cacheAgeController,
     required this.clipboardLimitController,
     required this.recacheWorkersController,
+    required this.debugLogRetainedLinesController,
     required this.onSaveCacheSize,
     required this.onSaveCacheAge,
     required this.onSaveClipboardLimit,
     required this.onSaveRecacheParallelWorkers,
+    required this.onSaveDebugLogRetainedLines,
+    required this.onShowLogs,
+    required this.onOpenLogsFolder,
+    this.isShowingLogs = false,
+    this.isOpeningLogsFolder = false,
     super.key,
   });
 
@@ -301,10 +307,16 @@ class AppSettingsStorageTab extends StatelessWidget {
   final TextEditingController cacheAgeController;
   final TextEditingController clipboardLimitController;
   final TextEditingController recacheWorkersController;
+  final TextEditingController debugLogRetainedLinesController;
   final VoidCallback onSaveCacheSize;
   final VoidCallback onSaveCacheAge;
   final VoidCallback onSaveClipboardLimit;
   final VoidCallback onSaveRecacheParallelWorkers;
+  final VoidCallback onSaveDebugLogRetainedLines;
+  final Future<void> Function() onShowLogs;
+  final Future<void> Function() onOpenLogsFolder;
+  final bool isShowingLogs;
+  final bool isOpeningLogsFolder;
 
   @override
   Widget build(BuildContext context) {
@@ -359,6 +371,56 @@ class AppSettingsStorageTab extends StatelessWidget {
             ),
           ],
         ),
+        const SizedBox(height: AppSpacing.md),
+        AppSettingsSectionCard(
+          title: 'Диагностика',
+          description:
+              'debug.log помогает разбирать проблемы shared-download и runtime-сбоев.',
+          children: [
+            IntegerSettingField(
+              controller: debugLogRetainedLinesController,
+              label: 'Сколько последних строк хранить в debug.log',
+              onSave: onSaveDebugLogRetainedLines,
+              fieldKey: const Key('settings-debug-log-line-cap-field'),
+              buttonKey: const Key('settings-debug-log-line-cap-save'),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                FilledButton.icon(
+                  key: const Key('settings-show-logs-action'),
+                  onPressed: isShowingLogs
+                      ? null
+                      : () => unawaited(onShowLogs()),
+                  icon: isShowingLogs
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.description_outlined),
+                  label: const Text('Показать логи'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('settings-open-logs-folder-action'),
+                  onPressed: isOpeningLogsFolder
+                      ? null
+                      : () => unawaited(onOpenLogsFolder()),
+                  icon: isOpeningLogsFolder
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.folder_open_rounded),
+                  label: const Text('Открыть папку с логами'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ],
     );
   }
@@ -406,12 +468,16 @@ class IntegerSettingField extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.onSave,
+    this.fieldKey,
+    this.buttonKey,
     super.key,
   });
 
   final TextEditingController controller;
   final String label;
   final VoidCallback onSave;
+  final Key? fieldKey;
+  final Key? buttonKey;
 
   @override
   Widget build(BuildContext context) {
@@ -420,6 +486,7 @@ class IntegerSettingField extends StatelessWidget {
       children: [
         Expanded(
           child: TextField(
+            key: fieldKey,
             controller: controller,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -435,6 +502,7 @@ class IntegerSettingField extends StatelessWidget {
         SizedBox(
           height: 48,
           child: FilledButton(
+            key: buttonKey,
             onPressed: onSave,
             child: const Text('Сохранить'),
           ),

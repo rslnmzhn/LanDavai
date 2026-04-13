@@ -1,5 +1,33 @@
 enum SharedFolderCacheRole { owner, receiver }
 
+class SharedFolderTreeFingerprint {
+  const SharedFolderTreeFingerprint({
+    required this.relativeFolderPath,
+    required this.fingerprint,
+    required this.itemCount,
+    required this.totalBytes,
+  });
+
+  final String relativeFolderPath;
+  final String fingerprint;
+  final int itemCount;
+  final int totalBytes;
+}
+
+class SharedCacheScopedSelection {
+  const SharedCacheScopedSelection({
+    required this.entries,
+    required this.fingerprint,
+    required this.itemCount,
+    required this.totalBytes,
+  });
+
+  final List<SharedFolderIndexEntry> entries;
+  final String fingerprint;
+  final int itemCount;
+  final int totalBytes;
+}
+
 class SharedFolderIndexEntry {
   SharedFolderIndexEntry({
     required this.relativePath,
@@ -7,6 +35,7 @@ class SharedFolderIndexEntry {
     required this.modifiedAtMs,
     this.absolutePath,
     this.thumbnailId,
+    this.sha256,
   });
 
   final String relativePath;
@@ -14,6 +43,7 @@ class SharedFolderIndexEntry {
   final int modifiedAtMs;
   final String? absolutePath;
   final String? thumbnailId;
+  final String? sha256;
 
   SharedFolderIndexEntry copyWith({
     String? relativePath,
@@ -23,6 +53,8 @@ class SharedFolderIndexEntry {
     bool clearAbsolutePath = false,
     String? thumbnailId,
     bool clearThumbnailId = false,
+    String? sha256,
+    bool clearSha256 = false,
   }) {
     return SharedFolderIndexEntry(
       relativePath: relativePath ?? this.relativePath,
@@ -32,6 +64,7 @@ class SharedFolderIndexEntry {
           ? null
           : (absolutePath ?? this.absolutePath),
       thumbnailId: clearThumbnailId ? null : (thumbnailId ?? this.thumbnailId),
+      sha256: clearSha256 ? null : (sha256 ?? this.sha256),
     );
   }
 
@@ -47,6 +80,9 @@ class SharedFolderIndexEntry {
     if (thumbnailId != null && thumbnailId!.isNotEmpty) {
       json['t'] = thumbnailId;
     }
+    if (sha256 != null && sha256!.isNotEmpty) {
+      json['h'] = sha256;
+    }
     return json;
   }
 
@@ -57,6 +93,7 @@ class SharedFolderIndexEntry {
       modifiedAtMs: (json['m'] as num).toInt(),
       absolutePath: json['a'] as String?,
       thumbnailId: json['t'] as String?,
+      sha256: json['h'] as String?,
     );
   }
 }

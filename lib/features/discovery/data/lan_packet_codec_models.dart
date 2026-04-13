@@ -310,6 +310,36 @@ class LanShareQueryPacket extends LanInboundPacket {
   final String requesterName;
 }
 
+class LanShareAccessRequestPacket extends LanInboundPacket {
+  const LanShareAccessRequestPacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+  });
+
+  final String requestId;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+}
+
+class LanShareAccessResponsePacket extends LanInboundPacket {
+  const LanShareAccessResponsePacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? message;
+}
+
 class LanShareCatalogPacket extends LanInboundPacket {
   const LanShareCatalogPacket({
     required super.instanceId,
@@ -318,6 +348,8 @@ class LanShareCatalogPacket extends LanInboundPacket {
     required this.ownerMacAddress,
     required this.entries,
     required this.removedCacheIds,
+    this.chunkIndex = 0,
+    this.chunkCount = 1,
   });
 
   final String requestId;
@@ -325,6 +357,8 @@ class LanShareCatalogPacket extends LanInboundPacket {
   final String ownerMacAddress;
   final List<SharedCatalogEntryItem> entries;
   final List<String> removedCacheIds;
+  final int chunkIndex;
+  final int chunkCount;
 }
 
 class LanDownloadRequestPacket extends LanInboundPacket {
@@ -335,6 +369,8 @@ class LanDownloadRequestPacket extends LanInboundPacket {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.selectedFolderPrefixes,
+    this.transferPort,
     required this.previewMode,
   });
 
@@ -343,7 +379,26 @@ class LanDownloadRequestPacket extends LanInboundPacket {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final List<String> selectedFolderPrefixes;
+  final int? transferPort;
   final bool previewMode;
+}
+
+class LanDownloadResponsePacket extends LanInboundPacket {
+  const LanDownloadResponsePacket({
+    required super.instanceId,
+    required this.requestId,
+    required this.responderName,
+    required this.approved,
+    this.phase,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderName;
+  final bool approved;
+  final String? phase;
+  final String? message;
 }
 
 class LanThumbnailSyncRequestPacket extends LanInboundPacket {

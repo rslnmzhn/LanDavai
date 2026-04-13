@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ void main() {
       'shareQuery': 'LANDA_SHARE_QUERY_V1',
       'shareCatalog': 'LANDA_SHARE_CATALOG_V1',
       'downloadRequest': 'LANDA_DOWNLOAD_REQUEST_V1',
+      'downloadResponse': 'LANDA_DOWNLOAD_RESPONSE_V1',
       'thumbnailSyncRequest': 'LANDA_THUMBNAIL_SYNC_REQUEST_V1',
       'thumbnailPacket': 'LANDA_THUMBNAIL_PACKET_V1',
       'clipboardQuery': 'LANDA_CLIPBOARD_QUERY_V1',
@@ -191,33 +193,50 @@ void main() {
     },
   );
 
-  test('trims share catalog entries with current UDP packet limits', () {
+  test('chunks oversized share catalogs into multiple UDP-safe packets', () {
     final oversizedEntries = List<SharedCatalogEntryItem>.generate(
-      70,
+      3,
       (entryIndex) => SharedCatalogEntryItem(
         cacheId: 'cache-$entryIndex',
         displayName: 'Entry $entryIndex',
-        itemCount: 100,
+        itemCount: 400,
         totalBytes: 1000,
         files: List<SharedCatalogFileItem>.generate(
-          100,
+          400,
           (fileIndex) => SharedCatalogFileItem(
-            relativePath: 'file_${entryIndex}_$fileIndex.txt',
+            relativePath: 'project_$entryIndex/src/deep/file_$fileIndex.txt',
             sizeBytes: fileIndex + 1,
           ),
         ),
       ),
     );
 
-    final fitted = codec.fitShareCatalogEntries(oversizedEntries);
-    final totalFiles = fitted.fold<int>(
-      0,
-      (sum, entry) => sum + entry.files.length,
+    final packets = codec.encodeShareCatalogChunks(
+      instanceId: 'instance-1',
+      requestId: 'request-1',
+      ownerName: 'Bob',
+      ownerMacAddress: '11:22:33:44:55:66',
+      entries: oversizedEntries,
+      removedCacheIds: const <String>['stale-cache'],
+      createdAtMs: 5678,
     );
+    final chunkCounts = <int>{};
+    var totalFiles = 0;
+    for (final packet in packets) {
+      final decoded =
+          codec.decodeIncomingPacket(utf8.decode(packet.bytes))
+              as LanShareCatalogPacket?;
+      expect(decoded, isNotNull);
+      chunkCounts.add(decoded!.chunkCount);
+      totalFiles += decoded.entries.fold<int>(
+        0,
+        (sum, entry) => sum + entry.files.length,
+      );
+    }
 
-    expect(fitted.length, 64);
-    expect(fitted.every((entry) => entry.files.length <= 80), isTrue);
-    expect(totalFiles, 240);
+    expect(packets.length, greaterThan(1));
+    expect(chunkCounts.single, packets.length);
+    expect(totalFiles, 1200);
   });
 }
 

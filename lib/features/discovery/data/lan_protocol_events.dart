@@ -113,6 +113,42 @@ class ShareQueryEvent {
   final DateTime observedAt;
 }
 
+class ShareAccessRequestEvent {
+  const ShareAccessRequestEvent({
+    required this.requestId,
+    required this.requesterIp,
+    required this.requesterName,
+    required this.requesterMacAddress,
+    required this.transferPort,
+    required this.observedAt,
+  });
+
+  final String requestId;
+  final String requesterIp;
+  final String requesterName;
+  final String requesterMacAddress;
+  final int transferPort;
+  final DateTime observedAt;
+}
+
+class ShareAccessResponseEvent {
+  const ShareAccessResponseEvent({
+    required this.requestId,
+    required this.responderIp,
+    required this.responderName,
+    required this.approved,
+    required this.observedAt,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderIp;
+  final String responderName;
+  final bool approved;
+  final DateTime observedAt;
+  final String? message;
+}
+
 class ShareCatalogEvent {
   ShareCatalogEvent({
     required this.requestId,
@@ -141,6 +177,8 @@ class DownloadRequestEvent {
     required this.requesterMacAddress,
     required this.cacheId,
     required this.selectedRelativePaths,
+    required this.selectedFolderPrefixes,
+    this.transferPort,
     required this.previewMode,
     required this.observedAt,
   });
@@ -151,7 +189,29 @@ class DownloadRequestEvent {
   final String requesterMacAddress;
   final String cacheId;
   final List<String> selectedRelativePaths;
+  final List<String> selectedFolderPrefixes;
+  final int? transferPort;
   final bool previewMode;
+  final DateTime observedAt;
+}
+
+class DownloadResponseEvent {
+  DownloadResponseEvent({
+    required this.requestId,
+    required this.responderIp,
+    required this.responderName,
+    required this.approved,
+    required this.observedAt,
+    this.phase,
+    this.message,
+  });
+
+  final String requestId;
+  final String responderIp;
+  final String responderName;
+  final bool approved;
+  final String? phase;
+  final String? message;
   final DateTime observedAt;
 }
 

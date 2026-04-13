@@ -27,6 +27,7 @@ import '../../features/discovery/data/configured_discovery_targets_repository.da
 import '../../features/discovery/data/discovery_network_interface_catalog.dart';
 import '../../features/discovery/data/friend_repository.dart';
 import '../../features/discovery/data/lan_discovery_service.dart';
+import '../../features/discovery/data/lan_packet_codec.dart';
 import '../../features/discovery/data/network_host_scanner.dart';
 import '../../features/files/application/preview_cache_owner.dart';
 import '../../features/history/application/download_history_boundary.dart';
@@ -49,6 +50,7 @@ import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
 import '../../features/transfer/data/file_hash_service.dart';
 import '../../features/transfer/data/file_transfer_service.dart';
+import '../../features/transfer/data/shared_download_diagnostic_log_store.dart';
 import '../../features/transfer/data/shared_folder_cache_repository.dart';
 import '../../features/transfer/data/thumbnail_cache_service.dart';
 import '../../features/transfer/data/transfer_storage_service.dart';
@@ -197,6 +199,10 @@ class DiscoveryCompositionFactory {
           nearbyTransferAvailabilityStore.lanFallbackPort,
     );
     final fileTransferService = FileTransferService();
+    final sharedDownloadDiagnosticLogStore = SharedDownloadDiagnosticLogStore(
+      retainedLineCountProvider: () =>
+          settingsStore.settings.debugLogRetainedLines,
+    );
     final transferHistoryRepository = TransferHistoryRepository(
       database: database,
     );
@@ -259,6 +265,34 @@ class DiscoveryCompositionFactory {
                 ownerIp: ownerIp,
                 cacheId: cacheId,
               ),
+      applyRemoteShareAccessSnapshot:
+          ({
+            required String ownerIp,
+            required String ownerName,
+            required String ownerMacAddress,
+            required List<SharedCatalogEntryItem> entries,
+          }) async {
+            await remoteShareBrowser.applyAccessSnapshot(
+              ownerIp: ownerIp,
+              ownerDisplayName: ownerName,
+              ownerMacAddress: ownerMacAddress,
+              entries: entries,
+            );
+            final appliedOptions = remoteShareBrowser
+                .currentBrowseProjection
+                .options
+                .where((option) => option.ownerIp == ownerIp)
+                .toList(growable: false);
+            return RemoteShareAccessProjectionLoadResult(
+              ownerIp: ownerIp,
+              cacheCount: appliedOptions.length,
+              fileCount: appliedOptions.fold<int>(
+                0,
+                (sum, option) => sum + option.entry.files.length,
+              ),
+            );
+          },
+      sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
     );
     controller = DiscoveryController(
       deviceRegistry: deviceRegistry,
