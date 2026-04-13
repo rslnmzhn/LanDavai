@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
+import 'package:landa/features/transfer/domain/transfer_request.dart';
 
 void main() {
   group('FileTransferService', () {
@@ -157,6 +158,106 @@ void main() {
             (path) => path.startsWith(destinationDirectory.path),
           ),
           isTrue,
+        );
+      },
+    );
+
+    test(
+      'whole-share sendFiles continues through later batches and emits batch progress diagnostics',
+      () async {
+        const totalFileCount = 6;
+        final sourceFiles = <File>[];
+        final manifestItems = <TransferFileManifestItem>[];
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(
+              rootDirectory.path,
+              'source',
+              'batch_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+          sourceFiles.add(file);
+          manifestItems.add(
+            TransferFileManifestItem(
+              fileName: 'Workspace/batch_$index/file_$index.txt',
+              sizeBytes: await file.length(),
+              sha256: '',
+            ),
+          );
+        }
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-batched-whole-share',
+          expectedItems: manifestItems,
+          destinationDirectory: destinationDirectory,
+        );
+        final diagnostics = <String>[];
+
+        await service.sendFiles(
+          host: InternetAddress.loopbackIPv4.address,
+          port: receiveSession.port,
+          requestId: 'request-batched-whole-share',
+          files: List<TransferSourceFile>.generate(
+            2,
+            (index) => TransferSourceFile(
+              sourcePath: sourceFiles[index].path,
+              fileName: manifestItems[index].fileName,
+              sizeBytes: manifestItems[index].sizeBytes,
+              sha256: '',
+            ),
+            growable: false,
+          ),
+          manifestItems: manifestItems,
+          resolveBatch: (startIndex) async {
+            final endIndex = startIndex + 2 > totalFileCount
+                ? totalFileCount
+                : startIndex + 2;
+            return TransferSourceBatch(
+              batchNumber: (startIndex ~/ 2) + 1,
+              startIndex: startIndex,
+              files: List<TransferSourceFile>.generate(endIndex - startIndex, (
+                offset,
+              ) {
+                final index = startIndex + offset;
+                return TransferSourceFile(
+                  sourcePath: sourceFiles[index].path,
+                  fileName: manifestItems[index].fileName,
+                  sizeBytes: manifestItems[index].sizeBytes,
+                  sha256: '',
+                );
+              }, growable: false),
+            );
+          },
+          onDiagnosticEvent:
+              ({
+                required String stage,
+                Map<String, Object?> details = const <String, Object?>{},
+                Object? error,
+                StackTrace? stackTrace,
+              }) {
+                diagnostics.add(
+                  '$stage:${details['batchNumber'] ?? ''}:${details['cumulativeSentFileCount'] ?? ''}',
+                );
+              },
+        );
+        final result = await receiveSession.result;
+
+        expect(result.success, isTrue);
+        expect(result.receivedItems, hasLength(totalFileCount));
+        expect(result.savedPaths, hasLength(totalFileCount));
+        expect(
+          diagnostics,
+          containsAll(<String>[
+            'sender_whole_share_batch_sent:1:2',
+            'sender_whole_share_batch_sent:2:4',
+            'sender_whole_share_batch_sent:3:6',
+          ]),
         );
       },
     );

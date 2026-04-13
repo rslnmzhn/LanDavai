@@ -550,8 +550,8 @@ void main() {
           requestId: 'direct-whole-share-no-hash-barrier',
           approved: true,
         );
-        for (var index = 0; index < 20; index += 1) {
-          if (fileTransferService.sendFilesCalls > 0) {
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -646,8 +646,8 @@ void main() {
           requestId: 'direct-whole-share-cached-hash-reuse',
           approved: true,
         );
-        for (var index = 0; index < 20; index += 1) {
-          if (fileTransferService.sendFilesCalls > 0) {
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -730,8 +730,8 @@ void main() {
           requestId: 'direct-whole-share-first-batch',
           approved: true,
         );
-        for (var index = 0; index < 20; index += 1) {
-          if (fileTransferService.sendFilesCalls > 0) {
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -744,6 +744,102 @@ void main() {
         );
         expect(fileTransferService.lastFiles.length, 256);
         expect(fileTransferService.lastFiles.length, lessThan(totalFileCount));
+      },
+    );
+
+    test(
+      'sender whole-share direct-start continues through later batches without duplicate or dropped files',
+      () async {
+        const totalFileCount = 600;
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_continuation',
+          ),
+        );
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-batch-continuation',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-batch-continuation',
+          approved: true,
+        );
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.sawResolveBatch, isTrue);
+        expect(fileTransferService.batchResolutionError, isNull);
+        expect(
+          fileTransferService.lastManifestItems,
+          hasLength(totalFileCount),
+        );
+        expect(fileTransferService.lastFiles, hasLength(256));
+        expect(fileTransferService.resolvedBatches, hasLength(2));
+        expect(fileTransferService.resolvedBatches[0].batchNumber, 2);
+        expect(fileTransferService.resolvedBatches[0].startIndex, 256);
+        expect(fileTransferService.resolvedBatches[0].files, hasLength(256));
+        expect(fileTransferService.resolvedBatches[1].batchNumber, 3);
+        expect(fileTransferService.resolvedBatches[1].startIndex, 512);
+        expect(fileTransferService.resolvedBatches[1].files, hasLength(88));
+        expect(
+          fileTransferService.allResolvedFileNames,
+          hasLength(totalFileCount),
+        );
+        expect(
+          fileTransferService.allResolvedFileNames.toSet(),
+          hasLength(totalFileCount),
+        );
       },
     );
 
@@ -821,7 +917,7 @@ void main() {
           final logFile = await diagnosticStore.resolveLogFile();
           logContents = logFile == null ? '' : await logFile.readAsString();
           if (logContents.contains(
-            '"stage":"sender_whole_share_direct_send_connect_attempt_start"',
+            '"stage":"sender_whole_share_session_complete"',
           )) {
             break;
           }
@@ -853,6 +949,10 @@ void main() {
         );
         expect(
           logContents,
+          contains('"stage":"sender_whole_share_batch_prepare_complete"'),
+        );
+        expect(
+          logContents,
           contains('"stage":"sender_whole_share_hash_stage_deferred"'),
         );
         expect(
@@ -865,6 +965,15 @@ void main() {
         );
         expect(logContents, contains('"stage":"sender_ready_to_connect_sent"'));
         expect(logContents, contains('"preparedFirstBatchCount":2'));
+        expect(logContents, contains('"batchNumber":1'));
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_batch_sent"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_session_complete"'),
+        );
         expect(
           logContents,
           contains(
@@ -3733,6 +3842,10 @@ class CapturingSendFileTransferService extends FileTransferService {
   List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
   List<TransferFileManifestItem> lastManifestItems =
       const <TransferFileManifestItem>[];
+  List<TransferSourceBatch> resolvedBatches = const <TransferSourceBatch>[];
+  List<String> allResolvedFileNames = const <String>[];
+  bool sawResolveBatch = false;
+  Object? batchResolutionError;
 
   @override
   Future<void> sendFiles({
@@ -3741,12 +3854,14 @@ class CapturingSendFileTransferService extends FileTransferService {
     required String requestId,
     required List<TransferSourceFile> files,
     List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
     Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     sendFilesCalls += 1;
+    sawResolveBatch = resolveBatch != null;
     lastFiles = List<TransferSourceFile>.from(files);
     lastManifestItems = List<TransferFileManifestItem>.from(
       manifestItems ??
@@ -3760,6 +3875,47 @@ class CapturingSendFileTransferService extends FileTransferService {
               )
               .toList(growable: false),
     );
+    final continuationBatches = <TransferSourceBatch>[];
+    final resolvedNames = <String>[...lastFiles.map((file) => file.fileName)];
+    if (lastFiles.isNotEmpty) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': 1,
+          'batchFileCount': lastFiles.length,
+          'batchStartIndex': 0,
+          'cumulativeSentFileCount': lastFiles.length,
+          'totalManifestFileCount': lastManifestItems.length,
+        },
+      );
+    }
+    if (resolveBatch != null) {
+      var startIndex = lastFiles.length;
+      try {
+        while (startIndex < lastManifestItems.length) {
+          final batch = await resolveBatch(startIndex);
+          continuationBatches.add(batch);
+          resolvedNames.addAll(batch.files.map((file) => file.fileName));
+          onDiagnosticEvent?.call(
+            stage: 'sender_whole_share_batch_sent',
+            details: <String, Object?>{
+              'batchNumber': batch.batchNumber,
+              'batchFileCount': batch.files.length,
+              'batchStartIndex': batch.startIndex,
+              'cumulativeSentFileCount': startIndex + batch.files.length,
+              'totalManifestFileCount': lastManifestItems.length,
+            },
+          );
+          startIndex += batch.files.length;
+        }
+      } catch (error) {
+        batchResolutionError = error;
+      }
+    }
+    resolvedBatches = List<TransferSourceBatch>.unmodifiable(
+      continuationBatches,
+    );
+    allResolvedFileNames = List<String>.unmodifiable(resolvedNames);
   }
 }
 
@@ -3780,6 +3936,7 @@ class InspectingSendFileTransferService extends FileTransferService {
     required String requestId,
     required List<TransferSourceFile> files,
     List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
     Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,

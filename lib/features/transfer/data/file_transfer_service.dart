@@ -24,6 +24,18 @@ typedef TransferStreamedFileHashCallback =
       required String computedSha256,
     });
 
+class TransferSourceBatch {
+  const TransferSourceBatch({
+    required this.batchNumber,
+    required this.startIndex,
+    required this.files,
+  });
+
+  final int batchNumber;
+  final int startIndex;
+  final List<TransferSourceFile> files;
+}
+
 class TransferSourceFile {
   TransferSourceFile({
     required this.sourcePath,
@@ -265,6 +277,7 @@ class FileTransferService {
     required String requestId,
     required List<TransferSourceFile> files,
     List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
     Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
@@ -353,17 +366,48 @@ class FileTransferService {
         0,
         (sum, file) => sum + file.sizeBytes,
       );
+      var activeBatchNumber = files.isNotEmpty ? 1 : 0;
+      var activeBatchStartIndex = 0;
+      var activeBatchFileCount = files.length;
+      var activeBatchEndIndex = files.length;
+      TransferSourceBatch? activeResolvedBatch;
       var sentBytes = 0;
       onProgress?.call(0, totalBytes);
       for (var index = 0; index < effectiveManifestItems.length; index += 1) {
         final file = index < files.length
             ? files[index]
-            : await (resolveFileAt?.call(index) ??
-                  Future<TransferSourceFile>.error(
-                    StateError(
-                      'Transfer source resolver missing for file index $index.',
-                    ),
-                  ));
+            : await (() async {
+                if (resolveBatch != null) {
+                  if (activeResolvedBatch == null ||
+                      index < activeBatchStartIndex ||
+                      index >= activeBatchEndIndex) {
+                    activeResolvedBatch = await resolveBatch(index);
+                    if (activeResolvedBatch!.startIndex != index) {
+                      throw StateError(
+                        'Transfer batch start mismatch for index $index.',
+                      );
+                    }
+                    if (activeResolvedBatch!.files.isEmpty) {
+                      throw StateError(
+                        'Transfer batch resolver returned an empty batch.',
+                      );
+                    }
+                    activeBatchNumber = activeResolvedBatch!.batchNumber;
+                    activeBatchStartIndex = activeResolvedBatch!.startIndex;
+                    activeBatchFileCount = activeResolvedBatch!.files.length;
+                    activeBatchEndIndex =
+                        activeBatchStartIndex + activeBatchFileCount;
+                  }
+                  return activeResolvedBatch!.files[index -
+                      activeBatchStartIndex];
+                }
+                return resolveFileAt?.call(index) ??
+                    Future<TransferSourceFile>.error(
+                      StateError(
+                        'Transfer source resolver missing for file index $index.',
+                      ),
+                    );
+              })();
         currentFile = file;
         final source = File(file.sourcePath);
         if (!await source.exists()) {
@@ -397,6 +441,20 @@ class FileTransferService {
           );
         }
         onFileHashed?.call(file: file, computedSha256: actualSha);
+        final completedBatch =
+            activeBatchFileCount > 0 && index + 1 == activeBatchEndIndex;
+        if (completedBatch && resolveBatch != null) {
+          onDiagnosticEvent?.call(
+            stage: 'sender_whole_share_batch_sent',
+            details: <String, Object?>{
+              'batchNumber': activeBatchNumber,
+              'batchFileCount': activeBatchFileCount,
+              'batchStartIndex': activeBatchStartIndex,
+              'cumulativeSentFileCount': index + 1,
+              'totalManifestFileCount': effectiveManifestItems.length,
+            },
+          );
+        }
       }
       await socket.flush();
       onDiagnosticEvent?.call(

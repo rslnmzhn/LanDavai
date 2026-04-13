@@ -2034,6 +2034,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required int transferPort,
     required List<TransferSourceFile> files,
     List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
     Future<TransferSourceFile> Function(int index)? resolveFileAt,
     Map<String, Object?> diagnosticDetails = const <String, Object?>{},
     bool logWholeShareConnectAttempt = false,
@@ -2073,6 +2074,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         requestId: requestId,
         files: files,
         manifestItems: manifestItems,
+        resolveBatch: resolveBatch,
         resolveFileAt: resolveFileAt,
         onDiagnosticEvent: _fileTransferDiagnosticLogger(
           requestId: requestId,
@@ -2093,9 +2095,22 @@ class TransferSessionCoordinator extends ChangeNotifier {
       );
       _uploadSentBytes = _uploadTotalBytes;
       _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
+      if (logWholeShareConnectAttempt) {
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_whole_share_session_complete',
+          requestId: requestId,
+          details: <String, Object?>{
+            ...wholeShareConnectAttemptDetails,
+            'manifestFileCount': manifestItems?.length ?? files.length,
+            'preparedFirstBatchCount': files.length,
+            'sentTotalBytes': _uploadTotalBytes,
+          },
+        );
+      }
       _publishNotice(
         TransferSessionNotice(
-          infoMessage: 'Transferred ${files.length} file(s) to $receiverName.',
+          infoMessage:
+              'Transferred ${manifestItems?.length ?? files.length} file(s) to $receiverName.',
           clearError: true,
         ),
       );
@@ -3071,7 +3086,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             transferPort: directTransferPort,
             files: sendPlan.firstBatchFiles,
             manifestItems: sendPlan.manifestItems,
-            resolveFileAt: sendPlan.resolveFileAt,
+            resolveBatch: sendPlan.resolveBatch,
             diagnosticDetails: <String, Object?>{
               'cacheId': request.sharedCacheId,
               'sharedLabel': request.sharedLabel,
@@ -3581,6 +3596,17 @@ class TransferSessionCoordinator extends ChangeNotifier {
       },
     );
     onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_batch_prepare_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'batchNumber': 1,
+        'batchStartIndex': 0,
+        'batchFileCount': firstBatchTargetCount,
+        'cumulativePreparedFileCount': firstBatchTargetCount,
+        'totalManifestFileCount': manifestItems.length,
+      },
+    );
+    onDiagnosticEvent?.call(
       stage: 'sender_whole_share_live_filesystem_traversal_start',
       details: <String, Object?>{
         'cacheId': cache.cacheId,
@@ -3695,6 +3721,17 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'reusedCachedHashCount': reusedCachedHashCount,
       },
     );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_batch_prepare_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'batchNumber': 1,
+        'batchStartIndex': 0,
+        'batchFileCount': firstBatchFiles.length,
+        'cumulativePreparedFileCount': firstBatchFiles.length,
+        'totalManifestFileCount': manifestItems.length,
+      },
+    );
 
     if (refreshedManifestEntries.isNotEmpty) {
       await _sharedCacheIndexStore.persistCachedManifestEntries(
@@ -3706,11 +3743,68 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return _WholeShareDirectStartSendPlan(
       manifestItems: List<TransferFileManifestItem>.unmodifiable(manifestItems),
       firstBatchFiles: List<TransferSourceFile>.unmodifiable(firstBatchFiles),
-      resolveFileAt: (index) => _resolveWholeShareDirectStartSourceFile(
-        cache: cache,
-        entry: scopedSelection.entries[index],
-        manifestItem: manifestItems[index],
-      ),
+      resolveBatch: (startIndex) =>
+          _prepareWholeShareDirectStartContinuationBatch(
+            cache: cache,
+            entries: scopedSelection.entries,
+            manifestItems: manifestItems,
+            startIndex: startIndex,
+          ),
+    );
+  }
+
+  Future<TransferSourceBatch> _prepareWholeShareDirectStartContinuationBatch({
+    required SharedFolderCacheRecord cache,
+    required List<SharedFolderIndexEntry> entries,
+    required List<TransferFileManifestItem> manifestItems,
+    required int startIndex,
+  }) async {
+    if (startIndex < 0 || startIndex >= entries.length) {
+      throw RangeError.index(startIndex, entries, 'startIndex');
+    }
+    final batchNumber =
+        (startIndex ~/ _wholeShareDirectStartFirstBatchFileCount) + 1;
+    final endIndex = min(
+      startIndex + _wholeShareDirectStartFirstBatchFileCount,
+      entries.length,
+    );
+    final batchFileCount = endIndex - startIndex;
+    _writeSharedDownloadDiagnostic(
+      stage: 'sender_whole_share_batch_prepare_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'batchNumber': batchNumber,
+        'batchStartIndex': startIndex,
+        'batchFileCount': batchFileCount,
+        'cumulativePreparedFileCount': endIndex,
+        'totalManifestFileCount': manifestItems.length,
+      },
+    );
+    final batchFiles = <TransferSourceFile>[];
+    for (var index = startIndex; index < endIndex; index += 1) {
+      batchFiles.add(
+        await _resolveWholeShareDirectStartSourceFile(
+          cache: cache,
+          entry: entries[index],
+          manifestItem: manifestItems[index],
+        ),
+      );
+    }
+    _writeSharedDownloadDiagnostic(
+      stage: 'sender_whole_share_batch_prepare_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'batchNumber': batchNumber,
+        'batchStartIndex': startIndex,
+        'batchFileCount': batchFiles.length,
+        'cumulativePreparedFileCount': endIndex,
+        'totalManifestFileCount': manifestItems.length,
+      },
+    );
+    return TransferSourceBatch(
+      batchNumber: batchNumber,
+      startIndex: startIndex,
+      files: List<TransferSourceFile>.unmodifiable(batchFiles),
     );
   }
 
@@ -4367,12 +4461,12 @@ class _WholeShareDirectStartSendPlan {
   _WholeShareDirectStartSendPlan({
     required this.manifestItems,
     required this.firstBatchFiles,
-    required this.resolveFileAt,
+    required this.resolveBatch,
   });
 
   final List<TransferFileManifestItem> manifestItems;
   final List<TransferSourceFile> firstBatchFiles;
-  final Future<TransferSourceFile> Function(int index) resolveFileAt;
+  final Future<TransferSourceBatch> Function(int startIndex) resolveBatch;
 }
 
 class _PendingRemoteDownloadIntent {
