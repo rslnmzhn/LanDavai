@@ -2040,6 +2040,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     List<TransferFileManifestItem>? manifestItems,
     Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
     Future<TransferSourceFile> Function(int index)? resolveFileAt,
+    Future<void> Function(List<_StreamedTransferFileHash> hashes)?
+    onSuccessfulStreamedHashes,
     Map<String, Object?> diagnosticDetails = const <String, Object?>{},
     bool logWholeShareConnectAttempt = false,
     Map<String, Object?> wholeShareConnectAttemptDetails =
@@ -2056,6 +2058,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     try {
       final throttledWholeShareProgress =
           resolveBatch != null && manifestItems != null;
+      final streamedHashes = <_StreamedTransferFileHash>[];
       final progressEmitter = _buildUploadProgressEmitter(
         requestId: requestId,
         diagnosticDetails: diagnosticDetails,
@@ -2098,7 +2101,30 @@ class TransferSessionCoordinator extends ChangeNotifier {
           },
         ),
         onProgress: progressEmitter,
+        onFileHashed: ({required file, required computedSha256}) {
+          streamedHashes.add(
+            _StreamedTransferFileHash(
+              file: file,
+              computedSha256: computedSha256,
+            ),
+          );
+        },
       );
+      if (onSuccessfulStreamedHashes != null && streamedHashes.isNotEmpty) {
+        try {
+          await onSuccessfulStreamedHashes(
+            List<_StreamedTransferFileHash>.unmodifiable(streamedHashes),
+          );
+        } catch (error, stackTrace) {
+          _writeSharedDownloadDiagnostic(
+            stage: 'sender_whole_share_hash_backfill_failure',
+            requestId: requestId,
+            details: <String, Object?>{...diagnosticDetails},
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
       _uploadSentBytes = _uploadTotalBytes;
       _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
       _notify();
@@ -3150,6 +3176,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
             files: sendPlan.firstBatchFiles,
             manifestItems: sendPlan.manifestItems,
             resolveBatch: sendPlan.resolveBatch,
+            onSuccessfulStreamedHashes: (hashes) =>
+                _persistWholeShareTransferHashBackfill(
+                  requestId: request.requestId,
+                  cache: cache,
+                  streamedHashes: hashes,
+                ),
             diagnosticDetails: <String, Object?>{
               'cacheId': request.sharedCacheId,
               'sharedLabel': request.sharedLabel,
@@ -3748,6 +3780,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           fileName: entry.relativePath,
           sizeBytes: currentSizeBytes,
           sha256: effectiveSha256,
+          modifiedAtMs: currentModifiedAtMs,
         ),
       );
       firstBatchPreparedBytes += currentSizeBytes;
@@ -3905,6 +3938,54 @@ class TransferSessionCoordinator extends ChangeNotifier {
       fileName: manifestItem.fileName,
       sizeBytes: manifestItem.sizeBytes,
       sha256: manifestItem.sha256,
+      modifiedAtMs: stat.modified.millisecondsSinceEpoch,
+    );
+  }
+
+  Future<void> _persistWholeShareTransferHashBackfill({
+    required String requestId,
+    required SharedFolderCacheRecord cache,
+    required List<_StreamedTransferFileHash> streamedHashes,
+  }) async {
+    if (streamedHashes.isEmpty) {
+      return;
+    }
+    final updatesByRelativePath = <String, SharedFolderIndexEntry>{};
+    for (final streamedHash in streamedHashes) {
+      final file = streamedHash.file;
+      final modifiedAtMs =
+          file.modifiedAtMs ??
+          (await File(file.sourcePath).stat()).modified.millisecondsSinceEpoch;
+      updatesByRelativePath[file.fileName] = SharedFolderIndexEntry(
+        relativePath: file.fileName,
+        sizeBytes: file.sizeBytes,
+        modifiedAtMs: modifiedAtMs,
+        absolutePath: cache.rootPath.startsWith('selection://')
+            ? file.sourcePath
+            : null,
+        sha256: streamedHash.computedSha256,
+      );
+    }
+    _writeSharedDownloadDiagnostic(
+      stage: 'sender_whole_share_hash_backfill_start',
+      requestId: requestId,
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'backfillCandidateCount': updatesByRelativePath.length,
+      },
+    );
+    final changed = await _sharedCacheIndexStore.persistCachedManifestEntries(
+      record: cache,
+      entries: updatesByRelativePath.values.toList(growable: false),
+    );
+    _writeSharedDownloadDiagnostic(
+      stage: 'sender_whole_share_hash_backfill_complete',
+      requestId: requestId,
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'backfillCandidateCount': updatesByRelativePath.length,
+        'indexChanged': changed,
+      },
     );
   }
 
@@ -4518,6 +4599,16 @@ class _PreparedTransferFile {
   final TransferAnnouncementItem announcement;
   final bool deleteAfterTransfer;
   final Map<String, Object?> diagnosticDetails;
+}
+
+class _StreamedTransferFileHash {
+  const _StreamedTransferFileHash({
+    required this.file,
+    required this.computedSha256,
+  });
+
+  final TransferSourceFile file;
+  final String computedSha256;
 }
 
 class _WholeShareDirectStartSendPlan {

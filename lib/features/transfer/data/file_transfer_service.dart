@@ -42,6 +42,7 @@ class TransferSourceFile {
     required this.fileName,
     required this.sizeBytes,
     required this.sha256,
+    this.modifiedAtMs,
     this.deleteAfterTransfer = false,
   });
 
@@ -49,6 +50,7 @@ class TransferSourceFile {
   final String fileName;
   final int sizeBytes;
   final String sha256;
+  final int? modifiedAtMs;
   final bool deleteAfterTransfer;
 }
 

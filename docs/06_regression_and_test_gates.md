@@ -51,6 +51,10 @@ Purpose:
 - fingerprint-backed manifest/cache reuse
 - safe invalidation and rebuild when indexed state changes
 - folder-prefix download scaling
+- whole-share staged start without full pre-send prepared-set construction
+- whole-share batch continuation across batch 2+
+- whole-share sender progress hardening without UI-facing event flood
+- whole-share streamed hash backfill into `SharedCacheIndexStore`
 - large folder transfer continuity without reintroducing giant path expansion
 - receiver/preview continuity
 - remote-share projection integrity
@@ -61,6 +65,10 @@ Required proof points for the current shared-download baseline:
 - sender-side incoming shared download request is exposed before preparation starts
 - sender-side reject sends a real protocol response and prevents transfer start
 - sender-side approve enters real preparation state before sending/upload begins
+- whole-share direct-start still reaches first byte without full prepared-set materialization
+- whole-share direct-start continues across later batches without duplicate/drop regressions
+- whole-share sender progress remains bounded while batch/session visibility stays observable
+- repeat whole-share runs can reuse persisted streamed-hash knowledge through `SharedCacheIndexStore`
 - preview remains outside sender approval flow
 
 ## Nearby-transfer coverage

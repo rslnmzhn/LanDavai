@@ -21,21 +21,28 @@ Evidence:
 
 ## 2. Sender-side whole-share preparation bottleneck
 
-Status: confirmed by code, confirmed by successful sender log, inferred as the
-dominant timeout candidate
+Status: confirmed by code, confirmed by successful sender log, but narrowed
+from the original audit state
 
 What happens:
 
 - sender approval is explicit
-- after approval, sender performs whole-share preparation before connect
-- cold whole-share preparation can include full traversal plus full hash fill
+- after approval, sender still performs batch-1 whole-share preparation before connect
+- later batches now continue during the active send
+- full pre-send whole-share hash fill is no longer the active bottleneck
 
 Evidence:
 
-- code: `_approveIncomingSharedDownloadRequest(...)` awaits
-  `_buildTransferFilesForCache(...)` before `_sendDirectSharedDownload(...)`
+- code: `_approveIncomingSharedDownloadRequest(...)` now awaits
+  `_buildWholeShareDirectStartSendPlan(...)` before `_sendDirectSharedDownload(...)`
 - log: successful whole-share `requestId` `4a32a3ba...` shows sender-side
   scoped selection, traversal, hash stage, and only then connect/send
+
+Current interpretation:
+
+- the historical full pre-send hash barrier has been removed
+- the remaining cold-path bottleneck is batch-1 resolution/materialization plus
+  single-header manifest work
 
 Why it matters:
 
@@ -91,6 +98,6 @@ the same as the slow whole-share timeout case.
 
 ## Current ranked interpretation
 
-1. Sender pre-send whole-share preparation is the primary bottleneck candidate.
-2. Receiver lifetime starting too early amplifies that bottleneck into timeout.
+1. Remaining sender batch-1 pre-connect preparation is the primary bottleneck candidate.
+2. Receiver lifetime alignment has improved, but cold batch-1 cost can still dominate very large runs.
 3. Path or selector corruption is not currently supported by the code audit.

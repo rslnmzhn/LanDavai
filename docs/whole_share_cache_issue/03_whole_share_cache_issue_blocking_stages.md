@@ -9,9 +9,10 @@ requester receives the first TCP byte.
 | --- | --- | --- |
 | Requester receiver startup | Yes, but short | Code: `requestDownloadFromRemoteFiles(...)` starts the receiver before sending the UDP request |
 | Sender approval wait | Yes | Code: `_handleDownloadRequest(...)` creates `IncomingSharedDownloadRequest` and returns without preparing files until explicit approval |
-| Scoped selection resolution | Yes | Code: `_approveIncomingSharedDownloadRequest(...)` awaits `_buildTransferFilesForCache(...)`; log stage `sender_whole_share_scoped_selection_resolution_*` appears before connect |
-| Live filesystem traversal | Yes | Code: `_buildTransferFilesForCache(...)` stats and resolves each selected file before send |
-| Sender hash stage | Yes when hashes are missing or stale | Code: whole-share uses `includeHashes: true`; log stage `sender_whole_share_hash_stage_*` appears before connect |
+| Scoped selection resolution | Yes | Code: `_approveIncomingSharedDownloadRequest(...)` awaits `_buildWholeShareDirectStartSendPlan(...)`; scoped selection still resolves before batch 1 |
+| Live filesystem traversal for batch 1 | Yes | Code: batch 1 is still resolved to real files before connect |
+| Full whole-share materialization | No longer current behavior | Code: later files are resolved through `resolveBatch(...)` during the active send |
+| Full pre-send sender hash fill | No longer current behavior | Code: whole-share direct-start now uses cached-only pre-send hashes and backfills streamed hashes after success |
 | Transfer header build | Yes, but late and short | Code: `FileTransferService.sendFiles(...)`; log shows it happens only after sender prepare completes |
 | TCP connect attempt | Final blocking step | Code: `_sendDirectSharedDownload(...)` calls `sendFiles(...)` only after sender preparation |
 
@@ -34,34 +35,33 @@ That means the current audit can prove the requester-side waiting window and the
 sender-side pre-connect preparation window, but it cannot yet prove a single
 same-request end-to-end paired chronology from one local log alone.
 
-## Cold whole-share direct-start is effectively prepare-then-connect
+## Current blocking shape
 
-The current whole-share direct-start path is cold-path blocking when the
-prepared-scope cache is absent.
+The old cold-path bottleneck has been narrowed.
 
-Code evidence:
+Current code evidence:
 
-- `_approveIncomingSharedDownloadRequest(...)` awaits
-  `_buildTransferFilesForCache(...)` before `_sendDirectSharedDownload(...)`
-- `_buildTransferFilesForCache(...)` does:
+- `_approveIncomingSharedDownloadRequest(...)` now awaits
+  `_buildWholeShareDirectStartSendPlan(...)` before `_sendDirectSharedDownload(...)`
+- `_buildWholeShareDirectStartSendPlan(...)` does:
   - scoped selection resolution
-  - live filesystem traversal
-  - optional hash reuse or full recomputation
-  - optional manifest persistence back into the index
+  - full lightweight manifest construction
+  - batch-1-only live filesystem traversal
+  - cached-hash reuse only, with missing hashes deferred
+- later files are resolved in `_prepareWholeShareDirectStartContinuationBatch(...)`
+  while the transfer is already active
 
-Log evidence from a successful whole-share request (`requestId`
-`4a32a3ba...`):
+That means current first-byte blocking is now:
 
-- `15:33:21.376Z` `sender_whole_share_prepare_start`
-- `15:33:21.393Z` `sender_whole_share_live_filesystem_traversal_start`
-- `15:33:21.393Z` `sender_whole_share_hash_stage_start`
-- `15:33:25.321Z` `sender_whole_share_hash_stage_complete`
-- `15:33:25.413Z` `sender_whole_share_prepare_complete`
-- `15:33:25.413Z` `sender_whole_share_direct_send_connect_attempt_start`
-- `15:33:25.472Z` `transfer_header_built`
-- `15:33:25.472Z` `send_start`
+- explicit sender approval
+- scoped selection resolution
+- batch 1 traversal/materialization
+- one manifest header build
 
-That sequence shows a fully blocking sender preparation window before connect.
+not:
+
+- full whole-share hash fill
+- full whole-share prepared-set construction
 
 ## Timeout interaction
 
@@ -106,6 +106,7 @@ Current timeout sender-side chronology:
 
 ## Practical conclusion
 
-The current large whole-share problem is not just "receiver timed out". The
-architecture currently makes the receiver wait through all sender pre-send work,
-and that sender work can remain cold and expensive.
+The remaining whole-share problem is no longer the original full pre-send
+barrier. The current architecture still has a real batch-1 pre-connect window,
+but the historical full-set materialization and full-folder hash-fill bottleneck
+is no longer the active baseline.

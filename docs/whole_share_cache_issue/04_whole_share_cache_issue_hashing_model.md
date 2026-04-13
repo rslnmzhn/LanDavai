@@ -30,27 +30,20 @@ This means the index may contain:
 Those fingerprints are reuse gates only. They are not per-file transport
 integrity truth.
 
-## Sender pre-send hash stage
+## Whole-share pre-send hashing now
 
-For whole-share direct-start, `_approveIncomingSharedDownloadRequest(...)`
-calls `_buildTransferFilesForCache(... includeHashes: true)`.
+Whole-share direct-start no longer requires full pre-send hash fill.
 
-That makes sender pre-send hashing mandatory today unless the persisted index
-already contains reusable hashes for the scoped selection.
-
-Current behavior inside `_buildTransferFilesForCache(...)`:
+Current behavior inside `_buildWholeShareDirectStartSendPlan(...)`:
 
 - if cached `sha256` is present and size/mtime match, reuse it
-- otherwise compute `sha256` before send
-- persist refreshed manifest entries back into the index
+- otherwise leave the pre-send hash empty for that file
+- send starts with batch 1 even when later files still have no persisted hash
 
-Successful log evidence (`requestId` `4a32a3ba...`):
+This means the current pre-send role of hashes is:
 
-- `reusedCachedHashCount = 0`
-- `recomputedHashCount = 1005`
-
-That request reached the send path only after all `1005` file hashes had been
-computed.
+- reuse known valid hashes when cheap
+- do not block connect/send on missing hashes
 
 ## Sender stream-time hash verification
 
@@ -64,8 +57,12 @@ Current rule:
 - if the expected hash is empty, the sender does not fail on sender-side hash
   mismatch for that file
 
-Whole-share direct-start currently does not use the empty-hash fast path. That
-fast path only exists for narrow single-file cases.
+Whole-share direct-start now also uses optional pre-send hashes:
+
+- known hashes remain explicit and are verified during send
+- unknown hashes are still streamed and hashed during send
+- sender-side streamed hashes are then backfilled into the shared-cache index
+  after a successful send
 
 ## Receiver-side verification
 
@@ -84,8 +81,8 @@ contains a non-empty expected hash.
 For whole-share direct-start:
 
 - scoped selection resolution is mandatory
-- live source-file resolution and stat are mandatory
-- filling missing or stale sender-side hashes is mandatory today
+- batch-1 live source-file resolution and stat are mandatory
+- filling missing or stale sender-side hashes is not mandatory anymore
 - transfer header construction is mandatory
 
 What is not mandatory before first byte:
@@ -99,8 +96,10 @@ What is not mandatory before first byte:
 The current whole-share path uses hashes in three distinct roles:
 
 - persisted optional cache/index metadata
-- sender pre-send manifest fill
+- lightweight pre-send manifest fill from indexed truth
 - stream-time verification during transfer
+- post-transfer streamed-hash backfill into `SharedCacheIndexStore`
 
-The pre-send hash stage is the part currently sitting on the critical path to
-the first byte.
+The old full pre-send hash stage is now historical. Current whole-share
+critical-path cost sits in selection resolution, batch-1 traversal, and header
+construction.

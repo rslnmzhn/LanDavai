@@ -1076,10 +1076,14 @@ void main() {
         var entries = const <Map<String, Object?>>[];
         for (var index = 0; index < 50; index += 1) {
           entries = await _readDiagnosticEntries(diagnosticStore);
-          if (entries.any(
+          final hasProgressCheckpoint = entries.any(
             (entry) =>
                 entry['stage'] == 'sender_whole_share_progress_checkpoint',
-          )) {
+          );
+          final hasSessionComplete = entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_session_complete',
+          );
+          if (hasProgressCheckpoint && hasSessionComplete) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -1104,6 +1108,148 @@ void main() {
           ),
           isTrue,
         );
+      },
+    );
+
+    test(
+      'whole-share direct-start backfills streamed hashes into index and reuses them on repeat run',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_backfill',
+          ),
+        );
+        final paths = <String>[];
+        for (var index = 0; index < 3; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+          paths.add('dir_$index/file_$index.txt');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => Directory(
+            p.join(harness.rootDirectory.path, 'whole_share_backfill_logs'),
+          ),
+        );
+        final sendService = BackfillingSendFileTransferService(
+          fileHashService: FileHashService(),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: sendService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-backfill-run-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-backfill-run-1',
+          approved: true,
+        );
+
+        for (var index = 0; index < 100; index += 1) {
+          final entries = await sharedCacheIndexStore.readIndexEntries(cache);
+          if (entries.every(
+            (entry) => (entry.sha256?.trim().isNotEmpty ?? false),
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        final afterFirstRun = await sharedCacheIndexStore.readIndexEntries(
+          cache,
+        );
+        expect(afterFirstRun, hasLength(3));
+        expect(
+          afterFirstRun.every(
+            (entry) => entry.sha256 != null && entry.sha256!.isNotEmpty,
+          ),
+          isTrue,
+        );
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-backfill-run-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-backfill-run-2',
+          approved: true,
+        );
+
+        var entries = const <Map<String, Object?>>[];
+        for (var index = 0; index < 100; index += 1) {
+          entries = await _readDiagnosticEntries(diagnosticStore);
+          if (entries.any(
+            (entry) =>
+                entry['requestId'] == 'direct-whole-share-backfill-run-2' &&
+                entry['stage'] == 'sender_whole_share_hash_stage_deferred',
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        final secondRunDeferred = entries.firstWhere(
+          (entry) =>
+              entry['requestId'] == 'direct-whole-share-backfill-run-2' &&
+              entry['stage'] == 'sender_whole_share_hash_stage_deferred',
+        );
+        expect(secondRunDeferred['reusedCachedHashCount'], 3);
+        expect(secondRunDeferred['deferredHashCount'], 0);
+
+        final backfillComplete = entries.firstWhere(
+          (entry) =>
+              entry['requestId'] == 'direct-whole-share-backfill-run-1' &&
+              entry['stage'] == 'sender_whole_share_hash_backfill_complete',
+        );
+        expect(backfillComplete['backfillCandidateCount'], 3);
       },
     );
 
@@ -4137,6 +4283,79 @@ class FloodingProgressSendFileTransferService extends FileTransferService {
       onProgress?.call(sent, total);
     }
     completed = true;
+  }
+}
+
+class BackfillingSendFileTransferService extends FileTransferService {
+  BackfillingSendFileTransferService({required this.fileHashService});
+
+  final FileHashService fileHashService;
+  int sendFilesCalls = 0;
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
+  }) async {
+    sendFilesCalls += 1;
+    final totalBytes = (manifestItems ?? const <TransferFileManifestItem>[])
+        .fold<int>(0, (sum, item) => sum + item.sizeBytes);
+    var sentBytes = 0;
+
+    Future<void> emitForFiles(
+      List<TransferSourceFile> sourceFiles, {
+      required int batchNumber,
+      required int batchStartIndex,
+      required int totalManifestFileCount,
+    }) async {
+      for (final file in sourceFiles) {
+        final computedSha256 = await fileHashService.computeSha256ForPath(
+          file.sourcePath,
+        );
+        onFileHashed?.call(file: file, computedSha256: computedSha256);
+        sentBytes += file.sizeBytes;
+        onProgress?.call(sentBytes, totalBytes);
+      }
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': batchNumber,
+          'batchFileCount': sourceFiles.length,
+          'batchStartIndex': batchStartIndex,
+          'cumulativeSentFileCount': batchStartIndex + sourceFiles.length,
+          'totalManifestFileCount': totalManifestFileCount,
+        },
+      );
+    }
+
+    final totalManifestFileCount = manifestItems?.length ?? files.length;
+    await emitForFiles(
+      files,
+      batchNumber: 1,
+      batchStartIndex: 0,
+      totalManifestFileCount: totalManifestFileCount,
+    );
+    if (resolveBatch != null && manifestItems != null) {
+      var nextIndex = files.length;
+      while (nextIndex < manifestItems.length) {
+        final batch = await resolveBatch(nextIndex);
+        await emitForFiles(
+          batch.files,
+          batchNumber: batch.batchNumber,
+          batchStartIndex: batch.startIndex,
+          totalManifestFileCount: manifestItems.length,
+        );
+        nextIndex += batch.files.length;
+      }
+    }
   }
 }
 
