@@ -92,6 +92,7 @@ class LanShareProtocolHandler {
       responderIp: senderIp,
       responderName: packet.responderName,
       approved: packet.approved,
+      phase: packet.phase,
       message: packet.message,
       observedAt: observedAt,
     );

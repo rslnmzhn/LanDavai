@@ -746,6 +746,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           },
         );
         if (canUseDirectStart) {
+          final deferReceiverTimeoutUntilSenderReady = requestsWholeShare;
           _setSharedDownloadPreparation(
             requestId: requestId,
             ownerName: ownerName,
@@ -759,6 +760,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             requestId: requestId,
             expectedItems: null,
             destinationDirectory: destinationDirectory,
+            armTimeoutImmediately: !deferReceiverTimeoutUntilSenderReady,
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             onProgress: (received, total) {
               if (received > 0) {
@@ -789,6 +791,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
           );
           _activeReceiveSessions[requestId] = receiveSession;
+          _writeSharedDownloadDiagnostic(
+            stage: deferReceiverTimeoutUntilSenderReady
+                ? 'requester_receiver_wait_deferred_until_sender_ready'
+                : 'requester_receiver_wait_started_immediately',
+            requestId: requestId,
+            details: <String, Object?>{
+              'pathKind': 'direct_start',
+              'ownerIp': ownerIp,
+              'cacheId': cacheId,
+              'requestsWholeShare': requestsWholeShare,
+              'transferPort': receiveSession.port,
+            },
+          );
           unawaited(
             _waitForIncomingTransferResult(
               request: IncomingTransferRequest(
@@ -1704,9 +1719,22 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'responderIp': event.responderIp,
         'responderName': event.responderName,
         'approved': event.approved,
+        'phase': event.phase,
         'message': event.message,
       },
     );
+    if (event.approved && event.phase == 'ready_to_connect') {
+      final activeReceiveSession = _activeReceiveSessions[event.requestId];
+      activeReceiveSession?.armTimeout();
+      _writeSharedDownloadDiagnostic(
+        stage: 'requester_receiver_timeout_armed_from_sender_ready',
+        requestId: event.requestId,
+        details: <String, Object?>{
+          'responderIp': event.responderIp,
+          'responderName': event.responderName,
+        },
+      );
+    }
   }
 
   Future<void> respondToIncomingRemoteShareAccessRequest({
@@ -2666,6 +2694,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
         !isPreviewRequest &&
         folderPrefixFilter == null &&
         event.selectedRelativePaths.length == 1;
+    final hashPreparationMode = deferHashesUntilAccept
+        ? _TransferHashPreparationMode.none
+        : _TransferHashPreparationMode.full;
     final preparedFiles = isPreviewRequest
         ? await _buildCompressedPreviewFilesForCache(
             cache,
@@ -2675,7 +2706,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             cache,
             relativePathFilter: relativePathFilter,
             folderPrefixFilter: folderPrefixFilter,
-            includeHashes: !deferHashesUntilAccept,
+            hashPreparationMode: hashPreparationMode,
           );
 
     if (preparedFiles.isEmpty) {
@@ -2891,6 +2922,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
         : request.selectedFolderPrefixes.toSet();
     final deferHashesUntilAccept =
         folderPrefixFilter == null && request.selectedRelativePaths.length == 1;
+    final hashPreparationMode = emitWholeShareDirectStartDiagnostics
+        ? _TransferHashPreparationMode.cachedOnly
+        : deferHashesUntilAccept
+        ? _TransferHashPreparationMode.none
+        : _TransferHashPreparationMode.full;
 
     _setSharedUploadPreparation(
       requestId: request.requestId,
@@ -2903,7 +2939,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         cache,
         relativePathFilter: relativePathFilter,
         folderPrefixFilter: folderPrefixFilter,
-        includeHashes: !deferHashesUntilAccept,
+        hashPreparationMode: hashPreparationMode,
         onDiagnosticEvent: wholeShareDiagnosticLogger,
       );
       if (preparedFiles.isEmpty) {
@@ -2961,6 +2997,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
             0,
             (sum, file) => sum + file.sizeBytes,
           ),
+          'preparedKnownHashCount': transferFiles
+              .where((file) => file.sha256.trim().isNotEmpty)
+              .length,
+          'preparedMissingHashCount': transferFiles
+              .where((file) => file.sha256.trim().isEmpty)
+              .length,
+          'hashPreparationMode': hashPreparationMode.name,
         },
       );
       wholeShareDiagnosticLogger?.call(
@@ -2971,6 +3014,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
             0,
             (sum, file) => sum + file.sizeBytes,
           ),
+          'preparedKnownHashCount': transferFiles
+              .where((file) => file.sha256.trim().isNotEmpty)
+              .length,
+          'preparedMissingHashCount': transferFiles
+              .where((file) => file.sha256.trim().isEmpty)
+              .length,
+          'hashPreparationMode': hashPreparationMode.name,
         },
       );
 
@@ -2978,6 +3028,25 @@ class TransferSessionCoordinator extends ChangeNotifier {
       final canUseDirectStart = directTransferPort != null;
       if (canUseDirectStart) {
         _clearSharedUploadPreparation(requestId: request.requestId);
+        if (request.requestsWholeShare) {
+          await _lanDiscoveryService.sendDownloadResponse(
+            targetIp: request.requesterIp,
+            requestId: request.requestId,
+            responderName: _localName,
+            approved: true,
+            phase: 'ready_to_connect',
+            message: 'Отправитель подготовил отправку. Начинаем соединение.',
+          );
+          _writeSharedDownloadDiagnostic(
+            stage: 'sender_ready_to_connect_sent',
+            requestId: request.requestId,
+            details: <String, Object?>{
+              'sharedCacheId': request.sharedCacheId,
+              'transferPort': directTransferPort,
+              'preparedFileCount': transferFiles.length,
+            },
+          );
+        }
         _writeSharedDownloadDiagnostic(
           stage: 'sender_direct_start_selected',
           requestId: request.requestId,
@@ -2989,6 +3058,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
               0,
               (sum, file) => sum + file.sizeBytes,
             ),
+            'preparedKnownHashCount': transferFiles
+                .where((file) => file.sha256.trim().isNotEmpty)
+                .length,
+            'preparedMissingHashCount': transferFiles
+                .where((file) => file.sha256.trim().isEmpty)
+                .length,
+            'hashPreparationMode': hashPreparationMode.name,
           },
         );
         unawaited(
@@ -3113,7 +3189,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
     Set<String>? folderPrefixFilter,
-    bool includeHashes = true,
+    _TransferHashPreparationMode hashPreparationMode =
+        _TransferHashPreparationMode.full,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     onDiagnosticEvent?.call(
@@ -3122,7 +3199,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'cacheId': cache.cacheId,
         'relativePathFilterCount': relativePathFilter?.length ?? 0,
         'folderPrefixFilterCount': folderPrefixFilter?.length ?? 0,
-        'includeHashes': includeHashes,
+        'hashPreparationMode': hashPreparationMode.name,
       },
     );
     var scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
@@ -3133,7 +3210,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final initialScopeCacheKey = _preparedTransferScopeCacheKey(
       cacheId: cache.cacheId,
       selectionFingerprint: scopedSelection.fingerprint,
-      includeHashes: includeHashes,
+      hashPreparationMode: hashPreparationMode,
     );
     onDiagnosticEvent?.call(
       stage: 'sender_whole_share_scoped_selection_resolution_complete',
@@ -3169,6 +3246,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     var preparedTotalBytes = 0;
     var reusedCachedHashCount = 0;
     var recomputedHashCount = 0;
+    var deferredHashCount = 0;
     onDiagnosticEvent?.call(
       stage: 'sender_whole_share_live_filesystem_traversal_start',
       details: <String, Object?>{
@@ -3176,7 +3254,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'indexedEntryCount': scopedSelection.entries.length,
       },
     );
-    if (includeHashes) {
+    if (hashPreparationMode == _TransferHashPreparationMode.full) {
       onDiagnosticEvent?.call(
         stage: 'sender_whole_share_hash_stage_start',
         details: <String, Object?>{
@@ -3205,12 +3283,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
       final currentSizeBytes = stat.size;
       final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
       String sha256Hash = '';
-      if (includeHashes) {
-        final cachedSha256 = entry.sha256?.trim() ?? '';
-        final canReuseCachedManifest =
-            cachedSha256.isNotEmpty &&
-            entry.sizeBytes == currentSizeBytes &&
-            entry.modifiedAtMs == currentModifiedAtMs;
+      final cachedSha256 = entry.sha256?.trim() ?? '';
+      final canReuseCachedManifest =
+          cachedSha256.isNotEmpty &&
+          entry.sizeBytes == currentSizeBytes &&
+          entry.modifiedAtMs == currentModifiedAtMs;
+      if (hashPreparationMode == _TransferHashPreparationMode.full) {
         if (canReuseCachedManifest) {
           sha256Hash = cachedSha256;
           reusedCachedHashCount += 1;
@@ -3229,6 +3307,14 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
           );
         }
+      } else if (hashPreparationMode ==
+          _TransferHashPreparationMode.cachedOnly) {
+        if (canReuseCachedManifest) {
+          sha256Hash = cachedSha256;
+          reusedCachedHashCount += 1;
+        } else {
+          deferredHashCount += 1;
+        }
       }
 
       items.add(
@@ -3243,7 +3329,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       );
       preparedTotalBytes += currentSizeBytes;
     }
-    if (includeHashes) {
+    if (hashPreparationMode == _TransferHashPreparationMode.full) {
       onDiagnosticEvent?.call(
         stage: 'sender_whole_share_hash_stage_complete',
         details: <String, Object?>{
@@ -3251,6 +3337,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
           'reusedCachedHashCount': reusedCachedHashCount,
           'recomputedHashCount': recomputedHashCount,
           'refreshedManifestEntryCount': refreshedManifestEntries.length,
+        },
+      );
+    } else if (hashPreparationMode == _TransferHashPreparationMode.cachedOnly) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_hash_stage_deferred',
+        details: <String, Object?>{
+          'cacheId': cache.cacheId,
+          'reusedCachedHashCount': reusedCachedHashCount,
+          'deferredHashCount': deferredHashCount,
         },
       );
     }
@@ -3280,7 +3375,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _cachePreparedTransferFiles(
       cacheId: cache.cacheId,
       selectionFingerprint: scopedSelection.fingerprint,
-      includeHashes: includeHashes,
+      hashPreparationMode: hashPreparationMode,
       files: preparedItems,
     );
     return preparedItems;
@@ -3289,21 +3384,21 @@ class TransferSessionCoordinator extends ChangeNotifier {
   String _preparedTransferScopeCacheKey({
     required String cacheId,
     required String selectionFingerprint,
-    required bool includeHashes,
+    required _TransferHashPreparationMode hashPreparationMode,
   }) {
-    return '$cacheId|$selectionFingerprint|$includeHashes';
+    return '$cacheId|$selectionFingerprint|${hashPreparationMode.name}';
   }
 
   void _cachePreparedTransferFiles({
     required String cacheId,
     required String selectionFingerprint,
-    required bool includeHashes,
+    required _TransferHashPreparationMode hashPreparationMode,
     required List<_PreparedTransferFile> files,
   }) {
     final cacheKey = _preparedTransferScopeCacheKey(
       cacheId: cacheId,
       selectionFingerprint: selectionFingerprint,
-      includeHashes: includeHashes,
+      hashPreparationMode: hashPreparationMode,
     );
     _preparedTransferFilesByScopeKey[cacheKey] = files;
 
@@ -3881,6 +3976,8 @@ class _OutgoingTransferSession {
   List<TransferSourceFile> files;
   Future<List<TransferSourceFile>>? finalizedFilesFuture;
 }
+
+enum _TransferHashPreparationMode { full, cachedOnly, none }
 
 class _PreparedTransferFile {
   _PreparedTransferFile({

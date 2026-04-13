@@ -324,6 +324,7 @@ class LanPacketCodec {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
     required int createdAtMs,
   }) {
@@ -332,6 +333,7 @@ class LanPacketCodec {
       requestId: requestId,
       responderName: responderName,
       approved: approved,
+      phase: phase,
       message: message,
       createdAtMs: createdAtMs,
     );

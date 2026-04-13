@@ -390,12 +390,14 @@ class LanDownloadResponsePacket extends LanInboundPacket {
     required this.requestId,
     required this.responderName,
     required this.approved,
+    this.phase,
     this.message,
   });
 
   final String requestId;
   final String responderName;
   final bool approved;
+  final String? phase;
   final String? message;
 }
 
