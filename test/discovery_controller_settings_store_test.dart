@@ -61,6 +61,7 @@ void main() {
       previewCacheMaxAgeDays: 12,
       clipboardHistoryMaxEntries: 18,
       recacheParallelWorkers: 3,
+      debugLogRetainedLines: 250,
     );
     await settingsStore.save(expected);
 
@@ -102,6 +103,10 @@ void main() {
     expect(
       controller!.settings.recacheParallelWorkers,
       expected.recacheParallelWorkers,
+    );
+    expect(
+      controller!.settings.debugLogRetainedLines,
+      expected.debugLogRetainedLines,
     );
   });
 
@@ -166,6 +171,31 @@ void main() {
       expect(trackingSettingsStore.saveCalls, 1);
       expect(controller!.settings.useStandardAppDownloadFolder, isFalse);
       expect(persistedSettings.useStandardAppDownloadFolder, isFalse);
+    },
+  );
+
+  test(
+    'debug log retained line count mutation routes through SettingsStore',
+    () async {
+      final trackingSettingsStore = TrackingSettingsStore(
+        appSettingsRepository: AppSettingsRepository(
+          database: harness.database,
+        ),
+      );
+      controller = _buildController(
+        database: harness.database,
+        settingsStore: trackingSettingsStore,
+      );
+
+      await controller!.setDebugLogRetainedLines(420);
+
+      final persistedSettings = await AppSettingsRepository(
+        database: harness.database,
+      ).load();
+
+      expect(trackingSettingsStore.saveCalls, 1);
+      expect(controller!.settings.debugLogRetainedLines, 420);
+      expect(persistedSettings.debugLogRetainedLines, 420);
     },
   );
 }

@@ -63,6 +63,7 @@ class LanDiscoveryService {
   final LanClipboardProtocolHandler _clipboardProtocolHandler;
   final int? Function()? _nearbyTransferPortProvider;
   static const Duration _presenceAllowedSenderTtl = Duration(seconds: 20);
+  static const Duration _shareCatalogChunkTtl = Duration(seconds: 15);
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -72,6 +73,8 @@ class LanDiscoveryService {
   Set<String> _internetPeerIpAllowlist = <String>{};
   Set<String> _configuredTargetIps = <String>{};
   final Map<String, DateTime> _presenceAllowedSenders = <String, DateTime>{};
+  final Map<String, _PendingShareCatalogChunks> _pendingShareCatalogChunks =
+      <String, _PendingShareCatalogChunks>{};
 
   Future<void> start({
     required String deviceName,
@@ -84,6 +87,8 @@ class LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,
@@ -116,6 +121,8 @@ class LanDiscoveryService {
           onFriendRequest: onFriendRequest,
           onFriendResponse: onFriendResponse,
           onShareQuery: onShareQuery,
+          onShareAccessRequest: onShareAccessRequest,
+          onShareAccessResponse: onShareAccessResponse,
           onShareCatalog: onShareCatalog,
           onDownloadRequest: onDownloadRequest,
           onDownloadResponse: onDownloadResponse,
@@ -171,6 +178,7 @@ class LanDiscoveryService {
     _started = false;
     _configuredTargetIps = <String>{};
     _presenceAllowedSenders.clear();
+    _pendingShareCatalogChunks.clear();
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
@@ -285,6 +293,48 @@ class LanDiscoveryService {
     );
   }
 
+  Future<void> sendShareAccessRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+  }) async {
+    await _sendOutgoingPacket(
+      prefix: lanShareAccessRequestPrefix,
+      packet: _packetCodec.encodeShareAccessRequest(
+        instanceId: _instanceId,
+        requestId: requestId,
+        requesterName: requesterName,
+        requesterMacAddress: requesterMacAddress,
+        transferPort: transferPort,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      targetIp: targetIp,
+    );
+  }
+
+  Future<void> sendShareAccessResponse({
+    required String targetIp,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+  }) async {
+    await _sendOutgoingPacket(
+      prefix: lanShareAccessResponsePrefix,
+      packet: _packetCodec.encodeShareAccessResponse(
+        instanceId: _instanceId,
+        requestId: requestId,
+        responderName: responderName,
+        approved: approved,
+        message: message,
+        createdAtMs: DateTime.now().millisecondsSinceEpoch,
+      ),
+      targetIp: targetIp,
+    );
+  }
+
   Future<void> sendShareCatalog({
     required String targetIp,
     required String requestId,
@@ -293,33 +343,22 @@ class LanDiscoveryService {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
-    final fittedEntries = _packetCodec.fitShareCatalogEntries(entries);
-    final originalFiles = entries.fold<int>(
-      0,
-      (sum, entry) => sum + entry.files.length,
+    final packets = _packetCodec.encodeShareCatalogChunks(
+      instanceId: _instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      removedCacheIds: removedCacheIds,
+      createdAtMs: DateTime.now().millisecondsSinceEpoch,
     );
-    final fittedFiles = fittedEntries.fold<int>(
-      0,
-      (sum, entry) => sum + entry.files.length,
-    );
-    if (fittedEntries.length < entries.length || fittedFiles < originalFiles) {
-      _log(
-        'Share catalog trimmed for UDP: '
-        'entries=${fittedEntries.length}/${entries.length}, '
-        'files=$fittedFiles/$originalFiles',
-      );
+    if (packets.isEmpty) {
+      _log('Skipping $lanShareCatalogPrefix packet: codec rejected payload.');
+      return;
     }
-    await _sendOutgoingPacket(
+    await _sendOutgoingPackets(
       prefix: lanShareCatalogPrefix,
-      packet: _packetCodec.encodeShareCatalog(
-        instanceId: _instanceId,
-        requestId: requestId,
-        ownerName: ownerName,
-        ownerMacAddress: ownerMacAddress,
-        entries: fittedEntries,
-        removedCacheIds: removedCacheIds,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+      packets: packets,
       targetIp: targetIp,
     );
   }
@@ -358,6 +397,7 @@ class LanDiscoveryService {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
   }) async {
     await _sendOutgoingPacket(
@@ -367,6 +407,7 @@ class LanDiscoveryService {
         requestId: requestId,
         responderName: responderName,
         approved: approved,
+        phase: phase,
         message: message,
         createdAtMs: DateTime.now().millisecondsSinceEpoch,
       ),
@@ -501,6 +542,26 @@ class LanDiscoveryService {
       port: discoveryPort,
       context: packet.prefix,
     );
+  }
+
+  Future<void> _sendOutgoingPackets({
+    required String prefix,
+    required List<EncodedLanPacket> packets,
+    required String targetIp,
+  }) async {
+    final targetAddress = _resolveUnicastTargetIp(targetIp);
+    if (targetAddress == null) {
+      _log('Skipping $prefix packet: invalid target IP "$targetIp".');
+      return;
+    }
+    for (final packet in packets) {
+      _transportAdapter.send(
+        bytes: packet.bytes,
+        address: targetAddress,
+        port: discoveryPort,
+        context: packet.prefix,
+      );
+    }
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
@@ -639,6 +700,8 @@ class LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,
@@ -789,10 +852,39 @@ class LanDiscoveryService {
       return;
     }
 
+    if (packet is LanShareAccessRequestPacket) {
+      onShareAccessRequest?.call(
+        _shareProtocolHandler.handleShareAccessRequestPacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
+    if (packet is LanShareAccessResponsePacket) {
+      onShareAccessResponse?.call(
+        _shareProtocolHandler.handleShareAccessResponsePacket(
+          packet: packet,
+          senderIp: senderIp,
+          observedAt: observedAt,
+        ),
+      );
+      return;
+    }
+
     if (packet is LanShareCatalogPacket) {
+      final reassembled = _consumeShareCatalogPacket(
+        packet: packet,
+        senderIp: senderIp,
+      );
+      if (reassembled == null) {
+        return;
+      }
       onShareCatalog?.call(
         _shareProtocolHandler.handleShareCatalogPacket(
-          packet: packet,
+          packet: reassembled,
           senderIp: senderIp,
           observedAt: observedAt,
         ),
@@ -901,6 +993,133 @@ class LanDiscoveryService {
     _presenceAllowedSenders.removeWhere(
       (_, observedAt) =>
           observedNow.difference(observedAt) > _presenceAllowedSenderTtl,
+    );
+  }
+
+  LanShareCatalogPacket? _consumeShareCatalogPacket({
+    required LanShareCatalogPacket packet,
+    required String senderIp,
+  }) {
+    _prunePendingShareCatalogChunks();
+    if (packet.chunkCount <= 1) {
+      return packet;
+    }
+    if (packet.chunkIndex < 0 || packet.chunkIndex >= packet.chunkCount) {
+      _log(
+        'Ignoring malformed share catalog chunk from $senderIp '
+        '(requestId=${packet.requestId}, chunk=${packet.chunkIndex}/${packet.chunkCount})',
+      );
+      return null;
+    }
+    final key =
+        '$senderIp|${packet.instanceId}|${packet.requestId}|${packet.ownerMacAddress}';
+    final pending = _pendingShareCatalogChunks.putIfAbsent(
+      key,
+      () => _PendingShareCatalogChunks(
+        requestId: packet.requestId,
+        ownerName: packet.ownerName,
+        ownerMacAddress: packet.ownerMacAddress,
+        chunkCount: packet.chunkCount,
+        createdAt: DateTime.now(),
+      ),
+    );
+    final reassembled = pending.add(packet);
+    if (reassembled != null) {
+      _pendingShareCatalogChunks.remove(key);
+      return reassembled;
+    }
+    return null;
+  }
+
+  void _prunePendingShareCatalogChunks([DateTime? now]) {
+    final observedNow = now ?? DateTime.now();
+    _pendingShareCatalogChunks.removeWhere(
+      (_, pending) =>
+          observedNow.difference(pending.createdAt) > _shareCatalogChunkTtl,
+    );
+  }
+}
+
+class _PendingShareCatalogChunks {
+  _PendingShareCatalogChunks({
+    required this.requestId,
+    required this.ownerName,
+    required this.ownerMacAddress,
+    required this.chunkCount,
+    required this.createdAt,
+  });
+
+  final String requestId;
+  final String ownerName;
+  final String ownerMacAddress;
+  final int chunkCount;
+  final DateTime createdAt;
+  final Map<int, LanShareCatalogPacket> _chunksByIndex =
+      <int, LanShareCatalogPacket>{};
+
+  LanShareCatalogPacket? add(LanShareCatalogPacket packet) {
+    _chunksByIndex[packet.chunkIndex] = packet;
+    if (_chunksByIndex.length < chunkCount) {
+      return null;
+    }
+
+    final mergedEntriesByCacheId = <String, _MergedShareCatalogEntry>{};
+    final orderedCacheIds = <String>[];
+    final removedCacheIds = <String>{};
+    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+      final chunk = _chunksByIndex[chunkIndex];
+      if (chunk == null) {
+        return null;
+      }
+      removedCacheIds.addAll(chunk.removedCacheIds);
+      for (final entry in chunk.entries) {
+        final merged = mergedEntriesByCacheId.putIfAbsent(entry.cacheId, () {
+          orderedCacheIds.add(entry.cacheId);
+          return _MergedShareCatalogEntry(
+            cacheId: entry.cacheId,
+            displayName: entry.displayName,
+            itemCount: entry.itemCount,
+            totalBytes: entry.totalBytes,
+          );
+        });
+        merged.files.addAll(entry.files);
+      }
+    }
+
+    return LanShareCatalogPacket(
+      instanceId: _chunksByIndex[0]!.instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: orderedCacheIds
+          .map((cacheId) => mergedEntriesByCacheId[cacheId]!.build())
+          .toList(growable: false),
+      removedCacheIds: removedCacheIds.toList(growable: false),
+    );
+  }
+}
+
+class _MergedShareCatalogEntry {
+  _MergedShareCatalogEntry({
+    required this.cacheId,
+    required this.displayName,
+    required this.itemCount,
+    required this.totalBytes,
+  });
+
+  final String cacheId;
+  final String displayName;
+  final int itemCount;
+  final int totalBytes;
+  final List<SharedCatalogFileItem> files = <SharedCatalogFileItem>[];
+
+  SharedCatalogEntryItem build() {
+    return SharedCatalogEntryItem(
+      cacheId: cacheId,
+      displayName: displayName,
+      itemCount: itemCount,
+      totalBytes: totalBytes,
+      files: List<SharedCatalogFileItem>.unmodifiable(files),
     );
   }
 }

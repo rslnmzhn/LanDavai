@@ -29,6 +29,8 @@ void main() {
         final sourceFile = File(p.join(rootDirectory.path, 'source', 'a.7z'));
         await sourceFile.parent.create(recursive: true);
         await sourceFile.writeAsBytes(List<int>.filled(1024, 7));
+        final expectedReceivedHash = await FileHashService()
+            .computeSha256ForPath(sourceFile.path);
 
         final destinationDirectory = Directory(
           p.join(rootDirectory.path, 'destination'),
@@ -57,7 +59,8 @@ void main() {
         expect(result.success, isTrue);
         expect(result.savedPaths, hasLength(1));
         expect(File(result.savedPaths.single).existsSync(), isTrue);
-        expect(result.receivedItems.single.sha256, isEmpty);
+        expect(result.hashVerified, isFalse);
+        expect(result.receivedItems.single.sha256, expectedReceivedHash);
       },
     );
 
@@ -96,7 +99,65 @@ void main() {
         final result = await receiveSession.result;
 
         expect(result.success, isTrue);
+        expect(result.hashVerified, isTrue);
         expect(result.receivedItems.single.sha256, expectedHash);
+      },
+    );
+
+    test(
+      'large direct transfer manifest succeeds with relative selector names only',
+      () async {
+        final sourceFile = File(
+          p.join(rootDirectory.path, 'source', 'placeholder.bin'),
+        );
+        await sourceFile.parent.create(recursive: true);
+        await sourceFile.writeAsBytes(const <int>[]);
+
+        const itemCount = 15000;
+        final files = List<TransferSourceFile>.generate(
+          itemCount,
+          (index) => TransferSourceFile(
+            sourcePath: sourceFile.path,
+            fileName: 'ReactProjects/App_$index/src/file_$index.txt',
+            sizeBytes: 0,
+            sha256: '',
+          ),
+          growable: false,
+        );
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-large-manifest',
+          expectedItems: null,
+          destinationDirectory: destinationDirectory,
+        );
+
+        await service.sendFiles(
+          host: InternetAddress.loopbackIPv4.address,
+          port: receiveSession.port,
+          requestId: 'request-large-manifest',
+          files: files,
+        );
+        final result = await receiveSession.result;
+
+        expect(result.success, isTrue);
+        expect(result.receivedItems, hasLength(itemCount));
+        expect(
+          result.receivedItems.every(
+            (item) =>
+                item.fileName.startsWith('ReactProjects/') &&
+                !item.fileName.contains(sourceFile.parent.path),
+          ),
+          isTrue,
+        );
+        expect(
+          result.savedPaths.every(
+            (path) => path.startsWith(destinationDirectory.path),
+          ),
+          isTrue,
+        );
       },
     );
   });

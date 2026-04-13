@@ -80,6 +80,17 @@ class TransferStorageService {
     return target;
   }
 
+  Future<Directory> resolveRemoteShareAccessDirectory({
+    String appFolderName = 'Landa',
+  }) async {
+    final support = await getApplicationSupportDirectory();
+    final target = Directory(
+      p.join(support.path, appFolderName, 'remote_share_access'),
+    );
+    await target.create(recursive: true);
+    return target;
+  }
+
   Future<PreviewCacheCleanupResult> cleanupPreviewCache({
     required int maxSizeGb,
     required int maxAgeDays,

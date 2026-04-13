@@ -181,6 +181,8 @@ class RecordingRemoteClipboardLanDiscoveryService extends LanDiscoveryService {
     void Function(FriendRequestEvent event)? onFriendRequest,
     void Function(FriendResponseEvent event)? onFriendResponse,
     void Function(ShareQueryEvent event)? onShareQuery,
+    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
+    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
     void Function(ShareCatalogEvent event)? onShareCatalog,
     void Function(DownloadRequestEvent event)? onDownloadRequest,
     void Function(DownloadResponseEvent event)? onDownloadResponse,

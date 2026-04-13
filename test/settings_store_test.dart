@@ -74,6 +74,10 @@ void main() {
         store.settings.recacheParallelWorkers,
         AppSettings.defaults.recacheParallelWorkers,
       );
+      expect(
+        store.settings.debugLogRetainedLines,
+        AppSettings.defaults.debugLogRetainedLines,
+      );
     },
   );
 
@@ -93,6 +97,7 @@ void main() {
         previewCacheMaxAgeDays: 10,
         clipboardHistoryMaxEntries: 42,
         recacheParallelWorkers: 6,
+        debugLogRetainedLines: 320,
       );
 
       await store.save(expected);
@@ -139,6 +144,10 @@ void main() {
       expect(
         store.settings.recacheParallelWorkers,
         expected.recacheParallelWorkers,
+      );
+      expect(
+        store.settings.debugLogRetainedLines,
+        expected.debugLogRetainedLines,
       );
       expect(localPeerRows, hasLength(1));
       expect(localPeerRows.single['setting_value'], localPeerId);

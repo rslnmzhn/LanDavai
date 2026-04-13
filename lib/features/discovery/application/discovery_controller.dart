@@ -665,6 +665,18 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  Future<void> setDebugLogRetainedLines(int value) async {
+    final normalized = value <= 0
+        ? AppSettings.defaults.debugLogRetainedLines
+        : value;
+    if (_currentSettings.debugLogRetainedLines == normalized) {
+      return;
+    }
+    await _persistSettingsViaStore(
+      _currentSettings.copyWith(debugLogRetainedLines: normalized),
+    );
+  }
+
   void setAppForegroundState(bool isForeground) {
     if (_isAppInForeground == isForeground) {
       return;
@@ -1806,6 +1818,14 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
+  void _onShareAccessRequest(ShareAccessRequestEvent event) {
+    _transferSessionCoordinator.handleShareAccessRequestEvent(event);
+  }
+
+  void _onShareAccessResponse(ShareAccessResponseEvent event) {
+    _transferSessionCoordinator.handleShareAccessResponseEvent(event);
+  }
+
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
     try {
       final requesterAddress = InternetAddress.tryParse(event.requesterIp);
@@ -2057,6 +2077,8 @@ class DiscoveryController extends ChangeNotifier {
       onFriendRequest: _onFriendRequest,
       onFriendResponse: _onFriendResponse,
       onShareQuery: _onShareQuery,
+      onShareAccessRequest: _onShareAccessRequest,
+      onShareAccessResponse: _onShareAccessResponse,
       onShareCatalog: _onShareCatalog,
       onDownloadRequest: _onDownloadRequest,
       onDownloadResponse: _onDownloadResponse,

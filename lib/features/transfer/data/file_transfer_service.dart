@@ -10,6 +10,20 @@ import 'package:path/path.dart' as p;
 
 import '../domain/transfer_request.dart';
 
+typedef TransferRuntimeDiagnosticCallback =
+    void Function({
+      required String stage,
+      Map<String, Object?> details,
+      Object? error,
+      StackTrace? stackTrace,
+    });
+
+typedef TransferStreamedFileHashCallback =
+    void Function({
+      required TransferSourceFile file,
+      required String computedSha256,
+    });
+
 class TransferSourceFile {
   TransferSourceFile({
     required this.sourcePath,
@@ -30,11 +44,13 @@ class TransferReceiveSession {
   TransferReceiveSession({
     required this.port,
     required this.result,
+    required this.armTimeout,
     required this.close,
   });
 
   final int port;
   final Future<FileTransferResult> result;
+  final void Function() armTimeout;
   final Future<void> Function() close;
 }
 
@@ -60,14 +76,16 @@ class FileTransferResult {
 
 class FileTransferService {
   static const int _headerLengthBytes = 4;
-  static const int _maxHeaderBytes = 1024 * 1024;
+  static const int _maxHeaderBytes = 8 * 1024 * 1024;
   static const int _chunkBytes = 64 * 1024;
+  static const int _manifestCompressionThresholdBytes = 128 * 1024;
 
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
     void Function(int receivedBytes, int totalBytes)? onProgress,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
@@ -75,10 +93,20 @@ class FileTransferService {
       required String relativePath,
     })?
     destinationPathAllocator,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
   }) async {
     final server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     final resultCompleter = Completer<FileTransferResult>();
     var closed = false;
+    onDiagnosticEvent?.call(
+      stage: 'receiver_started',
+      details: <String, Object?>{
+        'port': server.port,
+        'destinationDirectory': destinationDirectory.path,
+        'expectedItemCount': expectedItems?.length ?? -1,
+        'destinationRelativeRootPrefix': destinationRelativeRootPrefix,
+      },
+    );
 
     Future<void> closeSession() async {
       if (closed) {
@@ -86,6 +114,12 @@ class FileTransferService {
       }
       closed = true;
       server.close();
+      onDiagnosticEvent?.call(
+        stage: 'receiver_closed',
+        details: <String, Object?>{
+          'destinationDirectory': destinationDirectory.path,
+        },
+      );
       if (!resultCompleter.isCompleted) {
         resultCompleter.complete(
           FileTransferResult(
@@ -102,25 +136,50 @@ class FileTransferService {
     }
 
     Timer? timeoutTimer;
-    timeoutTimer = Timer(timeout, () {
-      if (closed) {
+    var timeoutArmed = false;
+
+    void armTimeout() {
+      if (closed || timeoutArmed) {
         return;
       }
-      unawaited(closeSession());
-      if (!resultCompleter.isCompleted) {
-        resultCompleter.complete(
-          FileTransferResult(
-            success: false,
-            message: 'Transfer receive timed out.',
-            savedPaths: <String>[],
-            receivedItems: <TransferFileManifestItem>[],
-            totalBytes: 0,
-            destinationDirectory: destinationDirectory.path,
-            hashVerified: false,
-          ),
+      timeoutArmed = true;
+      onDiagnosticEvent?.call(
+        stage: 'receiver_timeout_armed',
+        details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
+      );
+      timeoutTimer = Timer(timeout, () {
+        if (closed) {
+          return;
+        }
+        onDiagnosticEvent?.call(
+          stage: 'receiver_timeout',
+          details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
         );
-      }
-    });
+        unawaited(closeSession());
+        if (!resultCompleter.isCompleted) {
+          resultCompleter.complete(
+            FileTransferResult(
+              success: false,
+              message: 'Transfer receive timed out.',
+              savedPaths: <String>[],
+              receivedItems: <TransferFileManifestItem>[],
+              totalBytes: 0,
+              destinationDirectory: destinationDirectory.path,
+              hashVerified: false,
+            ),
+          );
+        }
+      });
+    }
+
+    if (armTimeoutImmediately) {
+      armTimeout();
+    } else {
+      onDiagnosticEvent?.call(
+        stage: 'receiver_timeout_deferred',
+        details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
+      );
+    }
 
     server.listen(
       (socket) {
@@ -131,6 +190,13 @@ class FileTransferService {
         closed = true;
         timeoutTimer?.cancel();
         server.close();
+        onDiagnosticEvent?.call(
+          stage: 'receiver_connected',
+          details: <String, Object?>{
+            'remoteAddress': socket.remoteAddress.address,
+            'remotePort': socket.remotePort,
+          },
+        );
         unawaited(
           _receiveFiles(
             socket: socket,
@@ -141,6 +207,10 @@ class FileTransferService {
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             destinationPathAllocator: destinationPathAllocator,
           ).then(resultCompleter.complete).catchError((Object error) {
+            onDiagnosticEvent?.call(
+              stage: 'receiver_stream_failure',
+              error: error,
+            );
             if (!resultCompleter.isCompleted) {
               resultCompleter.complete(
                 FileTransferResult(
@@ -159,6 +229,7 @@ class FileTransferService {
       },
       onError: (Object error) {
         timeoutTimer?.cancel();
+        onDiagnosticEvent?.call(stage: 'receiver_socket_error', error: error);
         if (!resultCompleter.isCompleted) {
           resultCompleter.complete(
             FileTransferResult(
@@ -183,6 +254,7 @@ class FileTransferService {
     return TransferReceiveSession(
       port: server.port,
       result: resultCompleter.future,
+      armTimeout: armTimeout,
       close: closeSession,
     );
   }
@@ -193,12 +265,15 @@ class FileTransferService {
     required String requestId,
     required List<TransferSourceFile> files,
     void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     final socket = await Socket.connect(
       host,
       port,
       timeout: const Duration(seconds: 10),
     );
+    TransferSourceFile? currentFile;
     try {
       final payload = <String, Object?>{
         'requestId': requestId,
@@ -212,13 +287,47 @@ class FileTransferService {
             )
             .toList(growable: false),
       };
-      final headerBytes = utf8.encode(jsonEncode(payload));
+      final knownHashFileCount = files.where((file) {
+        return file.sha256.trim().isNotEmpty;
+      }).length;
+      final missingHashFileCount = files.length - knownHashFileCount;
+      onDiagnosticEvent?.call(
+        stage: 'transfer_header_build_start',
+        details: <String, Object?>{
+          'fileCount': files.length,
+          'knownHashFileCount': knownHashFileCount,
+          'missingHashFileCount': missingHashFileCount,
+        },
+      );
+      final header = _encodeTransferHeader(payload);
+      final headerBytes = header.bytes;
+      onDiagnosticEvent?.call(
+        stage: 'transfer_header_built',
+        details: <String, Object?>{
+          'fileCount': files.length,
+          'knownHashFileCount': knownHashFileCount,
+          'missingHashFileCount': missingHashFileCount,
+          'headerBytes': header.bytes.length,
+          'rawHeaderBytes': header.rawBytesLength,
+          'compressed': header.compressed,
+        },
+      );
       if (headerBytes.length > _maxHeaderBytes) {
         throw StateError('Transfer header is too large.');
       }
 
       final headerLength = ByteData(_headerLengthBytes)
         ..setUint32(0, headerBytes.length, Endian.big);
+      onDiagnosticEvent?.call(
+        stage: 'send_start',
+        details: <String, Object?>{
+          'host': host,
+          'port': port,
+          'fileCount': files.length,
+          'knownHashFileCount': knownHashFileCount,
+          'missingHashFileCount': missingHashFileCount,
+        },
+      );
       socket.add(headerLength.buffer.asUint8List());
       socket.add(headerBytes);
       await socket.flush();
@@ -230,6 +339,7 @@ class FileTransferService {
       var sentBytes = 0;
       onProgress?.call(0, totalBytes);
       for (final file in files) {
+        currentFile = file;
         final source = File(file.sourcePath);
         if (!await source.exists()) {
           throw StateError('Source file does not exist: ${file.sourcePath}');
@@ -254,8 +364,32 @@ class FileTransferService {
             'File changed during transfer preparation.',
           );
         }
+        onFileHashed?.call(file: file, computedSha256: actualSha);
       }
       await socket.flush();
+      onDiagnosticEvent?.call(
+        stage: 'send_complete',
+        details: <String, Object?>{
+          'host': host,
+          'port': port,
+          'fileCount': files.length,
+          'totalBytes': totalBytes,
+        },
+      );
+    } catch (error, stackTrace) {
+      onDiagnosticEvent?.call(
+        stage: 'send_failure',
+        details: <String, Object?>{
+          'host': host,
+          'port': port,
+          'fileCount': files.length,
+          if (currentFile != null) 'currentFileName': currentFile.fileName,
+          if (currentFile != null) 'currentSourcePath': currentFile.sourcePath,
+        },
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     } finally {
       await socket.close();
     }
@@ -286,7 +420,7 @@ class FileTransferService {
     }
 
     final headerBytes = await reader.readExact(headerLength);
-    final decoded = jsonDecode(utf8.decode(headerBytes));
+    final decoded = _decodeTransferHeader(headerBytes);
     if (decoded is! Map<String, dynamic>) {
       throw StateError('Invalid transfer header payload.');
     }
@@ -343,7 +477,9 @@ class FileTransferService {
     }
 
     final savedPaths = <String>[];
+    final receivedItems = <TransferFileManifestItem>[];
     var totalBytes = 0;
+    var allFilesHashVerified = true;
     final expectedTotalBytes = normalizedActual.fold<int>(
       0,
       (sum, file) => sum + file.sizeBytes,
@@ -387,6 +523,9 @@ class FileTransferService {
 
         final actualSha = digestSink.value?.toString() ?? '';
         final expectedSha = file.sha256.trim();
+        if (expectedSha.isEmpty) {
+          allFilesHashVerified = false;
+        }
         if (expectedSha.isNotEmpty &&
             actualSha.toLowerCase() != expectedSha.toLowerCase()) {
           try {
@@ -395,25 +534,26 @@ class FileTransferService {
           throw StateError('SHA-256 mismatch for ${file.name}');
         }
         savedPaths.add(destinationPath);
+        receivedItems.add(
+          TransferFileManifestItem(
+            fileName: file.name,
+            sizeBytes: file.sizeBytes,
+            sha256: actualSha,
+          ),
+        );
         inProgressPath = null;
       }
 
       return FileTransferResult(
         success: true,
-        message: 'Transfer completed. Hash verified.',
+        message: allFilesHashVerified
+            ? 'Transfer completed. Hash verified.'
+            : 'Transfer completed.',
         savedPaths: savedPaths,
-        receivedItems: normalizedActual
-            .map(
-              (file) => TransferFileManifestItem(
-                fileName: file.name,
-                sizeBytes: file.sizeBytes,
-                sha256: file.sha256,
-              ),
-            )
-            .toList(growable: false),
+        receivedItems: receivedItems,
         totalBytes: totalBytes,
         destinationDirectory: destinationDirectory.path,
-        hashVerified: true,
+        hashVerified: allFilesHashVerified,
       );
     } on Object {
       await _cleanupFailedTransferFiles(savedPaths);
@@ -427,6 +567,42 @@ class FileTransferService {
       await reader.close();
       await socket.close();
     }
+  }
+
+  _EncodedTransferHeader _encodeTransferHeader(Map<String, Object?> payload) {
+    final jsonBytes = utf8.encode(jsonEncode(payload));
+    if (jsonBytes.length < _manifestCompressionThresholdBytes) {
+      return _EncodedTransferHeader(
+        bytes: Uint8List.fromList(jsonBytes),
+        rawBytesLength: jsonBytes.length,
+        compressed: false,
+      );
+    }
+
+    final compressed = gzip.encode(jsonBytes);
+    if (compressed.length >= jsonBytes.length) {
+      return _EncodedTransferHeader(
+        bytes: Uint8List.fromList(jsonBytes),
+        rawBytesLength: jsonBytes.length,
+        compressed: false,
+      );
+    }
+    return _EncodedTransferHeader(
+      bytes: Uint8List.fromList(compressed),
+      rawBytesLength: jsonBytes.length,
+      compressed: true,
+    );
+  }
+
+  Object? _decodeTransferHeader(Uint8List headerBytes) {
+    final decodedBytes = _looksLikeGzip(headerBytes)
+        ? gzip.decode(headerBytes)
+        : headerBytes;
+    return jsonDecode(utf8.decode(decodedBytes));
+  }
+
+  bool _looksLikeGzip(Uint8List bytes) {
+    return bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
   }
 
   Future<void> _cleanupFailedTransferFiles(List<String> paths) async {
@@ -548,6 +724,18 @@ class _FileDescriptor {
   final String name;
   final int sizeBytes;
   final String sha256;
+}
+
+class _EncodedTransferHeader {
+  const _EncodedTransferHeader({
+    required this.bytes,
+    required this.rawBytesLength,
+    required this.compressed,
+  });
+
+  final Uint8List bytes;
+  final int rawBytesLength;
+  final bool compressed;
 }
 
 class _SocketReader {

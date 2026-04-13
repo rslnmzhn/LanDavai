@@ -18,8 +18,14 @@ This file describes the current shared-access browse, preview, and download flow
 ## Shared-access browser entry
 
 - UI entry: `lib/features/discovery/presentation/remote_download_browser_page.dart`
-- Controller trigger: `DiscoveryController.loadRemoteShareOptions()`
-- Remote browse start: `RemoteShareBrowser.startBrowse(...)`
+- Current production browser path:
+  - open `RemoteDownloadBrowserPage`
+  - select a concrete owner/device
+  - request access through `TransferSessionCoordinator.requestRemoteShareAccess(...)`
+  - apply the received access snapshot into `RemoteShareBrowser`
+- `DiscoveryController.loadRemoteShareOptions()` and
+  `RemoteShareBrowser.startBrowse(...)` still exist, but they are no longer the
+  primary production browse path for the current remote download browser UX.
 
 ## Preview flow
 
@@ -119,6 +125,16 @@ Sender-side explicit approval now exists in the production shared-download flow.
 - Sender sees an explicit approval/reject surface before preparation starts.
 - Sender-side preparation state is visible after approval and before actual sending begins.
 - Preview stays separate and does not use the sender approval surface.
+
+## Whole-share large-folder working analysis
+
+The current large whole-share direct-start audit lives in:
+
+- [whole_share_cache_issue/00_whole_share_cache_issue_index.md](/e:/Projects/Landa/docs/whole_share_cache_issue/00_whole_share_cache_issue_index.md)
+
+Use that subtree for current whole-share blocking stages, hash roles, failure
+mode ranking, and next-step options. Keep this file as the feature-level
+overview.
 
 ## Main files
 

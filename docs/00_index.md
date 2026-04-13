@@ -9,6 +9,11 @@ Current project docs are split into small, active reference files. Read in this 
 5. [05_build_release_packaging.md](/e:/Projects/Landa/docs/05_build_release_packaging.md)
 6. [06_regression_and_test_gates.md](/e:/Projects/Landa/docs/06_regression_and_test_gates.md)
 
+Focused working analysis branches stay linked from this index. The current
+whole-share large-folder audit lives here:
+
+- [whole_share_cache_issue/00_whole_share_cache_issue_index.md](/e:/Projects/Landa/docs/whole_share_cache_issue/00_whole_share_cache_issue_index.md)
+
 Root-level guidance that remains authoritative:
 
 - [AGENTS.md](/e:/Projects/Landa/AGENTS.md)

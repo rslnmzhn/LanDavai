@@ -14,11 +14,12 @@ import '../../files/presentation/file_explorer/file_explorer_tail_widgets.dart';
 import '../../files/presentation/file_explorer/file_explorer_widgets.dart';
 import '../../files/presentation/file_explorer/local_file_viewer.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
+import '../application/discovery_read_model.dart';
 import '../application/remote_share_browser.dart';
 
 class RemoteDownloadBrowserPage extends StatefulWidget {
   const RemoteDownloadBrowserPage({
-    required this.onRefreshRemoteShares,
+    required this.readModel,
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
@@ -26,7 +27,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
     super.key,
   });
 
-  final Future<void> Function() onRefreshRemoteShares;
+  final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
@@ -52,7 +53,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       <String, FilesFeatureStateOwner>{};
   final Set<String> _selectedTokens = <String>{};
 
-  String _activeFilterKey = RemoteShareBrowser.allDevicesFilterKey;
+  String _activeFilterKey = '';
   RemoteBrowseExplorerViewMode _viewMode =
       RemoteBrowseExplorerViewMode.structured;
   bool _showAllFlatCategories = true;
@@ -61,6 +62,60 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   bool _isDownloading = false;
 
   RemoteShareBrowser get _browser => widget.remoteShareBrowser;
+  List<RemoteBrowseOwnerChoice> get _availableDevices {
+    final devices = widget.readModel.remoteClipboardDevices;
+    if (devices.isEmpty) {
+      return _browser.currentBrowseProjection.owners;
+    }
+    return devices
+        .map(
+          (device) => RemoteBrowseOwnerChoice(
+            ip: device.ip,
+            name: device.displayName,
+            macAddress: device.macAddress ?? '',
+            shareCount: _browser.currentBrowseProjection.options
+                .where((option) => option.ownerIp == device.ip)
+                .length,
+            fileCount: _browser.currentBrowseProjection.options
+                .where((option) => option.ownerIp == device.ip)
+                .fold<int>(0, (sum, option) => sum + option.entry.itemCount),
+            cachedShareCount: _browser.currentBrowseProjection.options
+                .where(
+                  (option) =>
+                      option.ownerIp == device.ip &&
+                      option.hasReceiverCacheSnapshot,
+                )
+                .length,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  String? get _firstAvailableDeviceKey =>
+      _availableDevices.isEmpty ? null : _availableDevices.first.ip;
+  String get _rootLabelForActiveFilter {
+    for (final device in _availableDevices) {
+      if (device.ip == _activeFilterKey) {
+        return device.name;
+      }
+    }
+    return _activeFilterKey.trim().isEmpty ? 'Устройства' : _activeFilterKey;
+  }
+
+  bool get _canRequestAccess => _activeFilterKey.trim().isNotEmpty;
+  bool get _hasLoadedCatalogForActiveDevice => _browser
+      .currentBrowseProjection
+      .options
+      .any((option) => option.ownerIp == _activeFilterKey);
+
+  String _labelForFilter(String filterKey) {
+    for (final device in _availableDevices) {
+      if (device.ip == filterKey) {
+        return device.name;
+      }
+    }
+    return filterKey;
+  }
 
   String get _activeOwnerCacheKey => '${_viewMode.name}|$_activeFilterKey';
 
@@ -74,7 +129,19 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   void initState() {
     super.initState();
     _browser.addListener(_handleBrowserChanged);
-    unawaited(_ensureOwnerForFilter(_activeFilterKey));
+    final initialFilterKey = _firstAvailableDeviceKey;
+    if (initialFilterKey != null) {
+      _activeFilterKey = initialFilterKey;
+      unawaited(_ensureOwnerForFilter(_activeFilterKey));
+    }
+    widget.transferSessionCoordinator.logSharedDownloadDebug(
+      stage: 'browser_opened',
+      requestId: 'browser',
+      details: <String, Object?>{
+        'deviceCount': _availableDevices.length,
+        'activeDeviceIp': _activeFilterKey,
+      },
+    );
   }
 
   @override
@@ -97,10 +164,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       (token) => !_browser.containsDownloadToken(token),
     );
 
-    final validFilterKeys = <String>{
-      RemoteShareBrowser.allDevicesFilterKey,
-      ..._browser.currentBrowseProjection.owners.map((owner) => owner.ip),
-    };
+    final validFilterKeys = _availableDevices.map((owner) => owner.ip).toSet();
     final removableKeys = _ownersByFilterKey.keys
         .where((key) {
           final parts = key.split('|');
@@ -112,7 +176,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       _ownersByFilterKey.remove(key)?.dispose();
     }
     if (!validFilterKeys.contains(_activeFilterKey)) {
-      _activeFilterKey = RemoteShareBrowser.allDevicesFilterKey;
+      _activeFilterKey = _firstAvailableDeviceKey ?? '';
     }
     await Future.wait(
       _ownersByFilterKey.values.map((owner) => owner.refreshCurrentRoot()),
@@ -125,6 +189,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
   }
 
   Future<void> _ensureOwnerForFilter(String filterKey) async {
+    if (filterKey.trim().isEmpty) {
+      return;
+    }
     final ownerCacheKey = '${_viewMode.name}|$filterKey';
     final existing = _ownersByFilterKey[ownerCacheKey];
     if (existing != null) {
@@ -133,7 +200,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     final owner = FilesFeatureStateOwner(
       roots: <FileExplorerRoot>[
         FileExplorerRoot(
-          label: _browser.rootLabelForFilter(filterKey),
+          label: _labelForFilter(filterKey),
           path: 'virtual://remote/${_viewMode.name}/$filterKey',
           virtualDirectoryLoader: (folderPath) async {
             return _browser
@@ -181,22 +248,18 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     return AnimatedBuilder(
       animation: Listenable.merge(<Listenable>[
         _browser,
+        widget.readModel,
         widget.transferSessionCoordinator,
         ..._ownersByFilterKey.values,
       ]),
       builder: (context, _) {
-        final projection = _browser.currentBrowseProjection;
         final activeOwner = _activeOwner;
-        final owners = projection.owners;
-        final filterChoices = <_DeviceFilterChoice>[
-          const _DeviceFilterChoice(
-            key: RemoteShareBrowser.allDevicesFilterKey,
-            label: 'Все устройства',
-          ),
-          ...owners.map(
-            (owner) => _DeviceFilterChoice(key: owner.ip, label: owner.name),
-          ),
-        ];
+        final owners = _availableDevices;
+        final filterChoices = owners
+            .map(
+              (owner) => _DeviceFilterChoice(key: owner.ip, label: owner.name),
+            )
+            .toList(growable: false);
         final directory = _browser.buildExplorerDirectory(
           filterKey: _activeFilterKey,
           folderPath: activeOwner?.normalizedVirtualCurrentFolder ?? '',
@@ -213,11 +276,11 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
             title: const Text('Скачать из сети'),
             actions: [
               IconButton(
-                tooltip: 'Обновить список',
-                onPressed: _browser.isLoading
-                    ? null
-                    : widget.onRefreshRemoteShares,
-                icon: const Icon(Icons.refresh_rounded),
+                tooltip: 'Запросить доступ',
+                onPressed: _canRequestAccess
+                    ? () => unawaited(_requestAccessForActiveDevice())
+                    : null,
+                icon: const Icon(Icons.lock_open_rounded),
               ),
             ],
           ),
@@ -238,10 +301,22 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                         onChanged: _handleViewModeChanged,
                       ),
                       const SizedBox(height: AppSpacing.sm),
-                      _DeviceFilterBar(
-                        filters: filterChoices,
-                        selectedKey: _activeFilterKey,
-                        onSelected: _handleFilterSelected,
+                      if (filterChoices.isNotEmpty)
+                        _DeviceFilterBar(
+                          filters: filterChoices,
+                          selectedKey: _activeFilterKey,
+                          onSelected: _handleFilterSelected,
+                        ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _RemoteShareAccessActionRow(
+                        deviceLabel: _rootLabelForActiveFilter,
+                        activeOwnerIp: _activeFilterKey,
+                        accessState: widget
+                            .transferSessionCoordinator
+                            .remoteShareAccessState,
+                        onRequestAccess: _canRequestAccess
+                            ? _requestAccessForActiveDevice
+                            : null,
                       ),
                       if (_viewMode == RemoteBrowseExplorerViewMode.flat) ...[
                         const SizedBox(height: AppSpacing.sm),
@@ -282,186 +357,20 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                   ),
                 Expanded(
                   child: activeOwner == null
-                      ? const Center(child: CircularProgressIndicator())
+                      ? _RemoteDownloadEmptyState(
+                          hasOwners: owners.isNotEmpty,
+                          hasQuery: false,
+                          hasLoadedCatalog: false,
+                        )
                       : Padding(
                           padding: const EdgeInsets.all(AppSpacing.md),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              ExplorerPathHeader(
-                                rootLabel: _browser.rootLabelForFilter(
-                                  _activeFilterKey,
-                                ),
-                                relativePath: activeOwner.relativePathLabel(),
-                                canGoUp: activeOwner.canGoUp,
-                                onGoUp: activeOwner.canGoUp
-                                    ? () => activeOwner.goUp()
-                                    : null,
-                                canSelectRoot: false,
-                                onSelectRoot: null,
-                              ),
-                              const SizedBox(height: AppSpacing.xs),
-                              Row(
-                                children: [
-                                  DisplayModeToggle(
-                                    isGrid:
-                                        state!.viewMode ==
-                                        FilesFeatureViewMode.grid,
-                                    onToggle: activeOwner.toggleViewMode,
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  Expanded(
-                                    child: SizedBox(
-                                      height: 40,
-                                      child: TextField(
-                                        controller: _searchController,
-                                        onChanged: activeOwner.setSearchQuery,
-                                        decoration: const InputDecoration(
-                                          isDense: true,
-                                          border: OutlineInputBorder(),
-                                          hintText: 'Search files',
-                                          prefixIcon: Icon(
-                                            Icons.search_rounded,
-                                            size: 18,
-                                          ),
-                                          prefixIconConstraints: BoxConstraints(
-                                            minWidth: 34,
-                                            minHeight: 34,
-                                          ),
-                                          contentPadding: EdgeInsets.symmetric(
-                                            horizontal: AppSpacing.sm,
-                                            vertical: AppSpacing.sm,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: AppSpacing.xs),
-                                  PopupMenuButton<ExplorerMenuAction>(
-                                    tooltip: 'Sort',
-                                    onSelected: (action) =>
-                                        activeOwner.setSortOption(
-                                          _sortOptionFromMenuAction(action),
-                                        ),
-                                    itemBuilder: (context) =>
-                                        _sortMenuItems(state, activeOwner),
-                                    padding: EdgeInsets.zero,
-                                    child: Container(
-                                      height: 40,
-                                      width: 40,
-                                      decoration: BoxDecoration(
-                                        color: AppColors.surface,
-                                        border: Border.all(
-                                          color: AppColors.mutedBorder,
-                                        ),
-                                        borderRadius: BorderRadius.circular(
-                                          AppRadius.md,
-                                        ),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: const Icon(
-                                        Icons.sort_rounded,
-                                        size: 18,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: AppSpacing.sm),
-                              if (state.errorMessage != null) ...[
-                                ExplorerErrorBanner(
-                                  message: state.errorMessage!,
-                                  onRetry: activeOwner.refreshCurrentRoot,
-                                ),
-                                const SizedBox(height: AppSpacing.sm),
-                              ],
-                              if (directory.isFileListCapped)
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    bottom: AppSpacing.sm,
-                                  ),
-                                  child: Text(
-                                    'Показаны первые ${directory.entries.files.length} файлов '
-                                    '(скрыто: ${directory.hiddenFilesCount}) для стабильной работы.',
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: AppColors.textSecondary,
-                                        ),
-                                  ),
-                                ),
-                              Expanded(
-                                child: visibleEntries.isEmpty
-                                    ? _RemoteDownloadEmptyState(
-                                        hasOwners: owners.isNotEmpty,
-                                        hasQuery: state.searchQuery
-                                            .trim()
-                                            .isNotEmpty,
-                                      )
-                                    : state.viewMode ==
-                                          FilesFeatureViewMode.list
-                                    ? ListView.separated(
-                                        itemCount: visibleEntries.length,
-                                        separatorBuilder: (context, index) =>
-                                            const SizedBox(
-                                              height: AppSpacing.xs,
-                                            ),
-                                        itemBuilder: (context, index) {
-                                          final entry = visibleEntries[index];
-                                          return _RemoteDownloadListTile(
-                                            entry: entry,
-                                            previewCacheOwner:
-                                                widget.previewCacheOwner,
-                                            isSelected: _isSelected(entry),
-                                            isBusy:
-                                                _previewingToken ==
-                                                    entry.sourceToken ||
-                                                _isDownloading,
-                                            onTap: () => _openEntry(entry),
-                                            onSelectChanged:
-                                                entry.sourceToken == null
-                                                ? null
-                                                : (value) => _toggleSelection(
-                                                    entry,
-                                                    value,
-                                                  ),
-                                          );
-                                        },
-                                      )
-                                    : GridView.builder(
-                                        itemCount: visibleEntries.length,
-                                        gridDelegate:
-                                            SliverGridDelegateWithMaxCrossAxisExtent(
-                                              maxCrossAxisExtent:
-                                                  state.gridTileExtent,
-                                              mainAxisSpacing: AppSpacing.xs,
-                                              crossAxisSpacing: AppSpacing.xs,
-                                              childAspectRatio: 0.9,
-                                            ),
-                                        itemBuilder: (context, index) {
-                                          final entry = visibleEntries[index];
-                                          return _RemoteDownloadGridTile(
-                                            entry: entry,
-                                            tileExtent: state.gridTileExtent,
-                                            previewCacheOwner:
-                                                widget.previewCacheOwner,
-                                            isSelected: _isSelected(entry),
-                                            isBusy:
-                                                _previewingToken ==
-                                                    entry.sourceToken ||
-                                                _isDownloading,
-                                            onTap: () => _openEntry(entry),
-                                            onSelectChanged:
-                                                entry.sourceToken == null
-                                                ? null
-                                                : (value) => _toggleSelection(
-                                                    entry,
-                                                    value,
-                                                  ),
-                                          );
-                                        },
-                                      ),
-                              ),
-                            ],
+                          child: _buildExplorerContent(
+                            context: context,
+                            activeOwner: activeOwner,
+                            state: state!,
+                            owners: owners,
+                            directory: directory,
+                            visibleEntries: visibleEntries,
                           ),
                         ),
                 ),
@@ -523,6 +432,175 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     );
   }
 
+  Widget _buildExplorerContent({
+    required BuildContext context,
+    required FilesFeatureStateOwner activeOwner,
+    required FilesFeatureState state,
+    required List<RemoteBrowseOwnerChoice> owners,
+    required RemoteBrowseExplorerDirectory directory,
+    required List<FilesFeatureEntry> visibleEntries,
+  }) {
+    final slivers = <Widget>[
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ExplorerPathHeader(
+              rootLabel: _rootLabelForActiveFilter,
+              relativePath: activeOwner.relativePathLabel(),
+              canGoUp: activeOwner.canGoUp,
+              onGoUp: activeOwner.canGoUp ? () => activeOwner.goUp() : null,
+              canSelectRoot: false,
+              onSelectRoot: null,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Row(
+              children: [
+                DisplayModeToggle(
+                  isGrid: state.viewMode == FilesFeatureViewMode.grid,
+                  onToggle: activeOwner.toggleViewMode,
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: SizedBox(
+                    height: 40,
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: activeOwner.setSearchQuery,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                        hintText: 'Search files',
+                        prefixIcon: Icon(Icons.search_rounded, size: 18),
+                        prefixIconConstraints: BoxConstraints(
+                          minWidth: 34,
+                          minHeight: 34,
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: AppSpacing.sm,
+                          vertical: AppSpacing.sm,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                PopupMenuButton<ExplorerMenuAction>(
+                  tooltip: 'Sort',
+                  onSelected: (action) => activeOwner.setSortOption(
+                    _sortOptionFromMenuAction(action),
+                  ),
+                  itemBuilder: (context) => _sortMenuItems(state, activeOwner),
+                  padding: EdgeInsets.zero,
+                  child: Container(
+                    height: 40,
+                    width: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      border: Border.all(color: AppColors.mutedBorder),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.sort_rounded, size: 18),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (state.errorMessage != null) ...[
+              ExplorerErrorBanner(
+                message: state.errorMessage!,
+                onRetry: activeOwner.refreshCurrentRoot,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+            if (directory.isFileListCapped)
+              Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: Text(
+                  'Показаны первые ${directory.entries.files.length} файлов '
+                  '(скрыто: ${directory.hiddenFilesCount}) для стабильной работы.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ];
+
+    if (visibleEntries.isEmpty) {
+      slivers.add(
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: _RemoteDownloadEmptyState(
+            hasOwners: owners.isNotEmpty,
+            hasQuery: state.searchQuery.trim().isNotEmpty,
+            hasLoadedCatalog: _hasLoadedCatalogForActiveDevice,
+          ),
+        ),
+      );
+      return CustomScrollView(slivers: slivers);
+    }
+
+    if (state.viewMode == FilesFeatureViewMode.list) {
+      slivers.add(
+        SliverPadding(
+          padding: const EdgeInsets.only(top: AppSpacing.sm),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              if (index.isOdd) {
+                return const SizedBox(height: AppSpacing.xs);
+              }
+              final entry = visibleEntries[index ~/ 2];
+              return _RemoteDownloadListTile(
+                entry: entry,
+                previewCacheOwner: widget.previewCacheOwner,
+                isSelected: _isSelected(entry),
+                isBusy: _previewingToken == entry.sourceToken || _isDownloading,
+                onTap: () => _openEntry(entry),
+                onSelectChanged: entry.sourceToken == null
+                    ? null
+                    : (value) => _toggleSelection(entry, value),
+              );
+            }, childCount: visibleEntries.length * 2 - 1),
+          ),
+        ),
+      );
+      return CustomScrollView(slivers: slivers);
+    }
+
+    slivers.add(
+      SliverPadding(
+        padding: const EdgeInsets.only(top: AppSpacing.sm),
+        sliver: SliverGrid(
+          delegate: SliverChildBuilderDelegate((context, index) {
+            final entry = visibleEntries[index];
+            return _RemoteDownloadGridTile(
+              entry: entry,
+              tileExtent: state.gridTileExtent,
+              previewCacheOwner: widget.previewCacheOwner,
+              isSelected: _isSelected(entry),
+              isBusy: _previewingToken == entry.sourceToken || _isDownloading,
+              onTap: () => _openEntry(entry),
+              onSelectChanged: entry.sourceToken == null
+                  ? null
+                  : (value) => _toggleSelection(entry, value),
+            );
+          }, childCount: visibleEntries.length),
+          gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: state.gridTileExtent,
+            mainAxisSpacing: AppSpacing.xs,
+            crossAxisSpacing: AppSpacing.xs,
+            childAspectRatio: 0.9,
+          ),
+        ),
+      ),
+    );
+    return CustomScrollView(slivers: slivers);
+  }
+
   Future<void> _handleFilterSelected(String nextKey) async {
     if (_activeFilterKey == nextKey) {
       return;
@@ -534,7 +612,34 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     setState(() {
       _activeFilterKey = nextKey;
     });
+    widget.transferSessionCoordinator.logSharedDownloadDebug(
+      stage: 'browser_device_selected',
+      requestId: 'browser',
+      details: <String, Object?>{'ownerIp': nextKey},
+    );
+    widget.transferSessionCoordinator.clearRemoteShareAccessState(
+      ownerIp: nextKey,
+    );
     _syncSearchController();
+  }
+
+  Future<void> _requestAccessForActiveDevice() async {
+    final ownerIp = _activeFilterKey.trim();
+    if (ownerIp.isEmpty) {
+      return;
+    }
+    widget.transferSessionCoordinator.logSharedDownloadDebug(
+      stage: 'browser_request_access_tapped',
+      requestId: 'browser',
+      details: <String, Object?>{
+        'ownerIp': ownerIp,
+        'ownerName': _rootLabelForActiveFilter,
+      },
+    );
+    await widget.transferSessionCoordinator.requestRemoteShareAccess(
+      ownerIp: ownerIp,
+      ownerName: _rootLabelForActiveFilter,
+    );
   }
 
   Future<void> _handleViewModeChanged(
@@ -706,6 +811,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           folderPrefixes: entry.value,
         );
       }
+      for (final entry in target.sharedLabelsByCache.entries) {
+        batch.addSharedLabel(cacheId: entry.key, sharedLabel: entry.value);
+      }
     }
     if (requests.isEmpty) {
       return;
@@ -721,6 +829,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
           ownerName: batch.ownerName,
           selectedRelativePathsByCache: batch.selectedRelativePathsByCache,
           selectedFolderPrefixesByCache: batch.selectedFolderPrefixesByCache,
+          sharedLabelsByCache: batch.sharedLabelsByCache,
           preferDirectStart: true,
           useStandardAppDownloadFolder: widget.useStandardAppDownloadFolder,
         );
@@ -1076,6 +1185,70 @@ class _FlatCategoryFilterBar extends StatelessWidget {
   }
 }
 
+class _RemoteShareAccessActionRow extends StatelessWidget {
+  const _RemoteShareAccessActionRow({
+    required this.deviceLabel,
+    required this.activeOwnerIp,
+    required this.accessState,
+    required this.onRequestAccess,
+  });
+
+  final String deviceLabel;
+  final String activeOwnerIp;
+  final RemoteShareAccessState? accessState;
+  final Future<void> Function()? onRequestAccess;
+
+  @override
+  Widget build(BuildContext context) {
+    final isActiveState =
+        accessState != null && accessState!.ownerIp == activeOwnerIp;
+    final message = isActiveState ? accessState!.statusMessage : null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  deviceLabel.trim().isEmpty
+                      ? 'Выберите устройство'
+                      : 'Доступ к файлам: $deviceLabel',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: AppSpacing.xxs),
+                Text(
+                  message ??
+                      'Запросите доступ у выбранного устройства, чтобы загрузить актуальное дерево общих файлов.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          FilledButton.icon(
+            key: const Key('remote-download-request-access-button'),
+            onPressed: onRequestAccess == null
+                ? null
+                : () => onRequestAccess!(),
+            icon: const Icon(Icons.lock_open_rounded),
+            label: const Text('Запросить доступ'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RemoteDownloadListTile extends StatelessWidget {
   const _RemoteDownloadListTile({
     required this.entry,
@@ -1239,18 +1412,22 @@ class _RemoteDownloadEmptyState extends StatelessWidget {
   const _RemoteDownloadEmptyState({
     required this.hasOwners,
     required this.hasQuery,
+    required this.hasLoadedCatalog,
   });
 
   final bool hasOwners;
   final bool hasQuery;
+  final bool hasLoadedCatalog;
 
   @override
   Widget build(BuildContext context) {
     final message = !hasOwners
-        ? 'Нет доступных файлов в сети. Обновите список или убедитесь, что на другом устройстве открыт общий доступ.'
+        ? 'Нет доступных устройств с приложением в сети.'
         : hasQuery
         ? 'По текущему запросу ничего не найдено.'
-        : 'В этой категории пока нет доступных файлов.';
+        : hasLoadedCatalog
+        ? 'На этом устройстве пока нет доступных файлов в выбранном режиме.'
+        : 'Сначала запросите доступ у выбранного устройства.';
     return Center(child: Text(message, textAlign: TextAlign.center));
   }
 }
@@ -1264,6 +1441,7 @@ class _RemoteDownloadBatch {
       <String, Set<String>>{};
   final Map<String, Set<String>> selectedFolderPrefixesByCache =
       <String, Set<String>>{};
+  final Map<String, String> sharedLabelsByCache = <String, String>{};
 
   void addSelection({
     required String cacheId,
@@ -1296,5 +1474,13 @@ class _RemoteDownloadBatch {
       () => <String>{},
     );
     existing.addAll(folderPrefixes);
+  }
+
+  void addSharedLabel({required String cacheId, required String sharedLabel}) {
+    final normalized = sharedLabel.trim();
+    if (normalized.isEmpty) {
+      return;
+    }
+    sharedLabelsByCache.putIfAbsent(cacheId, () => normalized);
   }
 }

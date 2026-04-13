@@ -26,6 +26,7 @@ class AppSettingsRepository {
   static const String _clipboardHistoryMaxEntriesKey =
       'clipboard_history_max_entries';
   static const String _recacheParallelWorkersKey = 'recache_parallel_workers';
+  static const String _debugLogRetainedLinesKey = 'debug_log_retained_lines';
 
   Future<AppSettings> load() async {
     final db = await _databaseProvider();
@@ -85,6 +86,10 @@ class AppSettingsRepository {
       recacheParallelWorkers: _parseNonNegativeInt(
         values[_recacheParallelWorkersKey],
         fallback: defaults.recacheParallelWorkers,
+      ),
+      debugLogRetainedLines: _parsePositiveInt(
+        values[_debugLogRetainedLinesKey],
+        fallback: defaults.debugLogRetainedLines,
       ),
     );
   }
@@ -153,6 +158,12 @@ class AppSettingsRepository {
         value: settings.recacheParallelWorkers.toString(),
         updatedAtMs: now,
       );
+      await _upsertSetting(
+        txn: txn,
+        key: _debugLogRetainedLinesKey,
+        value: settings.debugLogRetainedLines.toString(),
+        updatedAtMs: now,
+      );
     });
   }
 
@@ -179,6 +190,14 @@ class AppSettingsRepository {
   int _parseNonNegativeInt(String? raw, {required int fallback}) {
     final parsed = int.tryParse(raw ?? '');
     if (parsed == null || parsed < 0) {
+      return fallback;
+    }
+    return parsed;
+  }
+
+  int _parsePositiveInt(String? raw, {required int fallback}) {
+    final parsed = int.tryParse(raw ?? '');
+    if (parsed == null || parsed <= 0) {
       return fallback;
     }
     return parsed;

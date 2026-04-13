@@ -62,7 +62,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: () async {},
+          readModel: harness.readModel,
           remoteShareBrowser: harness.remoteShareBrowser,
           previewCacheOwner: harness.previewCacheOwner,
           transferSessionCoordinator: coordinator,
@@ -88,6 +88,106 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'remote download browser shows only per-device filters and request access action',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'report.txt',
+      );
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.55',
+        ownerName: 'Remote B',
+        cacheId: 'cache-b',
+        displayName: 'Media',
+        filePath: 'movie.mp4',
+        requestId: 'request-2',
+        startBrowse: false,
+      );
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 12);
+
+      expect(find.text('Все устройства'), findsNothing);
+      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
+      expect(find.widgetWithText(ChoiceChip, 'Remote B'), findsOneWidget);
+      expect(
+        find.byKey(const Key('remote-download-request-access-button')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'request access button is wired to real coordinator request flow',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      await _seedCatalog(
+        browser: harness.remoteShareBrowser,
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
+        cacheId: 'cache-a',
+        displayName: 'Docs',
+        filePath: 'report.txt',
+      );
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 12);
+
+      await tester.tap(
+        find.byKey(const Key('remote-download-request-access-button')),
+      );
+      await _pumpForUi(tester, frames: 6);
+
+      expect(coordinator.accessRequestCalls, 1);
+      expect(coordinator.lastAccessRequestOwnerIp, '192.168.1.44');
+    },
+  );
 
   testWidgets(
     'selection survives filter switch and is pruned on invalidation',
@@ -125,7 +225,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -191,7 +291,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: () async {},
+          readModel: harness.readModel,
           remoteShareBrowser: harness.remoteShareBrowser,
           previewCacheOwner: harness.previewCacheOwner,
           transferSessionCoordinator: coordinator,
@@ -249,7 +349,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -302,7 +402,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -363,7 +463,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -383,7 +483,7 @@ void main() {
   );
 
   testWidgets(
-    'all-devices structured view shows share folders and allows navigation without switching to a device filter',
+    'per-device structured view shows share folders and allows navigation',
     (tester) async {
       _registerWidgetCleanup(tester);
       await _seedCatalogWithFiles(
@@ -408,7 +508,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -418,14 +518,15 @@ void main() {
       );
       await _pumpForUi(tester, frames: 20);
 
-      expect(find.textContaining('Remote A • Share'), findsWidgets);
+      expect(find.text('Все устройства'), findsNothing);
+      expect(find.text('Share'), findsWidgets);
 
-      await tester.tap(find.textContaining('Remote A • Share').first);
+      await tester.tap(find.text('Share').first);
       await _pumpForUi(tester, frames: 8);
 
       expect(find.text('docs'), findsOneWidget);
       expect(find.text('top.txt'), findsOneWidget);
-      expect(find.text('Remote A / Share / top.txt • 12 B'), findsOneWidget);
+      expect(find.text('Share / top.txt • 12 B'), findsOneWidget);
     },
   );
 
@@ -455,7 +556,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: () async {},
+          readModel: harness.readModel,
           remoteShareBrowser: harness.remoteShareBrowser,
           previewCacheOwner: harness.previewCacheOwner,
           transferSessionCoordinator: coordinator,
@@ -477,8 +578,9 @@ void main() {
   });
 
   testWidgets(
-    'long press and selection circle both toggle file selection while tap stays preview',
+    'long press selects, selection circle toggles, and tap stays preview',
     (tester) async {
+      await _setLargeSurface(tester);
       _registerWidgetCleanup(tester);
       final previewFile = File(
         '${harness.databaseHarness.rootDirectory.path}/selection-preview.txt',
@@ -509,7 +611,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -522,11 +624,22 @@ void main() {
       await tester.tap(find.text('Без структуры'));
       await _pumpForUi(tester, frames: 8);
 
+      await _pumpUntilFound(
+        tester,
+        find.text('report.txt'),
+        failureMessage: 'Flat-mode file entry did not appear for selection.',
+      );
+      await tester.ensureVisible(find.text('report.txt'));
+      await _pumpForUi(tester, frames: 2);
       await tester.longPress(find.text('report.txt'));
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsOneWidget);
 
-      await tester.longPress(find.text('report.txt'));
+      await tester.tap(
+        find.byKey(
+          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
+        ),
+      );
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsNothing);
 
@@ -537,14 +650,6 @@ void main() {
       );
       await _pumpForUi(tester, frames: 4);
       expect(find.text('Скачать выбранные (1)'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(
-          const Key('remote-download-select-192.168.1.44|cache-a|report.txt'),
-        ),
-      );
-      await _pumpForUi(tester, frames: 4);
-      expect(find.text('Скачать выбранные (1)'), findsNothing);
 
       await tester.tap(find.text('report.txt'));
       await _pumpUntilFound(
@@ -584,7 +689,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: () async {},
+          readModel: harness.readModel,
           remoteShareBrowser: harness.remoteShareBrowser,
           previewCacheOwner: harness.previewCacheOwner,
           transferSessionCoordinator: coordinator,
@@ -634,7 +739,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: RemoteDownloadBrowserPage(
-          onRefreshRemoteShares: () async {},
+          readModel: harness.readModel,
           remoteShareBrowser: harness.remoteShareBrowser,
           previewCacheOwner: harness.previewCacheOwner,
           transferSessionCoordinator: coordinator,
@@ -703,7 +808,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -784,7 +889,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: RemoteDownloadBrowserPage(
-            onRefreshRemoteShares: () async {},
+            readModel: harness.readModel,
             remoteShareBrowser: harness.remoteShareBrowser,
             previewCacheOwner: harness.previewCacheOwner,
             transferSessionCoordinator: coordinator,
@@ -1006,6 +1111,8 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
 
   final Future<String?> Function() _previewPathProvider;
   int downloadCalls = 0;
+  int accessRequestCalls = 0;
+  String? lastAccessRequestOwnerIp;
   Map<String, Set<String>>? lastSelectedByCache;
   Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
   SharedDownloadPreparationState? _preparationState;
@@ -1061,11 +1168,21 @@ class _TestTransferSessionCoordinator extends TransferSessionCoordinator {
     required Map<String, Set<String>> selectedRelativePathsByCache,
     Map<String, Set<String>> selectedFolderPrefixesByCache =
         const <String, Set<String>>{},
+    Map<String, String> sharedLabelsByCache = const <String, String>{},
     bool preferDirectStart = false,
     required bool useStandardAppDownloadFolder,
   }) async {
     downloadCalls += 1;
     lastSelectedByCache = selectedRelativePathsByCache;
     lastSelectedFolderPrefixesByCache = selectedFolderPrefixesByCache;
+  }
+
+  @override
+  Future<void> requestRemoteShareAccess({
+    required String ownerIp,
+    required String ownerName,
+  }) async {
+    accessRequestCalls += 1;
+    lastAccessRequestOwnerIp = ownerIp;
   }
 }

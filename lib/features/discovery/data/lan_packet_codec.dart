@@ -19,6 +19,8 @@ class LanPacketCodec {
   static const String friendRequestPrefix = lanFriendRequestPrefix;
   static const String friendResponsePrefix = lanFriendResponsePrefix;
   static const String shareQueryPrefix = lanShareQueryPrefix;
+  static const String shareAccessRequestPrefix = lanShareAccessRequestPrefix;
+  static const String shareAccessResponsePrefix = lanShareAccessResponsePrefix;
   static const String shareCatalogPrefix = lanShareCatalogPrefix;
   static const String downloadRequestPrefix = lanDownloadRequestPrefix;
   static const String downloadResponsePrefix = lanDownloadResponsePrefix;
@@ -98,6 +100,10 @@ class LanPacketCodec {
         return _friendCodec.parseFriendResponsePacket(message);
       case lanShareQueryPrefix:
         return _shareCodec.parseShareQueryPacket(message);
+      case lanShareAccessRequestPrefix:
+        return _shareCodec.parseShareAccessRequestPacket(message);
+      case lanShareAccessResponsePrefix:
+        return _shareCodec.parseShareAccessResponsePacket(message);
       case lanShareCatalogPrefix:
         return _shareCodec.parseShareCatalogPacket(message);
       case lanDownloadRequestPrefix:
@@ -207,6 +213,42 @@ class LanPacketCodec {
     );
   }
 
+  EncodedLanPacket? encodeShareAccessRequest({
+    required String instanceId,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareAccessRequest(
+      instanceId: instanceId,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      transferPort: transferPort,
+      createdAtMs: createdAtMs,
+    );
+  }
+
+  EncodedLanPacket? encodeShareAccessResponse({
+    required String instanceId,
+    required String requestId,
+    required String responderName,
+    required bool approved,
+    String? message,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareAccessResponse(
+      instanceId: instanceId,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: message,
+      createdAtMs: createdAtMs,
+    );
+  }
+
   EncodedLanPacket? encodeShareCatalog({
     required String instanceId,
     required String requestId,
@@ -215,8 +257,32 @@ class LanPacketCodec {
     required List<SharedCatalogEntryItem> entries,
     required List<String> removedCacheIds,
     required int createdAtMs,
+    int chunkIndex = 0,
+    int chunkCount = 1,
   }) {
     return _shareCodec.encodeShareCatalog(
+      instanceId: instanceId,
+      requestId: requestId,
+      ownerName: ownerName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+      removedCacheIds: removedCacheIds,
+      createdAtMs: createdAtMs,
+      chunkIndex: chunkIndex,
+      chunkCount: chunkCount,
+    );
+  }
+
+  List<EncodedLanPacket> encodeShareCatalogChunks({
+    required String instanceId,
+    required String requestId,
+    required String ownerName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+    required List<String> removedCacheIds,
+    required int createdAtMs,
+  }) {
+    return _shareCodec.encodeShareCatalogChunks(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,
@@ -258,6 +324,7 @@ class LanPacketCodec {
     required String requestId,
     required String responderName,
     required bool approved,
+    String? phase,
     String? message,
     required int createdAtMs,
   }) {
@@ -266,6 +333,7 @@ class LanPacketCodec {
       requestId: requestId,
       responderName: responderName,
       approved: approved,
+      phase: phase,
       message: message,
       createdAtMs: createdAtMs,
     );

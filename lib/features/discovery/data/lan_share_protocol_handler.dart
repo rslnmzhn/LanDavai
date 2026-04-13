@@ -17,6 +17,36 @@ class LanShareProtocolHandler {
     );
   }
 
+  ShareAccessRequestEvent handleShareAccessRequestPacket({
+    required LanShareAccessRequestPacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    return ShareAccessRequestEvent(
+      requestId: packet.requestId,
+      requesterIp: senderIp,
+      requesterName: packet.requesterName,
+      requesterMacAddress: packet.requesterMacAddress,
+      transferPort: packet.transferPort,
+      observedAt: observedAt,
+    );
+  }
+
+  ShareAccessResponseEvent handleShareAccessResponsePacket({
+    required LanShareAccessResponsePacket packet,
+    required String senderIp,
+    required DateTime observedAt,
+  }) {
+    return ShareAccessResponseEvent(
+      requestId: packet.requestId,
+      responderIp: senderIp,
+      responderName: packet.responderName,
+      approved: packet.approved,
+      observedAt: observedAt,
+      message: packet.message,
+    );
+  }
+
   ShareCatalogEvent handleShareCatalogPacket({
     required LanShareCatalogPacket packet,
     required String senderIp,
@@ -62,6 +92,7 @@ class LanShareProtocolHandler {
       responderIp: senderIp,
       responderName: packet.responderName,
       approved: packet.approved,
+      phase: packet.phase,
       message: packet.message,
       observedAt: observedAt,
     );

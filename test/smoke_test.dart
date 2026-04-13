@@ -345,6 +345,17 @@ void main() {
     expect(find.text('Настройки'), findsOneWidget);
     expect(find.text('Сеть'), findsOneWidget);
     expect(find.text('Фоновое сканирование сети'), findsOneWidget);
+
+    await tester.tap(find.text('Хранилище'));
+    await _pumpForUi(tester);
+    await _scrollUntilFound(
+      tester,
+      find.byKey(const Key('settings-show-logs-action')),
+      scrollable: find.byType(ListView).first,
+    );
+
+    expect(find.text('Показать логи'), findsOneWidget);
+    expect(find.text('Открыть папку с логами'), findsOneWidget);
   });
 
   testWidgets(
@@ -545,6 +556,21 @@ Future<void> _pumpForUi(WidgetTester tester, {int frames = 12}) async {
   for (var i = 0; i < frames; i += 1) {
     await tester.pump(const Duration(milliseconds: 50));
   }
+}
+
+Future<void> _scrollUntilFound(
+  WidgetTester tester,
+  Finder target, {
+  required Finder scrollable,
+}) async {
+  for (var index = 0; index < 6; index += 1) {
+    if (target.evaluate().isNotEmpty) {
+      return;
+    }
+    await tester.drag(scrollable, const Offset(0, -220));
+    await _pumpForUi(tester, frames: 4);
+  }
+  expect(target, findsOneWidget);
 }
 
 void _registerWidgetCleanup(WidgetTester tester) {

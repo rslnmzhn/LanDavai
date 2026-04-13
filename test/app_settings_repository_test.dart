@@ -71,6 +71,10 @@ void main() {
       settings.recacheParallelWorkers,
       AppSettings.defaults.recacheParallelWorkers,
     );
+    expect(
+      settings.debugLogRetainedLines,
+      AppSettings.defaults.debugLogRetainedLines,
+    );
   });
 
   test('persists and restores all app settings', () async {
@@ -85,6 +89,7 @@ void main() {
       previewCacheMaxAgeDays: 10,
       clipboardHistoryMaxEntries: 42,
       recacheParallelWorkers: 6,
+      debugLogRetainedLines: 320,
     );
 
     await repository.save(expected);
@@ -109,5 +114,6 @@ void main() {
       expected.clipboardHistoryMaxEntries,
     );
     expect(restored.recacheParallelWorkers, expected.recacheParallelWorkers);
+    expect(restored.debugLogRetainedLines, expected.debugLogRetainedLines);
   });
 }

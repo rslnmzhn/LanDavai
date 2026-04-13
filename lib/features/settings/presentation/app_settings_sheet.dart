@@ -25,6 +25,9 @@ class AppSettingsSheet extends StatefulWidget {
     required this.onPreviewCacheMaxAgeDaysChanged,
     required this.onClipboardHistoryMaxEntriesChanged,
     required this.onRecacheParallelWorkersChanged,
+    required this.onDebugLogRetainedLinesChanged,
+    required this.onShowLogs,
+    required this.onOpenLogsFolder,
     super.key,
   });
 
@@ -43,6 +46,9 @@ class AppSettingsSheet extends StatefulWidget {
   final ValueChanged<int> onPreviewCacheMaxAgeDaysChanged;
   final ValueChanged<int> onClipboardHistoryMaxEntriesChanged;
   final ValueChanged<int> onRecacheParallelWorkersChanged;
+  final ValueChanged<int> onDebugLogRetainedLinesChanged;
+  final Future<String?> Function() onShowLogs;
+  final Future<String?> Function() onOpenLogsFolder;
 
   @override
   State<AppSettingsSheet> createState() => _AppSettingsSheetState();
@@ -53,8 +59,11 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   late final TextEditingController _cacheAgeController;
   late final TextEditingController _clipboardLimitController;
   late final TextEditingController _recacheWorkersController;
+  late final TextEditingController _debugLogRetainedLinesController;
   late final TextEditingController _videoLinkPasswordController;
   late final TextEditingController _configuredTargetController;
+  bool _isShowingLogs = false;
+  bool _isOpeningLogsFolder = false;
 
   @override
   void initState() {
@@ -70,6 +79,9 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     );
     _recacheWorkersController = TextEditingController(
       text: widget.settings.recacheParallelWorkers.toString(),
+    );
+    _debugLogRetainedLinesController = TextEditingController(
+      text: widget.settings.debugLogRetainedLines.toString(),
     );
     _videoLinkPasswordController = TextEditingController(
       text: widget.settings.videoLinkPassword,
@@ -102,6 +114,13 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       _recacheWorkersController.text = widget.settings.recacheParallelWorkers
           .toString();
     }
+    if (oldWidget.settings.debugLogRetainedLines !=
+        widget.settings.debugLogRetainedLines) {
+      _debugLogRetainedLinesController.text = widget
+          .settings
+          .debugLogRetainedLines
+          .toString();
+    }
     if (oldWidget.settings.videoLinkPassword !=
         widget.settings.videoLinkPassword) {
       _videoLinkPasswordController.text = widget.settings.videoLinkPassword;
@@ -114,6 +133,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     _cacheAgeController.dispose();
     _clipboardLimitController.dispose();
     _recacheWorkersController.dispose();
+    _debugLogRetainedLinesController.dispose();
     _videoLinkPasswordController.dispose();
     _configuredTargetController.dispose();
     super.dispose();
@@ -162,8 +182,38 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     widget.onRecacheParallelWorkersChanged(parsed);
   }
 
+  void _saveDebugLogRetainedLines() {
+    final parsed = int.tryParse(_debugLogRetainedLinesController.text.trim());
+    if (parsed == null || parsed <= 0) {
+      _showValidationMessage('Введите положительное число строк.');
+      return;
+    }
+    widget.onDebugLogRetainedLinesChanged(parsed);
+  }
+
   void _saveVideoLinkPassword() {
     widget.onVideoLinkPasswordChanged(_videoLinkPasswordController.text.trim());
+  }
+
+  Future<void> _runLogAction({
+    required Future<String?> Function() action,
+    required void Function(bool value) setBusy,
+  }) async {
+    setState(() {
+      setBusy(true);
+    });
+    try {
+      final message = await action();
+      if (message != null && mounted) {
+        _showValidationMessage(message);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          setBusy(false);
+        });
+      }
+    }
   }
 
   Future<void> _addConfiguredTarget() async {
@@ -257,10 +307,23 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                   cacheAgeController: _cacheAgeController,
                   clipboardLimitController: _clipboardLimitController,
                   recacheWorkersController: _recacheWorkersController,
+                  debugLogRetainedLinesController:
+                      _debugLogRetainedLinesController,
                   onSaveCacheSize: _saveCacheSize,
                   onSaveCacheAge: _saveCacheAge,
                   onSaveClipboardLimit: _saveClipboardLimit,
                   onSaveRecacheParallelWorkers: _saveRecacheParallelWorkers,
+                  onSaveDebugLogRetainedLines: _saveDebugLogRetainedLines,
+                  onShowLogs: () => _runLogAction(
+                    action: widget.onShowLogs,
+                    setBusy: (value) => _isShowingLogs = value,
+                  ),
+                  onOpenLogsFolder: () => _runLogAction(
+                    action: widget.onOpenLogsFolder,
+                    setBusy: (value) => _isOpeningLogsFolder = value,
+                  ),
+                  isShowingLogs: _isShowingLogs,
+                  isOpeningLogsFolder: _isOpeningLogsFolder,
                 ),
                 AppSettingsAccessTab(
                   videoLinkPasswordController: _videoLinkPasswordController,

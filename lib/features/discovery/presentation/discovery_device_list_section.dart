@@ -62,6 +62,22 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
+          if (transferSessionCoordinator
+              .incomingRemoteShareAccessRequests
+              .isNotEmpty) ...[
+            _IncomingRemoteShareAccessRequestsCard(
+              requests:
+                  transferSessionCoordinator.incomingRemoteShareAccessRequests,
+              onRespond: ({required requestId, required approved}) {
+                return transferSessionCoordinator
+                    .respondToIncomingRemoteShareAccessRequest(
+                      requestId: requestId,
+                      approved: approved,
+                    );
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           if (transferSessionCoordinator.isUploading ||
               transferSessionCoordinator.isDownloading ||
               transferSessionCoordinator.isPreparingSharedDownload ||
@@ -388,6 +404,106 @@ class _IncomingSharedDownloadRequestsCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _IncomingRemoteShareAccessRequestsCard extends StatelessWidget {
+  const _IncomingRemoteShareAccessRequestsCard({
+    required this.requests,
+    required this.onRespond,
+  });
+
+  final List<IncomingRemoteShareAccessRequest> requests;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Запросы доступа к общим папкам',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            for (var index = 0; index < requests.length; index += 1) ...[
+              _IncomingRemoteShareAccessRequestTile(
+                request: requests[index],
+                onRespond: onRespond,
+              ),
+              if (index != requests.length - 1)
+                const SizedBox(height: AppSpacing.sm),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
+  const _IncomingRemoteShareAccessRequestTile({
+    required this.request,
+    required this.onRespond,
+  });
+
+  final IncomingRemoteShareAccessRequest request;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Устройство "${request.requesterName}" хочет получить доступ к вашим общим папкам.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'После подтверждения будет отправлен актуальный snapshot списка файлов.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: true),
+                child: const Text('Отправить'),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: false),
+                child: const Text('Отказать'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

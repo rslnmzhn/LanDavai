@@ -245,25 +245,25 @@ class RemoteBrowseResolvedDownloadTarget {
     required this.ownerName,
     required this.selectedRelativePathsByCache,
     required this.selectedFolderPrefixesByCache,
+    required this.sharedLabelsByCache,
   });
 
   final String ownerIp;
   final String ownerName;
   final Map<String, Set<String>> selectedRelativePathsByCache;
   final Map<String, Set<String>> selectedFolderPrefixesByCache;
+  final Map<String, String> sharedLabelsByCache;
 }
 
 class RemoteShareBrowser extends ChangeNotifier {
   RemoteShareBrowser({
     required SharedCacheCatalog sharedCacheCatalog,
-    this.maxFilesPerCacheForUi = 4000,
     this.maxVisibleFiles = 2500,
   }) : _sharedCacheCatalog = sharedCacheCatalog;
 
   static const String allDevicesFilterKey = '__all_devices__';
 
   final SharedCacheCatalog _sharedCacheCatalog;
-  final int maxFilesPerCacheForUi;
   final int maxVisibleFiles;
 
   final List<RemoteShareOption> _options = <RemoteShareOption>[];
@@ -340,23 +340,61 @@ class RemoteShareBrowser extends ChangeNotifier {
       return;
     }
 
+    await _applyCatalogEntries(
+      ownerIp: event.ownerIp,
+      requestId: event.requestId,
+      ownerDisplayName: ownerDisplayName,
+      ownerMacAddress: ownerMacAddress,
+      entries: event.entries,
+    );
+  }
+
+  Future<void> applyAccessSnapshot({
+    required String ownerIp,
+    required String ownerDisplayName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+  }) async {
+    await _applyCatalogEntries(
+      ownerIp: ownerIp,
+      requestId: 'access-snapshot:$ownerIp',
+      ownerDisplayName: ownerDisplayName,
+      ownerMacAddress: ownerMacAddress,
+      entries: entries,
+    );
+  }
+
+  void clearBrowseProjection() {
+    _activeRequestId = null;
+    _isLoading = false;
+    _options.clear();
+    _previewPathsByFileKey.clear();
+    notifyListeners();
+  }
+
+  Future<void> _applyCatalogEntries({
+    required String ownerIp,
+    required String requestId,
+    required String ownerDisplayName,
+    required String ownerMacAddress,
+    required List<SharedCatalogEntryItem> entries,
+  }) async {
     final normalizedOwnerMac =
         DeviceAliasRepository.normalizeMac(ownerMacAddress) ?? ownerMacAddress;
     await _refreshReceiverSnapshots(ownerMacAddress: normalizedOwnerMac);
 
-    _options.removeWhere((option) => option.ownerIp == event.ownerIp);
-    _clearOwnerPreviewPaths(ownerIp: event.ownerIp, notify: false);
+    _options.removeWhere((option) => option.ownerIp == ownerIp);
+    _clearOwnerPreviewPaths(ownerIp: ownerIp, notify: false);
 
-    final dedupedEntries = _dedupeEntriesForProjection(event.entries);
+    final dedupedEntries = _dedupeEntriesForProjection(entries);
     for (final entry in dedupedEntries) {
-      final uiEntry = _trimRemoteShareEntryForProjection(entry);
       _options.add(
         RemoteShareOption(
-          requestId: event.requestId,
-          ownerIp: event.ownerIp,
+          requestId: requestId,
+          ownerIp: ownerIp,
           ownerName: ownerDisplayName,
           ownerMacAddress: normalizedOwnerMac,
-          entry: uiEntry,
+          entry: entry,
           receiverCacheSnapshot:
               _receiverSnapshotsByRemoteCacheId[entry.cacheId],
         ),
@@ -447,6 +485,9 @@ class RemoteShareBrowser extends ChangeNotifier {
           file.cacheId: <String>{file.relativePath},
         },
         selectedFolderPrefixesByCache: const <String, Set<String>>{},
+        sharedLabelsByCache: <String, String>{
+          file.cacheId: file.cacheDisplayName,
+        },
       );
     }
     final folder = _parseFolderToken(token);
@@ -457,6 +498,7 @@ class RemoteShareBrowser extends ChangeNotifier {
     String? ownerName;
     final selectedRelativePathsByCache = <String, Set<String>>{};
     final selectedFolderPrefixesByCache = <String, Set<String>>{};
+    final sharedLabelsByCache = <String, String>{};
     for (final option in _options) {
       if (option.ownerIp != folder.ownerIp) {
         continue;
@@ -465,6 +507,7 @@ class RemoteShareBrowser extends ChangeNotifier {
       if (folder.cacheId != null && option.entry.cacheId != folder.cacheId) {
         continue;
       }
+      sharedLabelsByCache[option.entry.cacheId] = option.entry.displayName;
       if (folder.cacheId != null && folder.relativeFolderPath.isEmpty) {
         selectedRelativePathsByCache[option.entry.cacheId] = <String>{};
         continue;
@@ -490,6 +533,7 @@ class RemoteShareBrowser extends ChangeNotifier {
       ownerName: ownerName,
       selectedRelativePathsByCache: selectedRelativePathsByCache,
       selectedFolderPrefixesByCache: selectedFolderPrefixesByCache,
+      sharedLabelsByCache: sharedLabelsByCache,
     );
   }
 
@@ -978,21 +1022,6 @@ class RemoteShareBrowser extends ChangeNotifier {
     );
   }
 
-  SharedCatalogEntryItem _trimRemoteShareEntryForProjection(
-    SharedCatalogEntryItem entry,
-  ) {
-    if (entry.files.length <= maxFilesPerCacheForUi) {
-      return entry;
-    }
-    return SharedCatalogEntryItem(
-      cacheId: entry.cacheId,
-      displayName: entry.displayName,
-      itemCount: entry.itemCount,
-      totalBytes: entry.totalBytes,
-      files: entry.files.take(maxFilesPerCacheForUi).toList(growable: false),
-    );
-  }
-
   RemoteBrowseResolvedFile _toResolvedFile({
     required RemoteShareOption option,
     required SharedCatalogFileItem file,
@@ -1189,7 +1218,7 @@ class RemoteShareBrowser extends ChangeNotifier {
         ? '*'
         : cacheId.trim();
     return 'folder|$ownerIp|$normalizedCacheId|'
-        '${_normalizeRelativePath(relativeFolderPath).toLowerCase()}';
+        '${_normalizeRelativePath(relativeFolderPath)}';
   }
 
   _ParsedFolderToken? _parseFolderToken(String token) {
@@ -1205,7 +1234,7 @@ class RemoteShareBrowser extends ChangeNotifier {
     return _ParsedFolderToken(
       ownerIp: ownerIp,
       cacheId: cacheId == '*' ? null : cacheId,
-      relativeFolderPath: _normalizeRelativePath(parts[3]).toLowerCase(),
+      relativeFolderPath: _normalizeRelativePath(parts[3]),
     );
   }
 
