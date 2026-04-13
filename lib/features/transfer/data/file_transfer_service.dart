@@ -264,6 +264,8 @@ class FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
@@ -275,9 +277,20 @@ class FileTransferService {
     );
     TransferSourceFile? currentFile;
     try {
+      final effectiveManifestItems =
+          manifestItems ??
+          files
+              .map(
+                (file) => TransferFileManifestItem(
+                  fileName: file.fileName,
+                  sizeBytes: file.sizeBytes,
+                  sha256: file.sha256,
+                ),
+              )
+              .toList(growable: false);
       final payload = <String, Object?>{
         'requestId': requestId,
-        'files': files
+        'files': effectiveManifestItems
             .map(
               (file) => <String, Object>{
                 'name': file.fileName,
@@ -287,14 +300,16 @@ class FileTransferService {
             )
             .toList(growable: false),
       };
-      final knownHashFileCount = files.where((file) {
+      final knownHashFileCount = effectiveManifestItems.where((file) {
         return file.sha256.trim().isNotEmpty;
       }).length;
-      final missingHashFileCount = files.length - knownHashFileCount;
+      final missingHashFileCount =
+          effectiveManifestItems.length - knownHashFileCount;
       onDiagnosticEvent?.call(
         stage: 'transfer_header_build_start',
         details: <String, Object?>{
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
         },
@@ -304,7 +319,8 @@ class FileTransferService {
       onDiagnosticEvent?.call(
         stage: 'transfer_header_built',
         details: <String, Object?>{
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
           'headerBytes': header.bytes.length,
@@ -323,7 +339,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
         },
@@ -332,17 +349,32 @@ class FileTransferService {
       socket.add(headerBytes);
       await socket.flush();
 
-      final totalBytes = files.fold<int>(
+      final totalBytes = effectiveManifestItems.fold<int>(
         0,
         (sum, file) => sum + file.sizeBytes,
       );
       var sentBytes = 0;
       onProgress?.call(0, totalBytes);
-      for (final file in files) {
+      for (var index = 0; index < effectiveManifestItems.length; index += 1) {
+        final file = index < files.length
+            ? files[index]
+            : await (resolveFileAt?.call(index) ??
+                  Future<TransferSourceFile>.error(
+                    StateError(
+                      'Transfer source resolver missing for file index $index.',
+                    ),
+                  ));
         currentFile = file;
         final source = File(file.sourcePath);
         if (!await source.exists()) {
           throw StateError('Source file does not exist: ${file.sourcePath}');
+        }
+        final actualSize = await source.length();
+        if (actualSize != file.sizeBytes) {
+          throw StateError(
+            'Sender file size mismatch for ${file.fileName}. '
+            'File changed during transfer preparation.',
+          );
         }
 
         final digestSink = _DigestSink();
@@ -372,7 +404,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'totalBytes': totalBytes,
         },
       );
@@ -382,7 +415,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': manifestItems?.length ?? files.length,
+          'preparedFileCount': files.length,
           if (currentFile != null) 'currentFileName': currentFile.fileName,
           if (currentFile != null) 'currentSourcePath': currentFile.sourcePath,
         },

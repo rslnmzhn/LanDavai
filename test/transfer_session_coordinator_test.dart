@@ -474,8 +474,9 @@ void main() {
           lanDiscoveryService.downloadResponses.single.phase,
           'ready_to_connect',
         );
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
-          fileTransferService.lastFiles.map((file) => file.fileName),
+          fileTransferService.lastManifestItems.map((file) => file.fileName),
           containsAll(<String>['a.txt', 'sub/b.txt']),
         );
         expect(
@@ -558,6 +559,7 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileHashService.pendingPaths, isEmpty);
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
           fileTransferService.lastFiles.every(
             (file) => file.sha256.trim().isEmpty,
@@ -653,6 +655,7 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileHashService.computeCalls, 0);
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
           fileTransferService.lastFiles
               .firstWhere((file) => file.fileName == 'a.txt')
@@ -665,6 +668,82 @@ void main() {
               .sha256,
           isEmpty,
         );
+      },
+    );
+
+    test(
+      'sender whole-share direct-start prepares only the first batch before connect/send',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_first_batch_only',
+          ),
+        );
+        await ownerRoot.create(recursive: true);
+        const totalFileCount = 600;
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(ownerRoot.path, 'Workspace', 'set_$index', 'f_$index.txt'),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('item-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-first-batch',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-first-batch',
+          approved: true,
+        );
+        for (var index = 0; index < 20; index += 1) {
+          if (fileTransferService.sendFilesCalls > 0) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(
+          fileTransferService.lastManifestItems,
+          hasLength(totalFileCount),
+        );
+        expect(fileTransferService.lastFiles.length, 256);
+        expect(fileTransferService.lastFiles.length, lessThan(totalFileCount));
       },
     );
 
@@ -766,15 +845,11 @@ void main() {
         );
         expect(
           logContents,
-          contains(
-            '"stage":"sender_whole_share_live_filesystem_traversal_start"',
-          ),
+          contains('"stage":"sender_whole_share_first_batch_prepare_start"'),
         );
         expect(
           logContents,
-          contains(
-            '"stage":"sender_whole_share_live_filesystem_traversal_complete"',
-          ),
+          contains('"stage":"sender_whole_share_first_batch_prepare_complete"'),
         );
         expect(
           logContents,
@@ -789,6 +864,7 @@ void main() {
           isNot(contains('"stage":"sender_whole_share_hash_stage_start"')),
         );
         expect(logContents, contains('"stage":"sender_ready_to_connect_sent"'));
+        expect(logContents, contains('"preparedFirstBatchCount":2'));
         expect(
           logContents,
           contains(
@@ -3655,6 +3731,8 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
 class CapturingSendFileTransferService extends FileTransferService {
   int sendFilesCalls = 0;
   List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
+  List<TransferFileManifestItem> lastManifestItems =
+      const <TransferFileManifestItem>[];
 
   @override
   Future<void> sendFiles({
@@ -3662,12 +3740,26 @@ class CapturingSendFileTransferService extends FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     sendFilesCalls += 1;
     lastFiles = List<TransferSourceFile>.from(files);
+    lastManifestItems = List<TransferFileManifestItem>.from(
+      manifestItems ??
+          files
+              .map(
+                (file) => TransferFileManifestItem(
+                  fileName: file.fileName,
+                  sizeBytes: file.sizeBytes,
+                  sha256: file.sha256,
+                ),
+              )
+              .toList(growable: false),
+    );
   }
 }
 
@@ -3687,6 +3779,8 @@ class InspectingSendFileTransferService extends FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -157,6 +158,8 @@ class RemoteShareAccessProjectionLoadResult {
 }
 
 class TransferSessionCoordinator extends ChangeNotifier {
+  static const int _wholeShareDirectStartFirstBatchFileCount = 256;
+
   static Future<RemoteShareAccessProjectionLoadResult>
   _noopApplyRemoteShareAccessSnapshot({
     required String ownerIp,
@@ -2030,6 +2033,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String receiverName,
     required int transferPort,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     Map<String, Object?> diagnosticDetails = const <String, Object?>{},
     bool logWholeShareConnectAttempt = false,
     Map<String, Object?> wholeShareConnectAttemptDetails =
@@ -2037,7 +2042,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }) async {
     _clearSharedUploadPreparation(requestId: requestId);
     _uploadSentBytes = 0;
-    _uploadTotalBytes = files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
+    _uploadTotalBytes =
+        manifestItems?.fold<int>(0, (sum, file) => sum + file.sizeBytes) ??
+        files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
     _resetUploadSpeedTracking(currentBytes: 0);
     _notify();
 
@@ -2052,6 +2059,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             'receiverName': receiverName,
             'transferPort': transferPort,
             'preparedFileCount': files.length,
+            'manifestFileCount': manifestItems?.length ?? files.length,
             'preparedTotalBytes': files.fold<int>(
               0,
               (sum, file) => sum + file.sizeBytes,
@@ -2064,6 +2072,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
         port: transferPort,
         requestId: requestId,
         files: files,
+        manifestItems: manifestItems,
+        resolveFileAt: resolveFileAt,
         onDiagnosticEvent: _fileTransferDiagnosticLogger(
           requestId: requestId,
           baseDetails: <String, Object?>{
@@ -2935,6 +2945,146 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
 
     try {
+      final directTransferPort = request.transferPort;
+      final useWholeShareFirstBatchDirectStart =
+          request.requestsWholeShare && directTransferPort != null;
+      if (useWholeShareFirstBatchDirectStart) {
+        final sendPlan = await _buildWholeShareDirectStartSendPlan(
+          cache,
+          onDiagnosticEvent: wholeShareDiagnosticLogger,
+        );
+        if (sendPlan.manifestItems.isEmpty ||
+            sendPlan.firstBatchFiles.isEmpty) {
+          _clearSharedUploadPreparation(requestId: request.requestId);
+          _writeSharedDownloadDiagnostic(
+            stage: 'sender_prepare_failure',
+            requestId: request.requestId,
+            details: <String, Object?>{
+              'sharedCacheId': request.sharedCacheId,
+              'reason': 'no_prepared_files',
+            },
+          );
+          wholeShareDiagnosticLogger?.call(
+            stage: 'sender_whole_share_prepare_failure',
+            details: const <String, Object?>{'reason': 'no_prepared_files'},
+          );
+          await _lanDiscoveryService.sendDownloadResponse(
+            targetIp: request.requesterIp,
+            requestId: request.requestId,
+            responderName: _localName,
+            approved: false,
+            message: 'Не найдено доступных файлов для отправки.',
+          );
+          _publishNotice(
+            const TransferSessionNotice(
+              errorMessage: 'Не удалось подготовить файлы к отправке.',
+            ),
+          );
+          return;
+        }
+
+        _setSharedUploadPreparation(
+          requestId: request.requestId,
+          requesterName: request.requesterName,
+          stage: SharedUploadPreparationStage.preparingTransfer,
+        );
+        final firstBatchKnownHashCount = sendPlan.firstBatchFiles
+            .where((file) => file.sha256.trim().isNotEmpty)
+            .length;
+        final firstBatchMissingHashCount =
+            sendPlan.firstBatchFiles.length - firstBatchKnownHashCount;
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_prepare_complete',
+          requestId: request.requestId,
+          details: <String, Object?>{
+            'sharedCacheId': request.sharedCacheId,
+            'preparedFileCount': sendPlan.firstBatchFiles.length,
+            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
+              0,
+              (sum, file) => sum + file.sizeBytes,
+            ),
+            'preparedKnownHashCount': firstBatchKnownHashCount,
+            'preparedMissingHashCount': firstBatchMissingHashCount,
+            'manifestFileCount': sendPlan.manifestItems.length,
+            'preparationMode': 'whole_share_first_batch',
+            'hashPreparationMode': hashPreparationMode.name,
+          },
+        );
+        wholeShareDiagnosticLogger?.call(
+          stage: 'sender_whole_share_prepare_complete',
+          details: <String, Object?>{
+            'preparedFileCount': sendPlan.firstBatchFiles.length,
+            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
+              0,
+              (sum, file) => sum + file.sizeBytes,
+            ),
+            'preparedKnownHashCount': firstBatchKnownHashCount,
+            'preparedMissingHashCount': firstBatchMissingHashCount,
+            'manifestFileCount': sendPlan.manifestItems.length,
+            'preparationMode': 'whole_share_first_batch',
+            'hashPreparationMode': hashPreparationMode.name,
+          },
+        );
+
+        _clearSharedUploadPreparation(requestId: request.requestId);
+        await _lanDiscoveryService.sendDownloadResponse(
+          targetIp: request.requesterIp,
+          requestId: request.requestId,
+          responderName: _localName,
+          approved: true,
+          phase: 'ready_to_connect',
+          message: 'Отправитель подготовил первую партию отправки.',
+        );
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_ready_to_connect_sent',
+          requestId: request.requestId,
+          details: <String, Object?>{
+            'sharedCacheId': request.sharedCacheId,
+            'transferPort': directTransferPort,
+            'preparedFileCount': sendPlan.firstBatchFiles.length,
+            'manifestFileCount': sendPlan.manifestItems.length,
+          },
+        );
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_direct_start_selected',
+          requestId: request.requestId,
+          details: <String, Object?>{
+            'sharedCacheId': request.sharedCacheId,
+            'transferPort': directTransferPort,
+            'preparedFileCount': sendPlan.firstBatchFiles.length,
+            'manifestFileCount': sendPlan.manifestItems.length,
+            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
+              0,
+              (sum, file) => sum + file.sizeBytes,
+            ),
+            'preparedKnownHashCount': firstBatchKnownHashCount,
+            'preparedMissingHashCount': firstBatchMissingHashCount,
+            'hashPreparationMode': hashPreparationMode.name,
+            'preparationMode': 'whole_share_first_batch',
+          },
+        );
+        unawaited(
+          _sendDirectSharedDownload(
+            requestId: request.requestId,
+            targetIp: request.requesterIp,
+            receiverName: request.requesterName,
+            transferPort: directTransferPort,
+            files: sendPlan.firstBatchFiles,
+            manifestItems: sendPlan.manifestItems,
+            resolveFileAt: sendPlan.resolveFileAt,
+            diagnosticDetails: <String, Object?>{
+              'cacheId': request.sharedCacheId,
+              'sharedLabel': request.sharedLabel,
+              'requestsWholeShare': request.requestsWholeShare,
+              'preparationMode': 'whole_share_first_batch',
+            },
+            logWholeShareConnectAttempt: emitWholeShareDirectStartDiagnostics,
+            wholeShareConnectAttemptDetails: wholeShareDiagnosticDetails,
+          ),
+        );
+        return;
+      }
+
       final preparedFiles = await _buildTransferFilesForCache(
         cache,
         relativePathFilter: relativePathFilter,
@@ -3024,7 +3174,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
         },
       );
 
-      final directTransferPort = request.transferPort;
       final canUseDirectStart = directTransferPort != null;
       if (canUseDirectStart) {
         _clearSharedUploadPreparation(requestId: request.requestId);
@@ -3379,6 +3528,227 @@ class TransferSessionCoordinator extends ChangeNotifier {
       files: preparedItems,
     );
     return preparedItems;
+  }
+
+  Future<_WholeShareDirectStartSendPlan> _buildWholeShareDirectStartSendPlan(
+    SharedFolderCacheRecord cache, {
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+  }) async {
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_scoped_selection_resolution_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'relativePathFilterCount': 0,
+        'folderPrefixFilterCount': 0,
+        'hashPreparationMode': _TransferHashPreparationMode.cachedOnly.name,
+      },
+    );
+    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
+      cache,
+    );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_scoped_selection_resolution_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'selectionFingerprint': scopedSelection.fingerprint,
+        'scopedEntryCount': scopedSelection.entries.length,
+      },
+    );
+
+    final manifestItems = List<TransferFileManifestItem>.generate(
+      scopedSelection.entries.length,
+      (index) {
+        final entry = scopedSelection.entries[index];
+        return TransferFileManifestItem(
+          fileName: entry.relativePath,
+          sizeBytes: entry.sizeBytes,
+          sha256: entry.sha256?.trim() ?? '',
+        );
+      },
+      growable: false,
+    );
+
+    final firstBatchTargetCount = min(
+      _wholeShareDirectStartFirstBatchFileCount,
+      scopedSelection.entries.length,
+    );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_first_batch_prepare_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'manifestFileCount': manifestItems.length,
+        'firstBatchTargetCount': firstBatchTargetCount,
+      },
+    );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_live_filesystem_traversal_start',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'indexedEntryCount': scopedSelection.entries.length,
+        'mode': 'first_batch_only',
+      },
+    );
+
+    final refreshedManifestEntries = <SharedFolderIndexEntry>[];
+    final firstBatchFiles = <TransferSourceFile>[];
+    var skippedMissingSourceCount = 0;
+    var skippedNonFileCount = 0;
+    var firstBatchPreparedBytes = 0;
+    var reusedCachedHashCount = 0;
+
+    for (
+      var index = 0;
+      index < scopedSelection.entries.length &&
+          firstBatchFiles.length < firstBatchTargetCount;
+      index += 1
+    ) {
+      final entry = scopedSelection.entries[index];
+      final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
+      if (filePath == null) {
+        skippedMissingSourceCount += 1;
+        continue;
+      }
+      final file = File(filePath);
+      if (!await file.exists()) {
+        skippedMissingSourceCount += 1;
+        continue;
+      }
+      final stat = await file.stat();
+      if (stat.type != FileSystemEntityType.file) {
+        skippedNonFileCount += 1;
+        continue;
+      }
+
+      final currentSizeBytes = stat.size;
+      final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
+      final cachedSha256 = entry.sha256?.trim() ?? '';
+      final canReuseCachedManifest =
+          cachedSha256.isNotEmpty &&
+          entry.sizeBytes == currentSizeBytes &&
+          entry.modifiedAtMs == currentModifiedAtMs;
+      final effectiveSha256 = canReuseCachedManifest ? cachedSha256 : '';
+      if (canReuseCachedManifest) {
+        reusedCachedHashCount += 1;
+      }
+
+      manifestItems[index] = TransferFileManifestItem(
+        fileName: entry.relativePath,
+        sizeBytes: currentSizeBytes,
+        sha256: effectiveSha256,
+      );
+      if (entry.sizeBytes != currentSizeBytes ||
+          entry.modifiedAtMs != currentModifiedAtMs ||
+          (entry.sha256?.trim() ?? '') != effectiveSha256) {
+        refreshedManifestEntries.add(
+          entry.copyWith(
+            sizeBytes: currentSizeBytes,
+            modifiedAtMs: currentModifiedAtMs,
+            absolutePath: cache.rootPath.startsWith('selection://')
+                ? filePath
+                : null,
+            clearAbsolutePath: !cache.rootPath.startsWith('selection://'),
+            sha256: effectiveSha256.isEmpty ? null : effectiveSha256,
+            clearSha256: effectiveSha256.isEmpty,
+          ),
+        );
+      }
+
+      firstBatchFiles.add(
+        TransferSourceFile(
+          sourcePath: filePath,
+          fileName: entry.relativePath,
+          sizeBytes: currentSizeBytes,
+          sha256: effectiveSha256,
+        ),
+      );
+      firstBatchPreparedBytes += currentSizeBytes;
+    }
+
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_live_filesystem_traversal_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'mode': 'first_batch_only',
+        'preparedFileCount': firstBatchFiles.length,
+        'preparedTotalBytes': firstBatchPreparedBytes,
+        'skippedMissingSourceCount': skippedMissingSourceCount,
+        'skippedNonFileCount': skippedNonFileCount,
+      },
+    );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_hash_stage_deferred',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'reusedCachedHashCount': reusedCachedHashCount,
+        'deferredHashCount': manifestItems
+            .where((item) => item.sha256.trim().isEmpty)
+            .length,
+      },
+    );
+    onDiagnosticEvent?.call(
+      stage: 'sender_whole_share_first_batch_prepare_complete',
+      details: <String, Object?>{
+        'cacheId': cache.cacheId,
+        'manifestFileCount': manifestItems.length,
+        'preparedFirstBatchCount': firstBatchFiles.length,
+        'preparedFirstBatchBytes': firstBatchPreparedBytes,
+        'reusedCachedHashCount': reusedCachedHashCount,
+      },
+    );
+
+    if (refreshedManifestEntries.isNotEmpty) {
+      await _sharedCacheIndexStore.persistCachedManifestEntries(
+        record: cache,
+        entries: refreshedManifestEntries,
+      );
+    }
+
+    return _WholeShareDirectStartSendPlan(
+      manifestItems: List<TransferFileManifestItem>.unmodifiable(manifestItems),
+      firstBatchFiles: List<TransferSourceFile>.unmodifiable(firstBatchFiles),
+      resolveFileAt: (index) => _resolveWholeShareDirectStartSourceFile(
+        cache: cache,
+        entry: scopedSelection.entries[index],
+        manifestItem: manifestItems[index],
+      ),
+    );
+  }
+
+  Future<TransferSourceFile> _resolveWholeShareDirectStartSourceFile({
+    required SharedFolderCacheRecord cache,
+    required SharedFolderIndexEntry entry,
+    required TransferFileManifestItem manifestItem,
+  }) async {
+    final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
+    if (filePath == null) {
+      throw StateError(
+        'Source file does not exist for ${manifestItem.fileName}.',
+      );
+    }
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw StateError(
+        'Source file does not exist for ${manifestItem.fileName}.',
+      );
+    }
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file) {
+      throw StateError(
+        'Source path is not a file for ${manifestItem.fileName}.',
+      );
+    }
+    if (stat.size != manifestItem.sizeBytes) {
+      throw StateError(
+        'Sender file size mismatch for ${manifestItem.fileName}. '
+        'File changed after first-batch preparation.',
+      );
+    }
+    return TransferSourceFile(
+      sourcePath: filePath,
+      fileName: manifestItem.fileName,
+      sizeBytes: manifestItem.sizeBytes,
+      sha256: manifestItem.sha256,
+    );
   }
 
   String _preparedTransferScopeCacheKey({
@@ -3991,6 +4361,18 @@ class _PreparedTransferFile {
   final TransferAnnouncementItem announcement;
   final bool deleteAfterTransfer;
   final Map<String, Object?> diagnosticDetails;
+}
+
+class _WholeShareDirectStartSendPlan {
+  _WholeShareDirectStartSendPlan({
+    required this.manifestItems,
+    required this.firstBatchFiles,
+    required this.resolveFileAt,
+  });
+
+  final List<TransferFileManifestItem> manifestItems;
+  final List<TransferSourceFile> firstBatchFiles;
+  final Future<TransferSourceFile> Function(int index) resolveFileAt;
 }
 
 class _PendingRemoteDownloadIntent {
