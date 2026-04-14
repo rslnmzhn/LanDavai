@@ -42,16 +42,18 @@ The failing whole-share timeout example proves that the requester waited
 - hash recomputation
 - sender device filesystem slowness
 
-## 4. Warm-cache behavior after large recache
+## 4. Measured repeat-run speedup after streamed-hash backfill
 
-The successful sender log shows:
+Current code now backfills streamed hashes into `SharedCacheIndexStore` after a
+successful whole-share send.
 
-- `reusedCachedHashCount = 0`
-- `recomputedHashCount = 1005`
+What is still not proven from the current local log alone:
 
-The code explains why this can happen, but the current local log does not yet
-prove how a second immediate attempt on the same large share behaves after the
-index has been refreshed with persisted hashes.
+- a measured same-device production comparison for:
+  - first run after cold recache
+  - second unchanged run after streamed-hash backfill
+- how much repeat-run wall-clock improvement comes specifically from hash reuse
+  versus other remaining costs
 
 ## 5. Whether receiver timeout should remain receiver-first
 
@@ -61,4 +63,4 @@ itself decide whether the next fix should:
 
 - delay receiver startup
 - keep receiver-first semantics but extend lifetime
-- or keep receiver-first semantics and reduce sender pre-send work
+- or keep receiver-first semantics and reduce the remaining batch-1 pre-send work

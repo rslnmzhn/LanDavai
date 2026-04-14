@@ -27,9 +27,9 @@ large shared folders.
    `requestsWholeShare == true`, resolves receive layout to
    `preserveSharedRoot`, starts the receiver first, and only then sends
    `sendDownloadRequest(...)`.
-5. The requester now has an open `TransferReceiveSession` and is already
-   counting down the receiver timeout before the sender has approved or prepared
-   anything.
+5. The requester now has an open `TransferReceiveSession`, but whole-share
+   direct-start defers arming the timeout until the sender reports
+   `ready_to_connect`.
 6. `LanDiscoveryService.sendDownloadRequest(...)` sends a UDP request carrying:
    - `cacheId`
    - empty `selectedRelativePaths`
@@ -45,38 +45,35 @@ large shared folders.
 9. When the sender approves,
    `respondToIncomingSharedDownloadRequest(...)` calls
    `_approveIncomingSharedDownloadRequest(...)`.
-10. `_approveIncomingSharedDownloadRequest(...)` resolves the owner cache,
-    computes `relativePathFilter == null` and `folderPrefixFilter == null`, and
-    calls `_buildTransferFilesForCache(... includeHashes: true)`.
-11. `_buildTransferFilesForCache(...)` is the main sender-side preparation
-    stage:
-    - reads the scoped selection for the whole root through
+10. `_approveIncomingSharedDownloadRequest(...)` resolves the owner cache and
+    calls `_buildWholeShareDirectStartSendPlan(...)`.
+11. `_buildWholeShareDirectStartSendPlan(...)` is the staged sender prepare
+    entry:
+    - reads the whole-root scoped selection through
       `SharedCacheIndexStore.readScopedSelection(...)`
-    - checks the ephemeral prepared-scope cache
-    - on cache miss, resolves each indexed entry back to a live source file
-    - stats each file
-    - reuses cached `sha256` only when size and mtime still match
-    - otherwise computes fresh `sha256`
-    - persists refreshed manifest entries back into the shared-cache index
-12. Only after `_buildTransferFilesForCache(...)` completes does the sender
-    call `_sendDirectSharedDownload(...)`.
-13. `_sendDirectSharedDownload(...)` calls `FileTransferService.sendFiles(...)`,
-    which:
+    - builds the full lightweight manifest from indexed entries
+    - prepares only batch 1 as real `TransferSourceFile`s
+    - reuses cached hashes when size and mtime still match
+    - defers missing hashes instead of blocking connect/send
+12. Sender emits `ready_to_connect`, requester arms the receiver timeout, and
+    `_sendDirectSharedDownload(...)` calls `FileTransferService.sendFiles(...)`.
+13. `FileTransferService.sendFiles(...)` now:
     - opens the TCP connection
-    - builds and sends the transfer header
-    - streams file bytes
-    - recomputes sender-side streaming hashes while sending
-14. The requester logs `receiver_connected` only after the sender completes the
-    whole pre-send preparation and the TCP connection is accepted.
-15. If the sender has not connected before the receiver timeout expires,
-    `FileTransferService.startReceiver(...)` closes the receiver and the request
-    ends in `receiver_timeout` / `receiver_result(success=false)`.
+    - sends the full manifest header once
+    - streams batch 1 immediately
+    - requests later batches through `resolveBatch(...)`
+    - computes stream-time hashes while sending
+14. After a successful whole-share send, `TransferSessionCoordinator` hands the
+    streamed file hashes back into
+    `SharedCacheIndexStore.persistCachedManifestEntries(...)`.
+15. The requester logs `receiver_connected` after sender prepare batch 1 and
+    connect, not after full whole-share materialization.
 
 ## What this means today
 
-- The path is not a pure monolithic legacy handshake anymore because the
-  requester starts the receiver early and the sender connects directly.
-- The path is also not a fully staged streaming pipeline because the sender
-  still performs most whole-share preparation before `Socket.connect(...)`.
+- The path is not the old monolithic prepare-everything-then-connect pipeline.
 - The current architecture is best described as:
-  requester-side receiver-first direct-start + sender-side prepare-then-connect.
+  requester-side deferred-timeout receiver + sender-side first-batch
+  prepare-then-connect + in-transfer batch continuation.
+- Remaining cold-path cost is now batch-1 preparation and manifest construction,
+  not full whole-share hash fill or full prepared-set materialization.

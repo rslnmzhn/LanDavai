@@ -474,8 +474,9 @@ void main() {
           lanDiscoveryService.downloadResponses.single.phase,
           'ready_to_connect',
         );
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
-          fileTransferService.lastFiles.map((file) => file.fileName),
+          fileTransferService.lastManifestItems.map((file) => file.fileName),
           containsAll(<String>['a.txt', 'sub/b.txt']),
         );
         expect(
@@ -549,8 +550,8 @@ void main() {
           requestId: 'direct-whole-share-no-hash-barrier',
           approved: true,
         );
-        for (var index = 0; index < 20; index += 1) {
-          if (fileTransferService.sendFilesCalls > 0) {
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -558,6 +559,7 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileHashService.pendingPaths, isEmpty);
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
           fileTransferService.lastFiles.every(
             (file) => file.sha256.trim().isEmpty,
@@ -644,8 +646,8 @@ void main() {
           requestId: 'direct-whole-share-cached-hash-reuse',
           approved: true,
         );
-        for (var index = 0; index < 20; index += 1) {
-          if (fileTransferService.sendFilesCalls > 0) {
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -653,6 +655,7 @@ void main() {
 
         expect(fileTransferService.sendFilesCalls, 1);
         expect(fileHashService.computeCalls, 0);
+        expect(fileTransferService.lastManifestItems, hasLength(2));
         expect(
           fileTransferService.lastFiles
               .firstWhere((file) => file.fileName == 'a.txt')
@@ -664,6 +667,178 @@ void main() {
               .firstWhere((file) => file.fileName == 'sub/b.txt')
               .sha256,
           isEmpty,
+        );
+      },
+    );
+
+    test(
+      'sender whole-share direct-start prepares only the first batch before connect/send',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_first_batch_only',
+          ),
+        );
+        await ownerRoot.create(recursive: true);
+        const totalFileCount = 600;
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(ownerRoot.path, 'Workspace', 'set_$index', 'f_$index.txt'),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('item-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-first-batch',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-first-batch',
+          approved: true,
+        );
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(
+          fileTransferService.lastManifestItems,
+          hasLength(totalFileCount),
+        );
+        expect(fileTransferService.lastFiles.length, 256);
+        expect(fileTransferService.lastFiles.length, lessThan(totalFileCount));
+      },
+    );
+
+    test(
+      'sender whole-share direct-start continues through later batches without duplicate or dropped files',
+      () async {
+        const totalFileCount = 600;
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_continuation',
+          ),
+        );
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-batch-continuation',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-batch-continuation',
+          approved: true,
+        );
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.resolvedBatches.length == 2) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.sawResolveBatch, isTrue);
+        expect(fileTransferService.batchResolutionError, isNull);
+        expect(
+          fileTransferService.lastManifestItems,
+          hasLength(totalFileCount),
+        );
+        expect(fileTransferService.lastFiles, hasLength(256));
+        expect(fileTransferService.resolvedBatches, hasLength(2));
+        expect(fileTransferService.resolvedBatches[0].batchNumber, 2);
+        expect(fileTransferService.resolvedBatches[0].startIndex, 256);
+        expect(fileTransferService.resolvedBatches[0].files, hasLength(256));
+        expect(fileTransferService.resolvedBatches[1].batchNumber, 3);
+        expect(fileTransferService.resolvedBatches[1].startIndex, 512);
+        expect(fileTransferService.resolvedBatches[1].files, hasLength(88));
+        expect(
+          fileTransferService.allResolvedFileNames,
+          hasLength(totalFileCount),
+        );
+        expect(
+          fileTransferService.allResolvedFileNames.toSet(),
+          hasLength(totalFileCount),
         );
       },
     );
@@ -742,7 +917,7 @@ void main() {
           final logFile = await diagnosticStore.resolveLogFile();
           logContents = logFile == null ? '' : await logFile.readAsString();
           if (logContents.contains(
-            '"stage":"sender_whole_share_direct_send_connect_attempt_start"',
+            '"stage":"sender_whole_share_session_complete"',
           )) {
             break;
           }
@@ -766,15 +941,15 @@ void main() {
         );
         expect(
           logContents,
-          contains(
-            '"stage":"sender_whole_share_live_filesystem_traversal_start"',
-          ),
+          contains('"stage":"sender_whole_share_first_batch_prepare_start"'),
         );
         expect(
           logContents,
-          contains(
-            '"stage":"sender_whole_share_live_filesystem_traversal_complete"',
-          ),
+          contains('"stage":"sender_whole_share_first_batch_prepare_complete"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_batch_prepare_complete"'),
         );
         expect(
           logContents,
@@ -789,12 +964,292 @@ void main() {
           isNot(contains('"stage":"sender_whole_share_hash_stage_start"')),
         );
         expect(logContents, contains('"stage":"sender_ready_to_connect_sent"'));
+        expect(logContents, contains('"preparedFirstBatchCount":2'));
+        expect(logContents, contains('"batchNumber":1'));
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_batch_sent"'),
+        );
+        expect(
+          logContents,
+          contains('"stage":"sender_whole_share_session_complete"'),
+        );
         expect(
           logContents,
           contains(
             '"stage":"sender_whole_share_direct_send_connect_attempt_start"',
           ),
         );
+      },
+    );
+
+    test(
+      'sender whole-share direct-start rate-limits ui-facing progress churn while keeping progress checkpoints',
+      () async {
+        const totalFileCount = 600;
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_progress',
+          ),
+        );
+        for (var index = 0; index < totalFileCount; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => Directory(
+            p.join(harness.rootDirectory.path, 'whole_share_progress_logs'),
+          ),
+        );
+        final fileTransferService = FloodingProgressSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        var notifyCount = 0;
+        coordinator.addListener(() {
+          notifyCount += 1;
+        });
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-progress-throttled',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-progress-throttled',
+          approved: true,
+        );
+
+        for (var index = 0; index < 200; index += 1) {
+          if (fileTransferService.completed) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(fileTransferService.sendFilesCalls, 1);
+        expect(fileTransferService.progressEventCount, 120);
+        expect(fileTransferService.sawResolveBatch, isTrue);
+        expect(fileTransferService.completed, isTrue);
+        expect(coordinator.uploadSentBytes, coordinator.uploadTotalBytes);
+        expect(coordinator.uploadTotalBytes, greaterThan(0));
+        expect(notifyCount, lessThan(60));
+
+        var entries = const <Map<String, Object?>>[];
+        for (var index = 0; index < 50; index += 1) {
+          entries = await _readDiagnosticEntries(diagnosticStore);
+          final hasProgressCheckpoint = entries.any(
+            (entry) =>
+                entry['stage'] == 'sender_whole_share_progress_checkpoint',
+          );
+          final hasSessionComplete = entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_session_complete',
+          );
+          if (hasProgressCheckpoint && hasSessionComplete) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        final progressCheckpoints = entries
+            .where(
+              (entry) =>
+                  entry['stage'] == 'sender_whole_share_progress_checkpoint',
+            )
+            .toList(growable: false);
+        expect(progressCheckpoints, isNotEmpty);
+        expect(progressCheckpoints.length, lessThan(30));
+        expect(
+          entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_batch_sent',
+          ),
+          isTrue,
+        );
+        expect(
+          entries.any(
+            (entry) => entry['stage'] == 'sender_whole_share_session_complete',
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'whole-share direct-start backfills streamed hashes into index and reuses them on repeat run',
+      () async {
+        final ownerRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_direct_whole_share_backfill',
+          ),
+        );
+        final paths = <String>[];
+        for (var index = 0; index < 3; index += 1) {
+          final file = File(
+            p.join(
+              ownerRoot.path,
+              'Workspace',
+              'dir_$index',
+              'file_$index.txt',
+            ),
+          );
+          await file.parent.create(recursive: true);
+          await file.writeAsString('payload-$index');
+          paths.add('dir_$index/file_$index.txt');
+        }
+        final cache = (await sharedCacheCatalog.upsertOwnerFolderCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          folderPath: p.join(ownerRoot.path, 'Workspace'),
+          displayName: 'Workspace',
+        )).record;
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final diagnosticStore = SharedDownloadDiagnosticLogStore(
+          logDirectoryProvider: () async => Directory(
+            p.join(harness.rootDirectory.path, 'whole_share_backfill_logs'),
+          ),
+        );
+        final sendService = BackfillingSendFileTransferService(
+          fileHashService: FileHashService(),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: CountingFileHashService(),
+          fileTransferService: sendService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          sharedDownloadDiagnosticLogStore: diagnosticStore,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-backfill-run-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-backfill-run-1',
+          approved: true,
+        );
+
+        for (var index = 0; index < 100; index += 1) {
+          final entries = await sharedCacheIndexStore.readIndexEntries(cache);
+          if (entries.every(
+            (entry) => (entry.sha256?.trim().isNotEmpty ?? false),
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        final afterFirstRun = await sharedCacheIndexStore.readIndexEntries(
+          cache,
+        );
+        expect(afterFirstRun, hasLength(3));
+        expect(
+          afterFirstRun.every(
+            (entry) => entry.sha256 != null && entry.sha256!.isNotEmpty,
+          ),
+          isTrue,
+        );
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'direct-whole-share-backfill-run-2',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>[],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await coordinator.respondToIncomingSharedDownloadRequest(
+          requestId: 'direct-whole-share-backfill-run-2',
+          approved: true,
+        );
+
+        var entries = const <Map<String, Object?>>[];
+        for (var index = 0; index < 100; index += 1) {
+          entries = await _readDiagnosticEntries(diagnosticStore);
+          if (entries.any(
+            (entry) =>
+                entry['requestId'] == 'direct-whole-share-backfill-run-2' &&
+                entry['stage'] == 'sender_whole_share_hash_stage_deferred',
+          )) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        final secondRunDeferred = entries.firstWhere(
+          (entry) =>
+              entry['requestId'] == 'direct-whole-share-backfill-run-2' &&
+              entry['stage'] == 'sender_whole_share_hash_stage_deferred',
+        );
+        expect(secondRunDeferred['reusedCachedHashCount'], 3);
+        expect(secondRunDeferred['deferredHashCount'], 0);
+
+        final backfillComplete = entries.firstWhere(
+          (entry) =>
+              entry['requestId'] == 'direct-whole-share-backfill-run-1' &&
+              entry['stage'] == 'sender_whole_share_hash_backfill_complete',
+        );
+        expect(backfillComplete['backfillCandidateCount'], 3);
       },
     );
 
@@ -3655,6 +4110,12 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
 class CapturingSendFileTransferService extends FileTransferService {
   int sendFilesCalls = 0;
   List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
+  List<TransferFileManifestItem> lastManifestItems =
+      const <TransferFileManifestItem>[];
+  List<TransferSourceBatch> resolvedBatches = const <TransferSourceBatch>[];
+  List<String> allResolvedFileNames = const <String>[];
+  bool sawResolveBatch = false;
+  Object? batchResolutionError;
 
   @override
   Future<void> sendFiles({
@@ -3662,12 +4123,69 @@ class CapturingSendFileTransferService extends FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
   }) async {
     sendFilesCalls += 1;
+    sawResolveBatch = resolveBatch != null;
     lastFiles = List<TransferSourceFile>.from(files);
+    lastManifestItems = List<TransferFileManifestItem>.from(
+      manifestItems ??
+          files
+              .map(
+                (file) => TransferFileManifestItem(
+                  fileName: file.fileName,
+                  sizeBytes: file.sizeBytes,
+                  sha256: file.sha256,
+                ),
+              )
+              .toList(growable: false),
+    );
+    final continuationBatches = <TransferSourceBatch>[];
+    final resolvedNames = <String>[...lastFiles.map((file) => file.fileName)];
+    if (lastFiles.isNotEmpty) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': 1,
+          'batchFileCount': lastFiles.length,
+          'batchStartIndex': 0,
+          'cumulativeSentFileCount': lastFiles.length,
+          'totalManifestFileCount': lastManifestItems.length,
+        },
+      );
+    }
+    if (resolveBatch != null) {
+      var startIndex = lastFiles.length;
+      try {
+        while (startIndex < lastManifestItems.length) {
+          final batch = await resolveBatch(startIndex);
+          continuationBatches.add(batch);
+          resolvedNames.addAll(batch.files.map((file) => file.fileName));
+          onDiagnosticEvent?.call(
+            stage: 'sender_whole_share_batch_sent',
+            details: <String, Object?>{
+              'batchNumber': batch.batchNumber,
+              'batchFileCount': batch.files.length,
+              'batchStartIndex': batch.startIndex,
+              'cumulativeSentFileCount': startIndex + batch.files.length,
+              'totalManifestFileCount': lastManifestItems.length,
+            },
+          );
+          startIndex += batch.files.length;
+        }
+      } catch (error) {
+        batchResolutionError = error;
+      }
+    }
+    resolvedBatches = List<TransferSourceBatch>.unmodifiable(
+      continuationBatches,
+    );
+    allResolvedFileNames = List<String>.unmodifiable(resolvedNames);
   }
 }
 
@@ -3687,6 +4205,9 @@ class InspectingSendFileTransferService extends FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
@@ -3700,6 +4221,141 @@ class InspectingSendFileTransferService extends FileTransferService {
     observedSourceSha256 = await fileHashService.computeSha256ForPath(
       sourceFile.path,
     );
+  }
+}
+
+class FloodingProgressSendFileTransferService extends FileTransferService {
+  int sendFilesCalls = 0;
+  int progressEventCount = 0;
+  bool sawResolveBatch = false;
+  bool completed = false;
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
+  }) async {
+    sendFilesCalls += 1;
+    sawResolveBatch = resolveBatch != null;
+    final total = (manifestItems ?? const <TransferFileManifestItem>[])
+        .fold<int>(0, (sum, item) => sum + item.sizeBytes);
+    var preparedCount = files.length;
+    if (resolveBatch != null && manifestItems != null) {
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': 1,
+          'batchFileCount': files.length,
+          'batchStartIndex': 0,
+          'cumulativeSentFileCount': files.length,
+          'totalManifestFileCount': manifestItems.length,
+        },
+      );
+      var nextIndex = files.length;
+      while (nextIndex < manifestItems.length) {
+        final batch = await resolveBatch(nextIndex);
+        preparedCount += batch.files.length;
+        onDiagnosticEvent?.call(
+          stage: 'sender_whole_share_batch_sent',
+          details: <String, Object?>{
+            'batchNumber': batch.batchNumber,
+            'batchFileCount': batch.files.length,
+            'batchStartIndex': batch.startIndex,
+            'cumulativeSentFileCount': preparedCount,
+            'totalManifestFileCount': manifestItems.length,
+          },
+        );
+        nextIndex += batch.files.length;
+      }
+    }
+
+    for (var index = 1; index <= 120; index += 1) {
+      progressEventCount += 1;
+      final sent = ((total * index) / 120).round();
+      onProgress?.call(sent, total);
+    }
+    completed = true;
+  }
+}
+
+class BackfillingSendFileTransferService extends FileTransferService {
+  BackfillingSendFileTransferService({required this.fileHashService});
+
+  final FileHashService fileHashService;
+  int sendFilesCalls = 0;
+
+  @override
+  Future<void> sendFiles({
+    required String host,
+    required int port,
+    required String requestId,
+    required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
+    void Function(int sentBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    TransferStreamedFileHashCallback? onFileHashed,
+  }) async {
+    sendFilesCalls += 1;
+    final totalBytes = (manifestItems ?? const <TransferFileManifestItem>[])
+        .fold<int>(0, (sum, item) => sum + item.sizeBytes);
+    var sentBytes = 0;
+
+    Future<void> emitForFiles(
+      List<TransferSourceFile> sourceFiles, {
+      required int batchNumber,
+      required int batchStartIndex,
+      required int totalManifestFileCount,
+    }) async {
+      for (final file in sourceFiles) {
+        final computedSha256 = await fileHashService.computeSha256ForPath(
+          file.sourcePath,
+        );
+        onFileHashed?.call(file: file, computedSha256: computedSha256);
+        sentBytes += file.sizeBytes;
+        onProgress?.call(sentBytes, totalBytes);
+      }
+      onDiagnosticEvent?.call(
+        stage: 'sender_whole_share_batch_sent',
+        details: <String, Object?>{
+          'batchNumber': batchNumber,
+          'batchFileCount': sourceFiles.length,
+          'batchStartIndex': batchStartIndex,
+          'cumulativeSentFileCount': batchStartIndex + sourceFiles.length,
+          'totalManifestFileCount': totalManifestFileCount,
+        },
+      );
+    }
+
+    final totalManifestFileCount = manifestItems?.length ?? files.length;
+    await emitForFiles(
+      files,
+      batchNumber: 1,
+      batchStartIndex: 0,
+      totalManifestFileCount: totalManifestFileCount,
+    );
+    if (resolveBatch != null && manifestItems != null) {
+      var nextIndex = files.length;
+      while (nextIndex < manifestItems.length) {
+        final batch = await resolveBatch(nextIndex);
+        await emitForFiles(
+          batch.files,
+          batchNumber: batch.batchNumber,
+          batchStartIndex: batch.startIndex,
+          totalManifestFileCount: manifestItems.length,
+        );
+        nextIndex += batch.files.length;
+      }
+    }
   }
 }
 

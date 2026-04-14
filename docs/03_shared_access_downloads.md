@@ -106,6 +106,39 @@ Fingerprint reuse is a fast freshness gate, not file-level truth.
 - Real filesystem-backed prepared files are still rebuilt when the scoped fingerprint changes.
 - Per-file correctness such as existing-local-file checks and send/receive verification still remain outside folder fingerprint truth.
 
+## Whole-share direct-start baseline
+
+Whole-share direct-start no longer uses the old cold-path model of:
+
+- full sender-side hash fill
+- full sender-side prepared-set materialization
+- then connect/send
+
+The current baseline is:
+
+- requester starts a deferred-timeout receiver
+- sender explicitly approves
+- sender resolves the whole-share scoped selection and prepares only batch 1
+- sender sends `ready_to_connect`
+- sender connects and starts sending with batch 1
+- later batches are prepared incrementally during the active send
+- whole-share sender progress is rate-limited inside `TransferSessionCoordinator`
+
+This keeps the canonical selector model unchanged while avoiding the old
+full-folder pre-send barrier.
+
+## Whole-share post-transfer backfill
+
+Whole-share direct-start now safely persists streamed file hashes back into
+`SharedCacheIndexStore` after a successful send.
+
+Rules:
+
+- backfill happens only after successful transfer completion
+- `TransferSessionCoordinator` only hands off streamed hash results
+- `SharedCacheIndexStore` remains the owner that persists reusable hash truth
+- repeat whole-share runs can then reuse those hashes when size and mtime still match
+
 ## Current handshake behavior
 
 Normal shared downloads can take one of two paths:
@@ -132,9 +165,13 @@ The current large whole-share direct-start audit lives in:
 
 - [whole_share_cache_issue/00_whole_share_cache_issue_index.md](/e:/Projects/Landa/docs/whole_share_cache_issue/00_whole_share_cache_issue_index.md)
 
-Use that subtree for current whole-share blocking stages, hash roles, failure
-mode ranking, and next-step options. Keep this file as the feature-level
-overview.
+Use that subtree for:
+
+- the historical bottleneck diagnosis
+- the current staged/batched baseline
+- remaining unresolved whole-share risks
+
+Keep this file as the feature-level overview.
 
 ## Main files
 

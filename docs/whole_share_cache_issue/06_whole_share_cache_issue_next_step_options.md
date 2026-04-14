@@ -25,39 +25,38 @@ Assessment:
 - acceptable only as a temporary safety valve
 - not recommended as the main fix
 
-## Option 2. Stage whole-share direct-start earlier and reduce pre-send hashing
+## Option 2. Keep the staged whole-share direct-start baseline and harden it
 
 Change:
 
 - keep the current canonical selector model
 - keep ownership boundaries unchanged
-- make whole-share direct-start less prepare-then-connect by reducing what must
-  happen before `send_start`
-- narrow candidates include:
-  - start TCP connect after selection and file-size materialization, not after
-    full hash fill
-  - make whole-share sender hashes more lazy or conditional when transport
-    correctness allows it
-  - preserve persisted index hashes as a reuse accelerator, not as the only
-    integrity truth
+- preserve the current staged model:
+  - deferred receiver timeout
+  - first-batch whole-share prepare
+  - connect/send after batch 1
+  - batch continuation for later files
+  - bounded sender progress emission
+  - post-transfer streamed-hash backfill into `SharedCacheIndexStore`
+- focus next work only on the remaining cold-path costs inside that baseline
 
 Pros:
 
-- attacks the current critical path directly
+- builds on the current implemented architecture instead of replacing it
 - preserves current owner seams and canonical selectors
-- fits the current direct-start model instead of replacing it wholesale
+- keeps repeat-run reuse in the correct index owner
 
 Cons:
 
-- requires careful treatment of:
-  - receiver-side existing-file skip behavior
-  - manifest completeness
-  - sender/receiver verification semantics
+- still leaves some cost in:
+  - scoped selection resolution
+  - batch-1 filesystem traversal
+  - full manifest construction
 
 Assessment:
 
 - recommended current direction
-- best match for the evidence in code and logs
+- now the implemented baseline, with follow-up hardening work still possible
 
 ## Option 3. Deeper whole-share model redesign
 
@@ -89,11 +88,11 @@ Recommend option 2.
 
 Specifically, the next implementation prompt should target:
 
-- the sender-side whole-share pre-send window in
-  `_approveIncomingSharedDownloadRequest(...)` and
-  `_buildTransferFilesForCache(...)`
-- the receiver lifetime coupling caused by starting the receiver before sender
-  approval and cold preparation finish
+- the remaining batch-1 cold-path cost in
+  `_buildWholeShareDirectStartSendPlan(...)`
+- any safe manifest/header pressure reduction that does not reintroduce full
+  pre-send blocking
+- repeat-run reuse opportunities that still belong in `SharedCacheIndexStore`
 
 The next implementation step should not start from a cache-removal or protocol
 replacement assumption. The current evidence is already specific enough to work

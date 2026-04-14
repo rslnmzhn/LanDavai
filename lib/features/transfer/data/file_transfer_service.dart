@@ -24,12 +24,25 @@ typedef TransferStreamedFileHashCallback =
       required String computedSha256,
     });
 
+class TransferSourceBatch {
+  const TransferSourceBatch({
+    required this.batchNumber,
+    required this.startIndex,
+    required this.files,
+  });
+
+  final int batchNumber;
+  final int startIndex;
+  final List<TransferSourceFile> files;
+}
+
 class TransferSourceFile {
   TransferSourceFile({
     required this.sourcePath,
     required this.fileName,
     required this.sizeBytes,
     required this.sha256,
+    this.modifiedAtMs,
     this.deleteAfterTransfer = false,
   });
 
@@ -37,6 +50,7 @@ class TransferSourceFile {
   final String fileName;
   final int sizeBytes;
   final String sha256;
+  final int? modifiedAtMs;
   final bool deleteAfterTransfer;
 }
 
@@ -204,6 +218,7 @@ class FileTransferService {
             expectedItems: expectedItems,
             destinationDirectory: destinationDirectory,
             onProgress: onProgress,
+            onDiagnosticEvent: onDiagnosticEvent,
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             destinationPathAllocator: destinationPathAllocator,
           ).then(resultCompleter.complete).catchError((Object error) {
@@ -264,6 +279,9 @@ class FileTransferService {
     required int port,
     required String requestId,
     required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<TransferSourceFile> Function(int index)? resolveFileAt,
     void Function(int sentBytes, int totalBytes)? onProgress,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     TransferStreamedFileHashCallback? onFileHashed,
@@ -275,9 +293,20 @@ class FileTransferService {
     );
     TransferSourceFile? currentFile;
     try {
+      final effectiveManifestItems =
+          manifestItems ??
+          files
+              .map(
+                (file) => TransferFileManifestItem(
+                  fileName: file.fileName,
+                  sizeBytes: file.sizeBytes,
+                  sha256: file.sha256,
+                ),
+              )
+              .toList(growable: false);
       final payload = <String, Object?>{
         'requestId': requestId,
-        'files': files
+        'files': effectiveManifestItems
             .map(
               (file) => <String, Object>{
                 'name': file.fileName,
@@ -287,14 +316,16 @@ class FileTransferService {
             )
             .toList(growable: false),
       };
-      final knownHashFileCount = files.where((file) {
+      final knownHashFileCount = effectiveManifestItems.where((file) {
         return file.sha256.trim().isNotEmpty;
       }).length;
-      final missingHashFileCount = files.length - knownHashFileCount;
+      final missingHashFileCount =
+          effectiveManifestItems.length - knownHashFileCount;
       onDiagnosticEvent?.call(
         stage: 'transfer_header_build_start',
         details: <String, Object?>{
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
         },
@@ -304,7 +335,8 @@ class FileTransferService {
       onDiagnosticEvent?.call(
         stage: 'transfer_header_built',
         details: <String, Object?>{
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
           'headerBytes': header.bytes.length,
@@ -323,7 +355,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'knownHashFileCount': knownHashFileCount,
           'missingHashFileCount': missingHashFileCount,
         },
@@ -332,17 +365,64 @@ class FileTransferService {
       socket.add(headerBytes);
       await socket.flush();
 
-      final totalBytes = files.fold<int>(
+      final totalBytes = effectiveManifestItems.fold<int>(
         0,
         (sum, file) => sum + file.sizeBytes,
       );
+      var activeBatchNumber = files.isNotEmpty ? 1 : 0;
+      var activeBatchStartIndex = 0;
+      var activeBatchFileCount = files.length;
+      var activeBatchEndIndex = files.length;
+      TransferSourceBatch? activeResolvedBatch;
       var sentBytes = 0;
+      var firstByteSentLogged = false;
       onProgress?.call(0, totalBytes);
-      for (final file in files) {
+      for (var index = 0; index < effectiveManifestItems.length; index += 1) {
+        final file = index < files.length
+            ? files[index]
+            : await (() async {
+                if (resolveBatch != null) {
+                  if (activeResolvedBatch == null ||
+                      index < activeBatchStartIndex ||
+                      index >= activeBatchEndIndex) {
+                    activeResolvedBatch = await resolveBatch(index);
+                    if (activeResolvedBatch!.startIndex != index) {
+                      throw StateError(
+                        'Transfer batch start mismatch for index $index.',
+                      );
+                    }
+                    if (activeResolvedBatch!.files.isEmpty) {
+                      throw StateError(
+                        'Transfer batch resolver returned an empty batch.',
+                      );
+                    }
+                    activeBatchNumber = activeResolvedBatch!.batchNumber;
+                    activeBatchStartIndex = activeResolvedBatch!.startIndex;
+                    activeBatchFileCount = activeResolvedBatch!.files.length;
+                    activeBatchEndIndex =
+                        activeBatchStartIndex + activeBatchFileCount;
+                  }
+                  return activeResolvedBatch!.files[index -
+                      activeBatchStartIndex];
+                }
+                return resolveFileAt?.call(index) ??
+                    Future<TransferSourceFile>.error(
+                      StateError(
+                        'Transfer source resolver missing for file index $index.',
+                      ),
+                    );
+              })();
         currentFile = file;
         final source = File(file.sourcePath);
         if (!await source.exists()) {
           throw StateError('Source file does not exist: ${file.sourcePath}');
+        }
+        final actualSize = await source.length();
+        if (actualSize != file.sizeBytes) {
+          throw StateError(
+            'Sender file size mismatch for ${file.fileName}. '
+            'File changed during transfer preparation.',
+          );
         }
 
         final digestSink = _DigestSink();
@@ -351,6 +431,17 @@ class FileTransferService {
           socket.add(chunk);
           hashSink.add(chunk);
           sentBytes += chunk.length;
+          if (!firstByteSentLogged && chunk.isNotEmpty) {
+            firstByteSentLogged = true;
+            onDiagnosticEvent?.call(
+              stage: 'transfer_stream_first_byte_sent',
+              details: <String, Object?>{
+                'fileName': file.fileName,
+                'sentBytes': sentBytes,
+                'totalBytes': totalBytes,
+              },
+            );
+          }
           onProgress?.call(sentBytes, totalBytes);
         }
         hashSink.close();
@@ -365,6 +456,20 @@ class FileTransferService {
           );
         }
         onFileHashed?.call(file: file, computedSha256: actualSha);
+        final completedBatch =
+            activeBatchFileCount > 0 && index + 1 == activeBatchEndIndex;
+        if (completedBatch && resolveBatch != null) {
+          onDiagnosticEvent?.call(
+            stage: 'sender_whole_share_batch_sent',
+            details: <String, Object?>{
+              'batchNumber': activeBatchNumber,
+              'batchFileCount': activeBatchFileCount,
+              'batchStartIndex': activeBatchStartIndex,
+              'cumulativeSentFileCount': index + 1,
+              'totalManifestFileCount': effectiveManifestItems.length,
+            },
+          );
+        }
       }
       await socket.flush();
       onDiagnosticEvent?.call(
@@ -372,7 +477,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': effectiveManifestItems.length,
+          'preparedFileCount': files.length,
           'totalBytes': totalBytes,
         },
       );
@@ -382,7 +488,8 @@ class FileTransferService {
         details: <String, Object?>{
           'host': host,
           'port': port,
-          'fileCount': files.length,
+          'fileCount': manifestItems?.length ?? files.length,
+          'preparedFileCount': files.length,
           if (currentFile != null) 'currentFileName': currentFile.fileName,
           if (currentFile != null) 'currentSourcePath': currentFile.sourcePath,
         },
@@ -401,6 +508,7 @@ class FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
       required Directory destinationDirectory,
@@ -480,6 +588,7 @@ class FileTransferService {
     final receivedItems = <TransferFileManifestItem>[];
     var totalBytes = 0;
     var allFilesHashVerified = true;
+    var firstByteReceivedLogged = false;
     final expectedTotalBytes = normalizedActual.fold<int>(
       0,
       (sum, file) => sum + file.sizeBytes,
@@ -514,6 +623,17 @@ class FileTransferService {
           hashSink.add(chunk);
           remaining -= chunk.length;
           totalBytes += chunk.length;
+          if (!firstByteReceivedLogged && chunk.isNotEmpty) {
+            firstByteReceivedLogged = true;
+            onDiagnosticEvent?.call(
+              stage: 'receiver_first_byte_received',
+              details: <String, Object?>{
+                'fileName': file.name,
+                'receivedBytes': totalBytes,
+                'totalBytes': expectedTotalBytes,
+              },
+            );
+          }
           onProgress?.call(totalBytes, expectedTotalBytes);
         }
 

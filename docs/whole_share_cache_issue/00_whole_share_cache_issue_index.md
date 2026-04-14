@@ -1,24 +1,22 @@
 # Whole-Share Large-Folder Analysis
 
 This subtree is the current working analysis for large whole-share
-shared-download failures. `docs/00_index.md` remains the only top-level docs
-entrypoint; this subtree is a focused branch linked from it.
+shared-download architecture. `docs/00_index.md` remains the only top-level
+docs entrypoint; this subtree is a focused branch linked from it.
 
 ## Current headline findings
 
-- The current whole-share direct-start path is hybrid, not fully staged:
-  requester-side receiver startup happens early, but sender-side whole-share
-  preparation remains prepare-then-connect.
-- The dominant cold-path blocking work is sender-side
-  `_buildTransferFilesForCache(... includeHashes: true)`, which can perform
-  full scoped selection resolution, live filesystem traversal, and hash fill
-  before the first TCP byte.
-- The requester receiver timeout starts before sender approval and preparation,
-  so approval + sender preparation + connect must all fit inside the same
-  `180s` window.
-- Current code and logs point to a combination of sender pre-send preparation
-  cost and receiver lifetime mismatch, not to browser token corruption or raw
-  path leakage across the protocol boundary.
+- The original full pre-send hash barrier is no longer the current baseline.
+- Whole-share direct-start now uses staged sender preparation:
+  first-batch prepare, connect/send, then batch continuation.
+- Sender progress is now rate-limited inside the transfer owner instead of
+  flooding the UI-facing path.
+- Successful whole-share sends now backfill streamed hashes into
+  `SharedCacheIndexStore`, so repeat runs can reuse them when size and mtime
+  still match.
+- Remaining whole-share cost is now dominated by scoped selection resolution,
+  batch-local filesystem traversal, and single-header manifest construction,
+  not by the historical full pre-send hash fill.
 
 ## Reading order
 
