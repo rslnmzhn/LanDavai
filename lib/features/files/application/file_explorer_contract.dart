@@ -31,6 +31,7 @@ class FileExplorerVirtualFile {
     this.sizeBytes,
     this.modifiedAt,
     this.changedAt,
+    this.removableSharedCacheId,
   });
 
   final String path;
@@ -40,6 +41,7 @@ class FileExplorerVirtualFile {
   final int? sizeBytes;
   final DateTime? modifiedAt;
   final DateTime? changedAt;
+  final String? removableSharedCacheId;
 }
 
 class FileExplorerVirtualFolder {

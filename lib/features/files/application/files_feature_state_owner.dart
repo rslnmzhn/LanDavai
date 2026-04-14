@@ -81,6 +81,7 @@ class FilesFeatureEntry {
     required File file,
     required FileStat stat,
     required String subtitle,
+    String? removableSharedCacheId,
   }) {
     return FilesFeatureEntry(
       isDirectory: false,
@@ -90,6 +91,7 @@ class FilesFeatureEntry {
       modifiedAt: stat.modified,
       changedAt: stat.changed,
       filePath: file.path,
+      removableSharedCacheId: removableSharedCacheId,
     );
   }
 
@@ -101,6 +103,7 @@ class FilesFeatureEntry {
     required DateTime modifiedAt,
     required DateTime changedAt,
     String? sourceToken,
+    String? removableSharedCacheId,
   }) {
     return FilesFeatureEntry(
       isDirectory: false,
@@ -111,6 +114,7 @@ class FilesFeatureEntry {
       changedAt: changedAt,
       filePath: filePath,
       sourceToken: sourceToken,
+      removableSharedCacheId: removableSharedCacheId,
     );
   }
 }
@@ -523,6 +527,7 @@ class FilesFeatureStateOwner extends ChangeNotifier {
         modifiedAt: modifiedAt,
         changedAt: changedAt,
         sourceToken: virtualFile.sourceToken,
+        removableSharedCacheId: virtualFile.removableSharedCacheId,
       );
     }
 
@@ -538,6 +543,7 @@ class FilesFeatureStateOwner extends ChangeNotifier {
       file: file,
       stat: stat,
       subtitle: virtualFile.subtitle ?? virtualFile.path,
+      removableSharedCacheId: virtualFile.removableSharedCacheId,
     );
   }
 

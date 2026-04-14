@@ -88,6 +88,72 @@ void main() {
       expect(boundary.lastRemovedCacheId, 'cache-1');
     },
   );
+
+  testWidgets(
+    'FileExplorerPage keeps remove-shared-file action reachable and wired to cache removal',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      final mutableState = _MutableVirtualDirectoryState(
+        folders: const <FileExplorerVirtualFolder>[],
+        files: <FileExplorerVirtualFile>[
+          FileExplorerVirtualFile(
+            path: 'C:/shared/report.txt',
+            virtualPath: 'report.txt',
+            subtitle: 'Shared docs / report.txt',
+            sizeBytes: 12,
+            modifiedAt: DateTime(2026, 1, 1, 10),
+            changedAt: DateTime(2026, 1, 1, 10),
+            removableSharedCacheId: 'cache-file-1',
+          ),
+        ],
+      );
+      final owner = FilesFeatureStateOwner(
+        roots: <FileExplorerRoot>[
+          FileExplorerRoot(
+            label: 'My files',
+            path: 'virtual://my-files',
+            isSharedFolder: true,
+            virtualDirectoryLoader: (folderPath) async => mutableState.build(),
+          ),
+        ],
+      );
+      addTearDown(owner.dispose);
+      await owner.initialize();
+
+      final boundary = _RecordingSharedCacheMaintenanceBoundary(
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        ownerMacAddressProvider: () => harness.controller.localDeviceMac,
+        onRemoveCacheById: (cacheId) async {
+          mutableState.clearFiles();
+          return true;
+        },
+      );
+      addTearDown(boundary.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FileExplorerPage(
+            owner: owner,
+            previewCacheOwner: harness.previewCacheOwner,
+            sharedCacheMaintenanceBoundary: boundary,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 20);
+
+      expect(find.text('report.txt'), findsOneWidget);
+      expect(find.byTooltip('Remove from sharing'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Remove from sharing'));
+      await _pumpUntilVisible(tester, find.text('Remove shared file?'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
+      await _pumpUntilVisible(tester, find.text('Folder is empty'));
+
+      expect(boundary.removeCacheByIdCalls, 1);
+      expect(boundary.lastRemovedCacheId, 'cache-file-1');
+    },
+  );
 }
 
 Future<void> _pumpForUi(WidgetTester tester, {int frames = 12}) async {
@@ -120,18 +186,26 @@ void _registerWidgetCleanup(WidgetTester tester) {
 class _MutableVirtualDirectoryState {
   _MutableVirtualDirectoryState({
     required List<FileExplorerVirtualFolder> folders,
-  }) : _folders = List<FileExplorerVirtualFolder>.from(folders);
+    List<FileExplorerVirtualFile> files = const <FileExplorerVirtualFile>[],
+  }) : _folders = List<FileExplorerVirtualFolder>.from(folders),
+       _files = List<FileExplorerVirtualFile>.from(files);
 
   final List<FileExplorerVirtualFolder> _folders;
+  final List<FileExplorerVirtualFile> _files;
 
   FileExplorerVirtualDirectory build() {
     return FileExplorerVirtualDirectory(
       folders: List<FileExplorerVirtualFolder>.from(_folders),
+      files: List<FileExplorerVirtualFile>.from(_files),
     );
   }
 
   void clearFolders() {
     _folders.clear();
+  }
+
+  void clearFiles() {
+    _files.clear();
   }
 }
 

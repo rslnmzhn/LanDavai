@@ -469,10 +469,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     final agreed = await showDialog<bool>(
       context: context,
       builder: (context) {
+        final subjectLabel = entry.isDirectory ? 'folder' : 'file';
         return AlertDialog(
-          title: const Text('Remove shared folder?'),
+          title: Text('Remove shared $subjectLabel?'),
           content: Text(
-            'The folder "${entry.name}" will be removed from shared access.',
+            'The $subjectLabel "${entry.name}" will be removed from shared access.',
           ),
           actions: [
             TextButton(
@@ -498,8 +499,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       );
     } catch (error) {
       if (mounted) {
+        final subjectLabel = entry.isDirectory ? 'folder' : 'file';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to remove shared folder: $error')),
+          SnackBar(
+            content: Text('Failed to remove shared $subjectLabel: $error'),
+          ),
         );
       }
       return;
@@ -509,8 +513,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return;
     }
     if (!removed || !mounted) {
+      final subjectLabel = entry.isDirectory ? 'folder' : 'file';
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Shared folder is no longer available.')),
+        SnackBar(content: Text('Shared $subjectLabel is no longer available.')),
       );
       return;
     }
@@ -946,6 +951,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
             sizeBytes: entry.sizeBytes,
             modifiedAt: DateTime.fromMillisecondsSinceEpoch(entry.modifiedAtMs),
             changedAt: DateTime.fromMillisecondsSinceEpoch(entry.modifiedAtMs),
+            removableSharedCacheId: isSelection ? cache.cacheId : null,
           ),
         );
         processed += 1;
