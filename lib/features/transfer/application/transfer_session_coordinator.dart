@@ -354,6 +354,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
       _preparedTransferFilesByScopeKey.length;
   @visibleForTesting
   int get preparedTransferScopeCacheHits => _preparedTransferScopeCacheHits;
+  @visibleForTesting
+  void debugReplaceIncomingSharedDownloadRequests(
+    List<IncomingSharedDownloadRequest> requests,
+  ) {
+    _incomingSharedDownloadRequests
+      ..clear()
+      ..addAll(requests);
+    _notify();
+  }
 
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;

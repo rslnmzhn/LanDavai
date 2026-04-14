@@ -80,6 +80,7 @@ class SharedDownloadDiagnosticLogStore {
     if (file == null) {
       return;
     }
+    await file.parent.create(recursive: true);
     final existingLines = await file.exists()
         ? await file.readAsLines()
         : const <String>[];
