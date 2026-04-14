@@ -109,6 +109,36 @@ void main() {
     await _pumpForUi(tester, frames: 12);
     await _flushDbTimers(tester);
   });
+
+  testWidgets('LocalFileViewerPage disables built-in PDF viewing safely', (
+    tester,
+  ) async {
+    _registerWidgetCleanup(tester);
+    final file = File(
+      p.join(harness.databaseHarness.rootDirectory.path, 'viewer-sample.pdf'),
+    );
+    await tester.runAsync(() async {
+      await file.writeAsString('%PDF-1.7');
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LocalFileViewerPage(
+          filePath: file.path,
+          previewCacheOwner: harness.previewCacheOwner,
+        ),
+      ),
+    );
+    await _pumpForUi(tester, frames: 12);
+
+    expect(
+      find.text(
+        'PDF preview/viewing is temporarily unavailable. Open the file externally to view it.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Open externally'), findsOneWidget);
+  });
 }
 
 Future<void> _pumpDiscoveryPage(

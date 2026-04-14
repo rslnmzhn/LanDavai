@@ -9,7 +9,6 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
-import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:video_player/video_player.dart';
 
 import '../../../../app/theme/app_colors.dart';
@@ -1001,16 +1000,11 @@ class _PdfFileViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final file = File(filePath);
-    return SfPdfViewer.file(
-      file,
-      canShowScrollHead: true,
-      canShowScrollStatus: true,
-      onDocumentLoadFailed: (details) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('PDF load failed: ${details.error}')),
-        );
-      },
+    return _UnsupportedFileViewer(
+      filePath: filePath,
+      hintMessage:
+          'PDF preview/viewing is temporarily unavailable. '
+          'Open the file externally to view it.',
     );
   }
 }
