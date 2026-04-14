@@ -71,28 +71,46 @@ class SharedDownloadDiagnosticLogStore {
       payload['stackTrace'] = stackTrace.toString();
     }
     final line = '${jsonEncode(payload)}\n';
-    _pendingWrite = _pendingWrite.then((_) => _appendLine(line));
+    _pendingWrite = _pendingWrite
+        .catchError((_) {})
+        .then((_) => _appendLine(line))
+        .catchError((_) {});
     await _pendingWrite;
   }
 
   Future<void> _appendLine(String line) async {
+    await _appendLineOnce(line, retryOnPathFailure: true);
+  }
+
+  Future<void> _appendLineOnce(
+    String line, {
+    required bool retryOnPathFailure,
+  }) async {
     final file = await resolveLogFile();
     if (file == null) {
       return;
     }
-    await file.parent.create(recursive: true);
-    final existingLines = await file.exists()
-        ? await file.readAsLines()
-        : const <String>[];
-    final nextLines = <String>[
-      ...existingLines.where((value) => value.trim().isNotEmpty),
-      line.trimRight(),
-    ];
-    final retainedLineCount = _resolveRetainedLineCount();
-    final trimmed = nextLines.length <= retainedLineCount
-        ? nextLines
-        : nextLines.sublist(nextLines.length - retainedLineCount);
-    await file.writeAsString('${trimmed.join('\n')}\n', flush: true);
+    try {
+      await file.parent.create(recursive: true);
+      final existingLines = await file.exists()
+          ? await file.readAsLines()
+          : const <String>[];
+      final nextLines = <String>[
+        ...existingLines.where((value) => value.trim().isNotEmpty),
+        line.trimRight(),
+      ];
+      final retainedLineCount = _resolveRetainedLineCount();
+      final trimmed = nextLines.length <= retainedLineCount
+          ? nextLines
+          : nextLines.sublist(nextLines.length - retainedLineCount);
+      await file.writeAsString('${trimmed.join('\n')}\n', flush: true);
+    } on FileSystemException catch (_) {
+      if (!retryOnPathFailure) {
+        return;
+      }
+      await file.parent.create(recursive: true);
+      await _appendLineOnce(line, retryOnPathFailure: false);
+    }
   }
 
   int _resolveRetainedLineCount() {

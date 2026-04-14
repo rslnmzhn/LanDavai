@@ -190,6 +190,76 @@ void main() {
   );
 
   testWidgets(
+    'remote download browser refreshes in place after access snapshot approval',
+    (tester) async {
+      _registerWidgetCleanup(tester);
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.1.44',
+          deviceName: 'Remote A',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
+      final coordinator = _TestTransferSessionCoordinator(
+        previewPathProvider: () async => null,
+        sharedCacheCatalog: harness.sharedCacheCatalog,
+        sharedCacheIndexStore: harness.sharedCacheIndexStore,
+        previewCacheOwner: harness.previewCacheOwner,
+        downloadHistoryBoundary: harness.downloadHistoryBoundary,
+        settings: harness.readModel.settings,
+      );
+      addTearDown(coordinator.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: RemoteDownloadBrowserPage(
+            readModel: harness.readModel,
+            remoteShareBrowser: harness.remoteShareBrowser,
+            previewCacheOwner: harness.previewCacheOwner,
+            transferSessionCoordinator: coordinator,
+            useStandardAppDownloadFolder: true,
+          ),
+        ),
+      );
+      await _pumpForUi(tester, frames: 12);
+
+      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
+      expect(find.text('report.txt'), findsNothing);
+
+      await tester.tap(find.text('Без структуры'));
+      await _pumpForUi(tester, frames: 8);
+      expect(find.text('report.txt'), findsNothing);
+
+      await harness.remoteShareBrowser.applyAccessSnapshot(
+        ownerIp: '192.168.1.44',
+        ownerDisplayName: 'Remote A',
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        entries: <SharedCatalogEntryItem>[
+          SharedCatalogEntryItem(
+            cacheId: 'cache-a',
+            displayName: 'Shared docs',
+            itemCount: 1,
+            totalBytes: 12,
+            files: <SharedCatalogFileItem>[
+              SharedCatalogFileItem(
+                relativePath: 'report.txt',
+                sizeBytes: 12,
+              ),
+            ],
+          ),
+        ],
+      );
+      await _pumpForUi(tester, frames: 12);
+
+      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
+      expect(find.text('report.txt'), findsOneWidget);
+      expect(find.byType(RemoteDownloadBrowserPage), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'selection survives filter switch and is pruned on invalidation',
     (tester) async {
       _registerWidgetCleanup(tester);

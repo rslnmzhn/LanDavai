@@ -178,6 +178,13 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     if (!validFilterKeys.contains(_activeFilterKey)) {
       _activeFilterKey = _firstAvailableDeviceKey ?? '';
     }
+    final activeFilterKey = _activeFilterKey;
+    if (activeFilterKey.trim().isNotEmpty) {
+      await _ensureOwnerForFilter(activeFilterKey);
+    }
+    for (final owner in _ownersByFilterKey.values) {
+      owner.invalidateSelectedVirtualRootCache();
+    }
     await Future.wait(
       _ownersByFilterKey.values.map((owner) => owner.refreshCurrentRoot()),
     );

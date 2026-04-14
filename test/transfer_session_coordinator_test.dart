@@ -1311,6 +1311,64 @@ void main() {
     );
 
     test(
+      'trusted friend shared download request auto-approves without pending sender UI state',
+      () async {
+        final ownerFile = File(
+          p.join(
+            harness.rootDirectory.path,
+            'shared_sender_friend_auto_download',
+            'a.txt',
+          ),
+        );
+        await ownerFile.parent.create(recursive: true);
+        await ownerFile.writeAsString('hello');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[ownerFile.path],
+          displayName: 'Shared docs',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          isTrustedSender: (normalizedMac) =>
+              normalizedMac == '11:22:33:44:55:66',
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: 'sender-friend-auto-download-1',
+            requesterIp: '192.168.1.55',
+            requesterName: 'Remote peer',
+            requesterMacAddress: '11:22:33:44:55:66',
+            cacheId: cache.cacheId,
+            selectedRelativePaths: const <String>['a.txt'],
+            selectedFolderPrefixes: const <String>[],
+            transferPort: 40404,
+            previewMode: false,
+            observedAt: DateTime(2026),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(lanDiscoveryService.downloadResponses, isEmpty);
+        expect(lanDiscoveryService.transferRequests, isEmpty);
+        expect(fileTransferService.sendFilesCalls, 1);
+      },
+    );
+
+    test(
       'rejecting incoming shared download request prevents transfer start and notifies requester',
       () async {
         final ownerFile = File(
@@ -2212,6 +2270,146 @@ void main() {
     );
 
     test(
+      'trusted friend shared download auto-approves through the requester runtime flow',
+      () async {
+        final senderRoot = Directory(
+          p.join(harness.rootDirectory.path, 'trusted_friend_download_sender'),
+        )..createSync(recursive: true);
+        final senderFile = File(p.join(senderRoot.path, 'docs', 'report.txt'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('report');
+        final cache = await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[senderFile.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+        final indexedRelativePath =
+            (await sharedCacheIndexStore.readIndexEntries(
+              cache,
+            )).single.relativePath;
+
+        final requesterLanDiscoveryService = CapturingLanDiscoveryService();
+        final senderLanDiscoveryService = CapturingLanDiscoveryService();
+        final requesterReceiveService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final senderSendService = CapturingSendFileTransferService();
+        final requesterBrowser = RemoteShareBrowser(
+          sharedCacheCatalog: sharedCacheCatalog,
+        );
+        addTearDown(requesterBrowser.dispose);
+        await requesterBrowser.applyAccessSnapshot(
+          ownerIp: '192.168.1.40',
+          ownerDisplayName: 'Sender device',
+          ownerMacAddress: '02:00:00:00:00:01',
+          entries: <SharedCatalogEntryItem>[
+            SharedCatalogEntryItem(
+              cacheId: cache.cacheId,
+              displayName: cache.displayName,
+              itemCount: 1,
+              totalBytes: senderFile.lengthSync(),
+              files: <SharedCatalogFileItem>[
+                SharedCatalogFileItem(
+                  relativePath: indexedRelativePath,
+                  sizeBytes: senderFile.lengthSync(),
+                ),
+              ],
+            ),
+          ],
+        );
+
+        final requesterCoordinator = _buildCoordinator(
+          lanDiscoveryService: requesterLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: requesterReceiveService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          localDeviceMac: '11:22:33:44:55:66',
+          localName: 'Requester device',
+          resolveRemoteOwnerMac:
+              ({required String ownerIp, required String cacheId}) =>
+                  requesterBrowser.ownerMacForCache(
+                    ownerIp: ownerIp,
+                    cacheId: cacheId,
+                  ),
+        );
+        final senderCoordinator = _buildCoordinator(
+          lanDiscoveryService: senderLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: senderSendService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          isTrustedSender: (normalizedMac) =>
+              normalizedMac == '11:22:33:44:55:66',
+          localDeviceMac: '02:00:00:00:00:01',
+          localName: 'Sender device',
+        );
+        addTearDown(requesterCoordinator.dispose);
+        addTearDown(senderCoordinator.dispose);
+
+        await requesterCoordinator.requestDownloadFromRemoteFiles(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Sender device',
+          selectedRelativePathsByCache: <String, Set<String>>{
+            cache.cacheId: <String>{indexedRelativePath},
+          },
+          sharedLabelsByCache: <String, String>{
+            cache.cacheId: cache.displayName,
+          },
+          preferDirectStart: true,
+          useStandardAppDownloadFolder: true,
+        );
+
+        expect(requesterLanDiscoveryService.downloadRequests, hasLength(1));
+        final sentRequest =
+            requesterLanDiscoveryService.downloadRequests.single;
+        senderCoordinator.handleDownloadRequestEvent(
+          DownloadRequestEvent(
+            requestId: sentRequest.requestId,
+            requesterIp: '192.168.1.88',
+            requesterName: sentRequest.requesterName,
+            requesterMacAddress: sentRequest.requesterMacAddress,
+            cacheId: sentRequest.cacheId,
+            selectedRelativePaths: sentRequest.selectedRelativePaths,
+            selectedFolderPrefixes: sentRequest.selectedFolderPrefixes,
+            transferPort: sentRequest.transferPort,
+            previewMode: sentRequest.previewMode,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+
+        expect(senderCoordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(senderSendService.sendFilesCalls, 1);
+        expect(
+          senderSendService.lastFiles.map((file) => file.fileName),
+          contains(indexedRelativePath),
+        );
+        requesterReceiveService.completeNext(
+          FileTransferResult(
+            success: false,
+            message: 'cancelled',
+            savedPaths: const <String>[],
+            receivedItems: const <TransferFileManifestItem>[],
+            totalBytes: 0,
+            destinationDirectory:
+                requesterReceiveService.lastDestinationDirectoryPath ?? '',
+            hashVerified: false,
+          ),
+        );
+      },
+    );
+
+    test(
       'whole-share direct download uses shared label for root preservation and writes diagnostics',
       () async {
         final diagnosticDirectory = Directory(
@@ -2525,6 +2723,265 @@ void main() {
     );
 
     test(
+      'trusted friend remote share access auto-approves through the requester runtime flow',
+      () async {
+        final sharedRoot = Directory(
+          p.join(
+            harness.rootDirectory.path,
+            'trusted_friend_access_sender_root',
+          ),
+        )..createSync(recursive: true);
+        final senderFile = File(p.join(sharedRoot.path, 'docs', 'report.txt'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('report');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[senderFile.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final requesterLanDiscoveryService = CapturingLanDiscoveryService();
+        final senderLanDiscoveryService = CapturingLanDiscoveryService();
+        final requesterReceiveService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final senderSendService = CapturingSendFileTransferService();
+        final requesterBrowser = RemoteShareBrowser(
+          sharedCacheCatalog: sharedCacheCatalog,
+        );
+        addTearDown(requesterBrowser.dispose);
+
+        final requesterCoordinator = _buildCoordinator(
+          lanDiscoveryService: requesterLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: requesterReceiveService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          localDeviceMac: '11:22:33:44:55:66',
+          localName: 'Requester device',
+          applyRemoteShareAccessSnapshot:
+              ({
+                required String ownerIp,
+                required String ownerName,
+                required String ownerMacAddress,
+                required List<SharedCatalogEntryItem> entries,
+              }) async {
+                await requesterBrowser.applyAccessSnapshot(
+                  ownerIp: ownerIp,
+                  ownerDisplayName: ownerName,
+                  ownerMacAddress: ownerMacAddress,
+                  entries: entries,
+                );
+                return RemoteShareAccessProjectionLoadResult(
+                  ownerIp: ownerIp,
+                  cacheCount: entries.length,
+                  fileCount: entries.fold<int>(
+                    0,
+                    (sum, entry) => sum + entry.files.length,
+                  ),
+                );
+              },
+        );
+        final senderCoordinator = _buildCoordinator(
+          lanDiscoveryService: senderLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: senderSendService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          isTrustedSender: (normalizedMac) =>
+              normalizedMac == '11:22:33:44:55:66',
+          localDeviceMac: '02:00:00:00:00:01',
+          localName: 'Sender device',
+        );
+        addTearDown(requesterCoordinator.dispose);
+        addTearDown(senderCoordinator.dispose);
+
+        await requesterCoordinator.requestRemoteShareAccess(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Sender device',
+        );
+        expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
+
+        final sentRequest =
+            requesterLanDiscoveryService.shareAccessRequests.single;
+        senderCoordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: sentRequest.requestId,
+            requesterIp: '192.168.1.88',
+            requesterName: sentRequest.requesterName,
+            requesterMacAddress: sentRequest.requesterMacAddress,
+            transferPort: sentRequest.transferPort,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+
+        expect(senderCoordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(senderLanDiscoveryService.shareAccessResponses, hasLength(1));
+        expect(
+          senderLanDiscoveryService.shareAccessResponses.single.approved,
+          isTrue,
+        );
+        expect(senderSendService.sendFilesCalls, 1);
+
+        final sentResponse =
+            senderLanDiscoveryService.shareAccessResponses.single;
+        requesterCoordinator.handleShareAccessResponseEvent(
+          ShareAccessResponseEvent(
+            requestId: sentResponse.requestId,
+            responderIp: '192.168.1.40',
+            responderName: sentResponse.responderName,
+            approved: sentResponse.approved,
+            observedAt: DateTime(2026, 1, 3),
+            message: sentResponse.message,
+          ),
+        );
+
+        final snapshotSourcePath =
+            senderSendService.lastFiles.single.sourcePath;
+        final snapshotSourceFile = File(snapshotSourcePath);
+        final snapshotBytes = await snapshotSourceFile.exists()
+            ? await snapshotSourceFile.readAsBytes()
+            : senderSendService.sentFileBytesByName.values.single;
+        final requesterDestination = Directory(
+          requesterReceiveService.lastDestinationDirectoryPath!,
+        );
+        final requesterSnapshot = File(
+          p.join(requesterDestination.path, 'share-access.json.gz'),
+        )..createSync(recursive: true);
+        requesterSnapshot.writeAsBytesSync(snapshotBytes);
+        requesterReceiveService.completeNext(
+          FileTransferResult(
+            success: true,
+            message: 'ok',
+            savedPaths: <String>[requesterSnapshot.path],
+            receivedItems: <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'share-access.json.gz',
+                sizeBytes: snapshotBytes.length,
+                sha256: '',
+              ),
+            ],
+            totalBytes: snapshotBytes.length,
+            destinationDirectory: requesterDestination.path,
+            hashVerified: false,
+          ),
+        );
+
+        for (var i = 0; i < 40; i += 1) {
+          if (requesterBrowser.currentBrowseProjection.options.isNotEmpty) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(requesterBrowser.currentBrowseProjection.options, hasLength(1));
+        expect(
+          requesterBrowser.currentBrowseProjection.options.single.ownerIp,
+          '192.168.1.40',
+        );
+      },
+    );
+
+    test(
+      'non-friend remote share access still enters the manual sender approval queue through the requester runtime flow',
+      () async {
+        final sharedRoot = Directory(
+          p.join(harness.rootDirectory.path, 'nonfriend_access_sender_root'),
+        )..createSync(recursive: true);
+        final senderFile = File(p.join(sharedRoot.path, 'docs', 'report.txt'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('report');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[senderFile.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final requesterLanDiscoveryService = CapturingLanDiscoveryService();
+        final senderLanDiscoveryService = CapturingLanDiscoveryService();
+        final requesterReceiveService = PendingReceiveFileTransferService(
+          port: 40404,
+        );
+        final requesterCoordinator = _buildCoordinator(
+          lanDiscoveryService: requesterLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: requesterReceiveService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          localDeviceMac: '11:22:33:44:55:66',
+          localName: 'Requester device',
+        );
+        final senderCoordinator = _buildCoordinator(
+          lanDiscoveryService: senderLanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          localDeviceMac: '02:00:00:00:00:01',
+          localName: 'Sender device',
+        );
+        addTearDown(requesterCoordinator.dispose);
+        addTearDown(senderCoordinator.dispose);
+
+        await requesterCoordinator.requestRemoteShareAccess(
+          ownerIp: '192.168.1.40',
+          ownerName: 'Sender device',
+        );
+        expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
+
+        final sentRequest =
+            requesterLanDiscoveryService.shareAccessRequests.single;
+        senderCoordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: sentRequest.requestId,
+            requesterIp: '192.168.1.88',
+            requesterName: sentRequest.requesterName,
+            requesterMacAddress: sentRequest.requesterMacAddress,
+            transferPort: sentRequest.transferPort,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        expect(
+          senderCoordinator.incomingRemoteShareAccessRequests,
+          hasLength(1),
+        );
+        expect(senderLanDiscoveryService.shareAccessResponses, isEmpty);
+        requesterReceiveService.completeNext(
+          FileTransferResult(
+            success: false,
+            message: 'cancelled',
+            savedPaths: const <String>[],
+            receivedItems: const <TransferFileManifestItem>[],
+            totalBytes: 0,
+            destinationDirectory:
+                requesterReceiveService.lastDestinationDirectoryPath ?? '',
+            hashVerified: false,
+          ),
+        );
+      },
+    );
+
+    test(
       'remote share access reject reaches requester and closes receiver',
       () async {
         final fileTransferService = PendingReceiveFileTransferService(
@@ -2629,6 +3086,60 @@ void main() {
           fileTransferService.lastFiles.single.fileName,
           contains('share-access-access-1.json.gz'),
         );
+      },
+    );
+
+    test(
+      'trusted friend share access request auto-approves without pending sender UI state',
+      () async {
+        final sharedRoot = Directory(
+          p.join(harness.rootDirectory.path, 'sender_share_root_friend_access'),
+        )..createSync(recursive: true);
+        final fileA = File(p.join(sharedRoot.path, 'a.txt'))
+          ..writeAsStringSync('a');
+        await sharedCacheCatalog.buildOwnerSelectionCache(
+          ownerMacAddress: '02:00:00:00:00:01',
+          filePaths: <String>[fileA.path],
+          displayName: 'Workspace',
+        );
+        await sharedCacheCatalog.loadOwnerCaches(
+          ownerMacAddress: '02:00:00:00:00:01',
+        );
+
+        final fileTransferService = CapturingSendFileTransferService();
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+          isTrustedSender: (normalizedMac) =>
+              normalizedMac == 'aa:bb:cc:dd:ee:ff',
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleShareAccessRequestEvent(
+          ShareAccessRequestEvent(
+            requestId: 'access-friend-1',
+            requesterIp: '192.168.1.40',
+            requesterName: 'Remote peer',
+            requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+            transferPort: 40404,
+            observedAt: DateTime(2026, 1, 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+
+        expect(coordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
+        expect(
+          lanDiscoveryService.shareAccessResponses.single.approved,
+          isTrue,
+        );
+        expect(fileTransferService.sendFilesCalls, 1);
       },
     );
 
@@ -3721,6 +4232,11 @@ TransferSessionCoordinator _buildCoordinator({
   })?
   applyRemoteShareAccessSnapshot,
   SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
+  bool Function(String? normalizedMac)? isTrustedSender,
+  String localDeviceMac = '02:00:00:00:00:01',
+  String localName = 'Local device',
+  String? Function({required String ownerIp, required String cacheId})?
+  resolveRemoteOwnerMac,
 }) {
   return TransferSessionCoordinator(
     lanDiscoveryService: lanDiscoveryService,
@@ -3735,10 +4251,11 @@ TransferSessionCoordinator _buildCoordinator({
     previewCacheOwner: previewCacheOwner,
     appNotificationService: AppNotificationService.instance,
     settingsProvider: () => AppSettings.defaults,
-    localNameProvider: () => 'Local device',
-    localDeviceMacProvider: () => '02:00:00:00:00:01',
-    isTrustedSender: (_) => false,
+    localNameProvider: () => localName,
+    localDeviceMacProvider: () => localDeviceMac,
+    isTrustedSender: isTrustedSender ?? (_) => false,
     resolveRemoteOwnerMac:
+        resolveRemoteOwnerMac ??
         ({required String ownerIp, required String cacheId}) {
           return null;
         },
@@ -4112,6 +4629,7 @@ class CapturingSendFileTransferService extends FileTransferService {
   List<TransferSourceFile> lastFiles = const <TransferSourceFile>[];
   List<TransferFileManifestItem> lastManifestItems =
       const <TransferFileManifestItem>[];
+  Map<String, List<int>> sentFileBytesByName = <String, List<int>>{};
   List<TransferSourceBatch> resolvedBatches = const <TransferSourceBatch>[];
   List<String> allResolvedFileNames = const <String>[];
   bool sawResolveBatch = false;
@@ -4133,6 +4651,10 @@ class CapturingSendFileTransferService extends FileTransferService {
     sendFilesCalls += 1;
     sawResolveBatch = resolveBatch != null;
     lastFiles = List<TransferSourceFile>.from(files);
+    sentFileBytesByName = <String, List<int>>{
+      for (final file in files)
+        file.fileName: File(file.sourcePath).readAsBytesSync(),
+    };
     lastManifestItems = List<TransferFileManifestItem>.from(
       manifestItems ??
           files
@@ -4468,6 +4990,8 @@ class PendingReceiveFileTransferService extends FileTransferService {
   int armTimeoutCalls = 0;
   bool? lastArmTimeoutImmediately;
   int closeCalls = 0;
+  String? lastDestinationDirectoryPath;
+  String? lastDestinationRelativeRootPrefix;
   final List<Completer<FileTransferResult>> _completers =
       <Completer<FileTransferResult>>[];
 
@@ -4489,6 +5013,8 @@ class PendingReceiveFileTransferService extends FileTransferService {
   }) async {
     startReceiverCalls += 1;
     lastArmTimeoutImmediately = armTimeoutImmediately;
+    lastDestinationDirectoryPath = destinationDirectory.path;
+    lastDestinationRelativeRootPrefix = destinationRelativeRootPrefix;
     final completer = Completer<FileTransferResult>();
     _completers.add(completer);
     if (armTimeoutImmediately) {
@@ -4517,6 +5043,16 @@ class PendingReceiveFileTransferService extends FileTransferService {
         }
       },
     );
+  }
+
+  void completeNext(FileTransferResult result) {
+    if (_completers.isEmpty) {
+      throw StateError('No pending receive session to complete.');
+    }
+    final completer = _completers.removeAt(0);
+    if (!completer.isCompleted) {
+      completer.complete(result);
+    }
   }
 }
 
