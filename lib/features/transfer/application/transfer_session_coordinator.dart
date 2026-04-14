@@ -1614,15 +1614,53 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }
 
   void handleShareAccessRequestEvent(ShareAccessRequestEvent event) {
+    final normalizedRequesterMac = DeviceAliasRepository.normalizeMac(
+      event.requesterMacAddress,
+    );
     _writeSharedDownloadDiagnostic(
       stage: 'share_access_request_received',
       requestId: event.requestId,
       details: <String, Object?>{
         'requesterIp': event.requesterIp,
         'requesterName': event.requesterName,
+        'requesterMacAddress':
+            normalizedRequesterMac ?? event.requesterMacAddress,
         'transferPort': event.transferPort,
       },
     );
+    if (_isTrustedSender(normalizedRequesterMac)) {
+      _writeSharedDownloadDiagnostic(
+        stage: 'share_access_request_auto_approved_for_friend',
+        requestId: event.requestId,
+        details: <String, Object?>{
+          'requesterIp': event.requesterIp,
+          'requesterName': event.requesterName,
+          'requesterMacAddress':
+              normalizedRequesterMac ?? event.requesterMacAddress,
+          'transferPort': event.transferPort,
+        },
+      );
+      _publishNotice(
+        TransferSessionNotice(
+          infoMessage:
+              '${event.requesterName} is trusted. Granting shared access automatically.',
+          clearError: true,
+        ),
+      );
+      unawaited(
+        _approveIncomingRemoteShareAccessRequest(
+          IncomingRemoteShareAccessRequest(
+            requestId: event.requestId,
+            requesterIp: event.requesterIp,
+            requesterName: event.requesterName,
+            requesterMacAddress: event.requesterMacAddress,
+            transferPort: event.transferPort,
+            createdAt: event.observedAt,
+          ),
+        ),
+      );
+      return;
+    }
     unawaited(SystemSound.play(SystemSoundType.alert));
     _incomingRemoteShareAccessRequests.removeWhere(
       (request) => request.requestId == event.requestId,
@@ -2727,12 +2765,17 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }
 
   Future<void> _handleDownloadRequest(DownloadRequestEvent event) async {
+    final normalizedRequesterMac = DeviceAliasRepository.normalizeMac(
+      event.requesterMacAddress,
+    );
     _writeSharedDownloadDiagnostic(
       stage: 'sender_download_request_received',
       requestId: event.requestId,
       details: <String, Object?>{
         'requesterIp': event.requesterIp,
         'requesterName': event.requesterName,
+        'requesterMacAddress':
+            normalizedRequesterMac ?? event.requesterMacAddress,
         'cacheId': event.cacheId,
         'selectedFileCount': event.selectedRelativePaths.length,
         'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
@@ -2759,7 +2802,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     final isPreviewRequest = event.previewMode;
+    final isTrustedFriendRequester =
+        !isPreviewRequest && _isTrustedSender(normalizedRequesterMac);
     if (!isPreviewRequest &&
+        !isTrustedFriendRequester &&
         _settingsProvider().downloadAttemptNotificationsEnabled) {
       unawaited(
         _appNotificationService.showDownloadAttemptNotification(
@@ -2770,39 +2816,59 @@ class TransferSessionCoordinator extends ChangeNotifier {
       );
     }
     if (!isPreviewRequest) {
-      unawaited(SystemSound.play(SystemSoundType.alert));
+      if (!isTrustedFriendRequester) {
+        unawaited(SystemSound.play(SystemSoundType.alert));
+      }
     }
 
     _publishNotice(
       TransferSessionNotice(
         infoMessage: isPreviewRequest
             ? 'Preview request from ${event.requesterName}.'
+            : isTrustedFriendRequester
+            ? 'Trusted friend ${event.requesterName} requested "${cache.displayName}". Auto-approving.'
             : 'Download request from ${event.requesterName} for "${cache.displayName}".',
         clearError: true,
       ),
     );
 
     if (!isPreviewRequest) {
-      _incomingSharedDownloadRequests.removeWhere(
-        (request) => request.requestId == event.requestId,
+      final request = IncomingSharedDownloadRequest(
+        requestId: event.requestId,
+        requesterIp: event.requesterIp,
+        requesterName: event.requesterName,
+        requesterMacAddress: event.requesterMacAddress,
+        sharedCacheId: cache.cacheId,
+        sharedLabel: cache.displayName,
+        selectedRelativePaths: List<String>.from(event.selectedRelativePaths),
+        selectedFolderPrefixes: List<String>.from(event.selectedFolderPrefixes),
+        transferPort: event.transferPort,
+        createdAt: event.observedAt,
       );
-      _incomingSharedDownloadRequests.insert(
-        0,
-        IncomingSharedDownloadRequest(
+      if (isTrustedFriendRequester) {
+        _writeSharedDownloadDiagnostic(
+          stage: 'sender_download_request_auto_approved_for_friend',
           requestId: event.requestId,
-          requesterIp: event.requesterIp,
-          requesterName: event.requesterName,
-          requesterMacAddress: event.requesterMacAddress,
-          sharedCacheId: cache.cacheId,
-          sharedLabel: cache.displayName,
-          selectedRelativePaths: List<String>.from(event.selectedRelativePaths),
-          selectedFolderPrefixes: List<String>.from(
-            event.selectedFolderPrefixes,
-          ),
-          transferPort: event.transferPort,
-          createdAt: event.observedAt,
-        ),
+          details: <String, Object?>{
+            'requesterIp': event.requesterIp,
+            'requesterName': event.requesterName,
+            'requesterMacAddress':
+                normalizedRequesterMac ?? event.requesterMacAddress,
+            'cacheId': cache.cacheId,
+            'selectedFileCount': event.selectedRelativePaths.length,
+            'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
+            'requestsWholeShare':
+                event.selectedRelativePaths.isEmpty &&
+                event.selectedFolderPrefixes.isEmpty,
+          },
+        );
+        await _approveIncomingSharedDownloadRequest(request);
+        return;
+      }
+      _incomingSharedDownloadRequests.removeWhere(
+        (existing) => existing.requestId == event.requestId,
       );
+      _incomingSharedDownloadRequests.insert(0, request);
       _notify();
       return;
     }
