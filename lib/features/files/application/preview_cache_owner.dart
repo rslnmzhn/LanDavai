@@ -446,8 +446,8 @@ class PreviewCacheOwner {
         originalRelativePath: entry.relativePath,
         outputExtension: '.txt',
         contentBytes: utf8.encode(
-          'PDF preview is available after download. '
-          'Compressed text preview is not generated for this file yet.',
+          'PDF preview/viewing is temporarily unavailable. '
+          'Download the file and open it externally.',
         ),
         suffix: 'pdf-preview',
       );
