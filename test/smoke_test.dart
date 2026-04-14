@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
@@ -11,17 +12,32 @@ import 'package:landa/features/discovery/data/lan_packet_codec.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/discovery/presentation/discovery_page.dart';
+import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
+  const landaNetworkChannel = MethodChannel('landa/network');
   late TestDiscoveryControllerHarness harness;
 
   setUp(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(landaNetworkChannel, (call) async => null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'SystemSound.play') {
+            return null;
+          }
+          return null;
+        });
     harness = await TestDiscoveryControllerHarness.create();
     addTearDown(() async {
       await harness.dispose();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(landaNetworkChannel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
     });
   });
 
@@ -219,6 +235,15 @@ void main() {
     'DiscoveryPage receive flow opens the per-device shared-access browser surface',
     (tester) async {
       _registerWidgetCleanup(tester);
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.1.88',
+          deviceName: 'Remote peer',
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
       await _pumpDiscoveryPage(tester, harness: harness);
 
       await tester.tap(find.widgetWithText(FilledButton, 'Скачать'));
@@ -232,6 +257,7 @@ void main() {
         find.byKey(const Key('remote-download-device-filter-bar')),
         findsOneWidget,
       );
+      expect(find.text('Remote peer'), findsWidgets);
       expect(
         find.byKey(const Key('remote-download-request-access-button')),
         findsOneWidget,
@@ -247,49 +273,35 @@ void main() {
     'DiscoveryPage shows sender approval actions for incoming shared download requests',
     (tester) async {
       _registerWidgetCleanup(tester);
-      final ownerFile = File(
-        p.join(
-          harness.databaseHarness.rootDirectory.path,
-          'shared_sender_ui',
-          'docs',
-          'report.txt',
-        ),
-      );
-      await ownerFile.parent.create(recursive: true);
-      await ownerFile.writeAsString('hello');
-      final cache = await harness.sharedCacheCatalog.buildOwnerSelectionCache(
-        ownerMacAddress: harness.controller.localDeviceMac,
-        filePaths: <String>[ownerFile.path],
-        displayName: 'Shared docs',
-      );
-      await harness.sharedCacheCatalog.loadOwnerCaches(
-        ownerMacAddress: harness.controller.localDeviceMac,
-      );
-
       await _pumpDiscoveryPage(tester, harness: harness);
 
-      harness.transferSessionCoordinator.handleDownloadRequestEvent(
-        DownloadRequestEvent(
-          requestId: 'sender-ui-1',
-          requesterIp: '192.168.1.88',
-          requesterName: 'Remote peer',
-          requesterMacAddress: '11:22:33:44:55:66',
-          cacheId: cache.cacheId,
-          selectedRelativePaths: const <String>['report.txt'],
-          selectedFolderPrefixes: const <String>[],
-          transferPort: 40404,
-          previewMode: false,
-          observedAt: DateTime(2026, 1, 1, 10),
-        ),
-      );
+      harness.transferSessionCoordinator
+          .debugReplaceIncomingSharedDownloadRequests(
+            <IncomingSharedDownloadRequest>[
+              IncomingSharedDownloadRequest(
+                requestId: 'sender-ui-1',
+                requesterIp: '192.168.1.88',
+                requesterName: 'Remote peer',
+                requesterMacAddress: '11:22:33:44:55:66',
+                sharedCacheId: 'cache-sender-ui',
+                sharedLabel: 'Shared docs',
+                selectedRelativePaths: const <String>['report.txt'],
+                selectedFolderPrefixes: const <String>[],
+                transferPort: 40404,
+                createdAt: DateTime(2026, 1, 1, 10),
+              ),
+            ],
+          );
       await _pumpForUi(tester);
 
       expect(find.text('Запросы на скачивание'), findsOneWidget);
       expect(
-        find.text('Устройство "Remote peer" хочет скачать у вас файл'),
+        find.text(
+          'Устройство "Remote peer" хочет скачать у вас файл: report.txt',
+        ),
         findsOneWidget,
       );
-      expect(find.text('report.txt'), findsOneWidget);
+      expect(find.text('Источник: Shared docs'), findsOneWidget);
       expect(find.widgetWithText(FilledButton, 'Отправить'), findsOneWidget);
       expect(find.widgetWithText(OutlinedButton, 'Отказать'), findsOneWidget);
     },

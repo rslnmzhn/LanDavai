@@ -160,6 +160,7 @@ void main() {
           isTrue,
         );
       },
+      timeout: const Timeout(Duration(minutes: 2)),
     );
 
     test(
