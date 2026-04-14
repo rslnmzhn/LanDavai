@@ -218,6 +218,7 @@ class FileTransferService {
             expectedItems: expectedItems,
             destinationDirectory: destinationDirectory,
             onProgress: onProgress,
+            onDiagnosticEvent: onDiagnosticEvent,
             destinationRelativeRootPrefix: destinationRelativeRootPrefix,
             destinationPathAllocator: destinationPathAllocator,
           ).then(resultCompleter.complete).catchError((Object error) {
@@ -374,6 +375,7 @@ class FileTransferService {
       var activeBatchEndIndex = files.length;
       TransferSourceBatch? activeResolvedBatch;
       var sentBytes = 0;
+      var firstByteSentLogged = false;
       onProgress?.call(0, totalBytes);
       for (var index = 0; index < effectiveManifestItems.length; index += 1) {
         final file = index < files.length
@@ -429,6 +431,17 @@ class FileTransferService {
           socket.add(chunk);
           hashSink.add(chunk);
           sentBytes += chunk.length;
+          if (!firstByteSentLogged && chunk.isNotEmpty) {
+            firstByteSentLogged = true;
+            onDiagnosticEvent?.call(
+              stage: 'transfer_stream_first_byte_sent',
+              details: <String, Object?>{
+                'fileName': file.fileName,
+                'sentBytes': sentBytes,
+                'totalBytes': totalBytes,
+              },
+            );
+          }
           onProgress?.call(sentBytes, totalBytes);
         }
         hashSink.close();
@@ -495,6 +508,7 @@ class FileTransferService {
     required List<TransferFileManifestItem>? expectedItems,
     required Directory destinationDirectory,
     void Function(int receivedBytes, int totalBytes)? onProgress,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
     String? destinationRelativeRootPrefix,
     Future<String> Function({
       required Directory destinationDirectory,
@@ -574,6 +588,7 @@ class FileTransferService {
     final receivedItems = <TransferFileManifestItem>[];
     var totalBytes = 0;
     var allFilesHashVerified = true;
+    var firstByteReceivedLogged = false;
     final expectedTotalBytes = normalizedActual.fold<int>(
       0,
       (sum, file) => sum + file.sizeBytes,
@@ -608,6 +623,17 @@ class FileTransferService {
           hashSink.add(chunk);
           remaining -= chunk.length;
           totalBytes += chunk.length;
+          if (!firstByteReceivedLogged && chunk.isNotEmpty) {
+            firstByteReceivedLogged = true;
+            onDiagnosticEvent?.call(
+              stage: 'receiver_first_byte_received',
+              details: <String, Object?>{
+                'fileName': file.name,
+                'receivedBytes': totalBytes,
+                'totalBytes': expectedTotalBytes,
+              },
+            );
+          }
           onProgress?.call(totalBytes, expectedTotalBytes);
         }
 

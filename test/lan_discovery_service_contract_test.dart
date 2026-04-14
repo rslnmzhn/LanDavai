@@ -20,6 +20,8 @@ void main() {
       'friendRequest': 'LANDA_FRIEND_REQUEST_V1',
       'friendResponse': 'LANDA_FRIEND_RESPONSE_V1',
       'shareQuery': 'LANDA_SHARE_QUERY_V1',
+      'shareAccessRequest': 'LANDA_SHARE_ACCESS_REQUEST_V1',
+      'shareAccessResponse': 'LANDA_SHARE_ACCESS_RESPONSE_V1',
       'shareCatalog': 'LANDA_SHARE_CATALOG_V1',
       'downloadRequest': 'LANDA_DOWNLOAD_REQUEST_V1',
       'downloadResponse': 'LANDA_DOWNLOAD_RESPONSE_V1',

@@ -20,6 +20,8 @@ void main() {
       'friendRequest': 'LANDA_FRIEND_REQUEST_V1',
       'friendResponse': 'LANDA_FRIEND_RESPONSE_V1',
       'shareQuery': 'LANDA_SHARE_QUERY_V1',
+      'shareAccessRequest': 'LANDA_SHARE_ACCESS_REQUEST_V1',
+      'shareAccessResponse': 'LANDA_SHARE_ACCESS_RESPONSE_V1',
       'shareCatalog': 'LANDA_SHARE_CATALOG_V1',
       'downloadRequest': 'LANDA_DOWNLOAD_REQUEST_V1',
       'downloadResponse': 'LANDA_DOWNLOAD_RESPONSE_V1',
@@ -140,6 +142,46 @@ void main() {
         (decodedClipboard?['entries'] as List<dynamic>).single,
         containsPair('textValue', 'hello'),
       );
+    },
+  );
+
+  test(
+    'encodes and decodes current share-access request and response envelopes',
+    () {
+      final requestPacket = codec.encodeShareAccessRequest(
+        instanceId: 'instance-1',
+        requestId: 'share-access-1',
+        requesterName: 'Alice',
+        requesterMacAddress: 'aa:bb:cc:dd:ee:ff',
+        transferPort: 40404,
+        createdAtMs: 1234,
+      );
+      final responsePacket = codec.encodeShareAccessResponse(
+        instanceId: 'instance-2',
+        requestId: 'share-access-1',
+        responderName: 'Bob',
+        approved: true,
+        message: 'ok',
+        createdAtMs: 5678,
+      );
+
+      expect(requestPacket, isNotNull);
+      expect(responsePacket, isNotNull);
+
+      final decodedRequest =
+          codec.decodeIncomingPacket(utf8.decode(requestPacket!.bytes))
+              as LanShareAccessRequestPacket?;
+      final decodedResponse =
+          codec.decodeIncomingPacket(utf8.decode(responsePacket!.bytes))
+              as LanShareAccessResponsePacket?;
+
+      expect(decodedRequest, isNotNull);
+      expect(decodedRequest!.requesterName, 'Alice');
+      expect(decodedRequest.transferPort, 40404);
+      expect(decodedResponse, isNotNull);
+      expect(decodedResponse!.responderName, 'Bob');
+      expect(decodedResponse.approved, isTrue);
+      expect(decodedResponse.message, 'ok');
     },
   );
 

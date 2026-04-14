@@ -216,7 +216,7 @@ void main() {
   );
 
   testWidgets(
-    'DiscoveryPage receive flow starts remote browse through RemoteShareBrowser',
+    'DiscoveryPage receive flow opens the per-device shared-access browser surface',
     (tester) async {
       _registerWidgetCleanup(tester);
       await _pumpDiscoveryPage(tester, harness: harness);
@@ -225,16 +225,20 @@ void main() {
       await tester.pump();
       await _pumpForUi(tester);
 
-      expect(harness.remoteShareBrowser.startBrowseCalls, 1);
+      expect(harness.remoteShareBrowser.startBrowseCalls, 0);
+      expect(harness.controller.lastLoadRemoteShareOptionsFuture, isNull);
       expect(find.text('Скачать из сети'), findsOneWidget);
       expect(
         find.byKey(const Key('remote-download-device-filter-bar')),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const Key('remote-download-request-access-button')),
+        findsOneWidget,
+      );
+      expect(find.text('Запросить доступ'), findsOneWidget);
 
       await _closeCurrentRoute(tester, find.text('Скачать из сети'));
-      await (harness.controller.lastLoadRemoteShareOptionsFuture ??
-          Future<void>.value());
       await tester.pump();
     },
   );
