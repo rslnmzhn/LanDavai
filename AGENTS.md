@@ -297,7 +297,7 @@ When implementing changes:
 1. State assumptions briefly.
 2. Implement code, not only proposals.
 3. Report exact files changed.
-4. Include verification (`analyze`, `test`, manual checks run).
+4. Include verification (`analyze`, `test`).
 5. List remaining risks / TODOs.
 
 ## Prompt Template

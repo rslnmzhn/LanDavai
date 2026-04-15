@@ -1,0 +1,15 @@
+{
+  "app": {
+    "title": "Landa"
+  },
+  "common": {
+    "close": "Close"
+  },
+  "duplicate_instance": {
+    "title": "Landa is already running",
+    "message": "Another instance of Landa is already running on this device. Close it before starting again."
+  },
+  "localization": {
+    "fallback_probe": "Fallback text"
+  }
+}
