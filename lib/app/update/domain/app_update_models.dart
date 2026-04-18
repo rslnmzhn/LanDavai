@@ -1,5 +1,9 @@
 enum AppUpdateCheckPhase { idle, checking, upToDate, updateAvailable, failed }
 
+enum AppUpdateApplyPhase { idle, applying, readyToInstall, failed }
+
+enum AppUpdateRuntimePlatform { android, windows, linux, macos, unsupported }
+
 class AppSemanticVersion implements Comparable<AppSemanticVersion> {
   const AppSemanticVersion({
     required this.major,
@@ -48,9 +52,43 @@ class AppUpdateRelease {
     required this.version,
     required this.tag,
     required this.releasePageUrl,
+    required this.assets,
   });
 
   final String version;
   final String tag;
   final String releasePageUrl;
+  final List<AppUpdateAsset> assets;
+}
+
+class AppUpdateAsset {
+  const AppUpdateAsset({
+    required this.platform,
+    required this.arch,
+    required this.format,
+    required this.primary,
+    required this.fileName,
+    required this.size,
+    required this.sha256,
+    required this.downloadUrl,
+  });
+
+  final String platform;
+  final String arch;
+  final String format;
+  final bool primary;
+  final String fileName;
+  final int size;
+  final String sha256;
+  final String downloadUrl;
+}
+
+class AppUpdateTarget {
+  const AppUpdateTarget({
+    required this.platform,
+    required this.archPreferences,
+  });
+
+  final AppUpdateRuntimePlatform platform;
+  final List<String> archPreferences;
 }

@@ -230,19 +230,45 @@ class AppSettingsNetworkTab extends StatelessWidget {
               _updateStatusLabel(appUpdateBoundary).tr(
                 namedArgs: appUpdateBoundary.latestRelease == null
                     ? const <String, String>{}
-                    : {'version': appUpdateBoundary.latestRelease!.version},
+                    : {
+                        'version': appUpdateBoundary.latestRelease!.version,
+                        'path': appUpdateBoundary.applyMessage ?? '',
+                      },
               ),
             ),
-            const SizedBox(height: AppSpacing.sm),
-            FilledButton(
-              onPressed: appUpdateBoundary.isChecking
-                  ? null
-                  : () => unawaited(appUpdateBoundary.checkForUpdates()),
-              child: Text(
-                appUpdateBoundary.phase == AppUpdateCheckPhase.failed
-                    ? 'settings.updates_retry'.tr()
-                    : 'settings.updates_check'.tr(),
+            if (appUpdateBoundary.selectedAsset != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'settings.updates_asset'.tr(
+                  namedArgs: {
+                    'fileName': appUpdateBoundary.selectedAsset!.fileName,
+                  },
+                ),
               ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                FilledButton(
+                  onPressed: appUpdateBoundary.isChecking
+                      ? null
+                      : () => unawaited(appUpdateBoundary.checkForUpdates()),
+                  child: Text(
+                    appUpdateBoundary.phase == AppUpdateCheckPhase.failed
+                        ? 'settings.updates_retry'.tr()
+                        : 'settings.updates_check'.tr(),
+                  ),
+                ),
+                if (appUpdateBoundary.isUpdateAvailable)
+                  OutlinedButton(
+                    onPressed: appUpdateBoundary.isApplying
+                        ? null
+                        : () => unawaited(appUpdateBoundary.applyUpdate()),
+                    child: Text(_applyActionLabel(appUpdateBoundary).tr()),
+                  ),
+              ],
             ),
           ],
         ),
@@ -596,6 +622,15 @@ class TextSettingField extends StatelessWidget {
 }
 
 String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
+  if (appUpdateBoundary.isApplying) {
+    return 'settings.updates_apply_status_applying';
+  }
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.readyToInstall) {
+    return 'settings.updates_apply_status_ready';
+  }
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.failed) {
+    return 'settings.updates_apply_status_failed';
+  }
   switch (appUpdateBoundary.phase) {
     case AppUpdateCheckPhase.idle:
       return 'settings.updates_status_idle';
@@ -608,6 +643,17 @@ String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
     case AppUpdateCheckPhase.failed:
       return 'settings.updates_status_failed';
   }
+}
+
+String _applyActionLabel(AppUpdateBoundary appUpdateBoundary) {
+  final asset = appUpdateBoundary.selectedAsset;
+  if (asset == null) {
+    return 'settings.updates_apply';
+  }
+  if (asset.platform == 'android' && asset.format == 'apk') {
+    return 'settings.updates_apply_android';
+  }
+  return 'settings.updates_apply_desktop';
 }
 
 String _backgroundScanIntervalLabel(BackgroundScanIntervalOption option) {

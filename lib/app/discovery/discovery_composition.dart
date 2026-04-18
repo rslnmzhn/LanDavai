@@ -9,6 +9,11 @@ import '../../core/utils/desktop_window_service.dart';
 import '../../core/utils/path_opener.dart';
 import '../update/app_update_config.dart';
 import '../update/application/app_update_boundary.dart';
+import '../update/data/app_update_apply_service.dart';
+import '../update/data/app_update_asset_selector.dart';
+import '../update/data/app_update_download_service.dart';
+import '../update/data/app_update_storage_service.dart';
+import '../update/data/device_runtime_update_target_resolver.dart';
 import '../update/data/github_release_update_service.dart';
 import '../update/data/package_info_app_version_loader.dart';
 import '../../features/clipboard/application/clipboard_history_store.dart';
@@ -161,6 +166,7 @@ class DiscoveryCompositionFactory {
         desktopWindowService ?? DesktopWindowService();
     final resolvedTransferStorageService =
         transferStorageService ?? TransferStorageService();
+    final pathOpener = PathOpener();
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
     final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
@@ -238,9 +244,21 @@ class DiscoveryCompositionFactory {
       repository: AppUpdateConfig.githubRepository,
     );
     final packageInfoAppVersionLoader = PackageInfoAppVersionLoader();
+    final deviceRuntimeUpdateTargetResolver =
+        DeviceRuntimeUpdateTargetResolver();
+    final appUpdateAssetSelector = AppUpdateAssetSelector();
+    final appUpdateStorageService = AppUpdateStorageService();
+    final appUpdateDownloadService = AppUpdateDownloadService(
+      storageService: appUpdateStorageService,
+    );
+    final appUpdateApplyService = AppUpdateApplyService(pathOpener: pathOpener);
     final appUpdateBoundary = AppUpdateBoundary(
       currentVersionLoader: packageInfoAppVersionLoader.loadVersion,
       latestReleaseLoader: githubReleaseUpdateService.fetchLatestStableRelease,
+      targetResolver: deviceRuntimeUpdateTargetResolver.resolve,
+      assetSelector: appUpdateAssetSelector.selectAsset,
+      assetDownloader: appUpdateDownloadService.downloadAsset,
+      downloadedAssetOpener: appUpdateApplyService.openDownloadedAsset,
     );
     final remoteShareMediaProjectionBoundary =
         RemoteShareMediaProjectionBoundary(
@@ -335,7 +353,7 @@ class DiscoveryCompositionFactory {
       fileTransferService: fileTransferService,
       transferStorageService: resolvedTransferStorageService,
       previewCacheOwner: previewCacheOwner,
-      pathOpener: PathOpener(),
+      pathOpener: pathOpener,
       nearbyTransferAvailabilityStore: nearbyTransferAvailabilityStore,
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(

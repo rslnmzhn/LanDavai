@@ -65,6 +65,7 @@ class GithubReleaseUpdateService {
       version: version,
       tag: tag,
       releasePageUrl: htmlUrl,
+      assets: _parseAssets(manifestJson),
     );
   }
 
@@ -120,6 +121,30 @@ class GithubReleaseUpdateService {
     }
   }
 
+  List<AppUpdateAsset> _parseAssets(Object? manifestJson) {
+    final manifest = _requireMap(manifestJson, 'release manifest');
+    final assets = manifest['assets'];
+    if (assets is! List) {
+      throw const FormatException('Release manifest assets are missing.');
+    }
+    return assets
+        .cast<Object?>()
+        .map((value) {
+          final map = _requireMap(value, 'release manifest asset');
+          return AppUpdateAsset(
+            platform: _requireString(map, 'platform'),
+            arch: _requireString(map, 'arch'),
+            format: _requireString(map, 'format'),
+            primary: map['primary'] == true,
+            fileName: _requireString(map, 'fileName'),
+            size: _requireInt(map, 'size'),
+            sha256: _requireString(map, 'sha256'),
+            downloadUrl: _requireString(map, 'downloadUrl'),
+          );
+        })
+        .toList(growable: false);
+  }
+
   Map<String, dynamic> _requireMap(Object? value, String fieldName) {
     if (value is Map<String, dynamic>) {
       return value;
@@ -136,5 +161,16 @@ class GithubReleaseUpdateService {
       return value.trim();
     }
     throw FormatException('Expected string for $key.');
+  }
+
+  int _requireInt(Map<String, dynamic> map, String key) {
+    final value = map[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    throw FormatException('Expected integer for $key.');
   }
 }

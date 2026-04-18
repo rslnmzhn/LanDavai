@@ -20,7 +20,16 @@ void main() {
           tag: 'v0.1.0',
           releasePageUrl:
               'https://github.com/rslnmzhn/LanDavai/releases/tag/v0.1.0',
+          assets: <AppUpdateAsset>[],
         ),
+        targetResolver: () async => const AppUpdateTarget(
+          platform: AppUpdateRuntimePlatform.windows,
+          archPreferences: <String>['x86_64'],
+        ),
+        assetSelector: ({required release, required target}) =>
+            throw UnimplementedError(),
+        assetDownloader: (asset) async => throw UnimplementedError(),
+        downloadedAssetOpener: ({required asset, required file}) async {},
       );
 
       final widget = AppSettingsNetworkTab(

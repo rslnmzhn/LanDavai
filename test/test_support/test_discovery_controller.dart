@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:landa/app/discovery/discovery_composition.dart';
 import 'package:landa/app/update/application/app_update_boundary.dart';
 import 'package:landa/app/update/domain/app_update_models.dart';
@@ -316,7 +318,30 @@ class TestDiscoveryControllerHarness {
         tag: 'v0.1.0',
         releasePageUrl:
             'https://github.com/rslnmzhn/LanDavai/releases/tag/v0.1.0',
+        assets: <AppUpdateAsset>[],
       ),
+      targetResolver: () async => const AppUpdateTarget(
+        platform: AppUpdateRuntimePlatform.windows,
+        archPreferences: <String>['x86_64'],
+      ),
+      assetSelector:
+          ({
+            required AppUpdateRelease release,
+            required AppUpdateTarget target,
+          }) {
+            throw StateError('No update asset is configured in test harness.');
+          },
+      assetDownloader: (asset) async {
+        throw StateError(
+          'Update download should not be used in this test harness.',
+        );
+      },
+      downloadedAssetOpener:
+          ({required AppUpdateAsset asset, required File file}) async {
+            throw StateError(
+              'Update apply should not be used in this test harness.',
+            );
+          },
     );
 
     return TestDiscoveryControllerHarness._(

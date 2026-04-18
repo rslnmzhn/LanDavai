@@ -2709,6 +2709,10 @@ void main() {
 
         final logFile = await diagnosticStore.resolveLogFile();
         expect(logFile, isNotNull);
+        await _waitForDiagnosticStage(
+          diagnosticStore,
+          'share_access_request_sent',
+        );
         final logContents = await logFile!.readAsString();
         expect(logContents, contains('"stage":"share_access_request_sent"'));
         expect(
@@ -3131,7 +3135,10 @@ void main() {
             observedAt: DateTime(2026, 1, 3),
           ),
         );
-        await Future<void>.delayed(const Duration(milliseconds: 40));
+        await _waitForShareAccessResponses(
+          lanDiscoveryService: lanDiscoveryService,
+          expectedCount: 1,
+        );
 
         expect(coordinator.incomingRemoteShareAccessRequests, isEmpty);
         expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
@@ -4304,6 +4311,18 @@ Future<void> _waitForDownloadHistoryRecords({
   }
 }
 
+Future<void> _waitForShareAccessResponses({
+  required CapturingLanDiscoveryService lanDiscoveryService,
+  required int expectedCount,
+}) async {
+  for (var i = 0; i < 20; i += 1) {
+    if (lanDiscoveryService.shareAccessResponses.length >= expectedCount) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 Future<List<Map<String, Object?>>> _readDiagnosticEntries(
   SharedDownloadDiagnosticLogStore store,
 ) async {
@@ -4319,6 +4338,19 @@ Future<List<Map<String, Object?>>> _readDiagnosticEntries(
             Map<String, Object?>.from(jsonDecode(line) as Map<String, dynamic>),
       )
       .toList(growable: false);
+}
+
+Future<void> _waitForDiagnosticStage(
+  SharedDownloadDiagnosticLogStore store,
+  String stage,
+) async {
+  for (var i = 0; i < 30; i += 1) {
+    final entries = await _readDiagnosticEntries(store);
+    if (entries.any((entry) => entry['stage'] == stage)) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
 }
 
 class CapturingLanDiscoveryService extends LanDiscoveryService {

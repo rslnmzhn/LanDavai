@@ -58,7 +58,19 @@ void main() {
                   'draft': false,
                   'prerelease': false,
                 },
-                'assets': [],
+                'assets': [
+                  {
+                    'platform': 'android',
+                    'arch': 'arm64-v8a',
+                    'format': 'apk',
+                    'primary': true,
+                    'fileName': 'landa-v1.2.3-android-arm64-v8a.apk',
+                    'size': 123,
+                    'sha256': 'abc',
+                    'downloadUrl':
+                        'https://github.com/rslnmzhn/LanDavai/releases/download/$tag/landa-v1.2.3-android-arm64-v8a.apk',
+                  },
+                ],
               }),
             );
           await request.response.close();
@@ -85,6 +97,9 @@ void main() {
         release.releasePageUrl,
         'https://github.com/rslnmzhn/LanDavai/releases/tag/$tag',
       );
+      expect(release.assets, hasLength(1));
+      expect(release.assets.single.platform, 'android');
+      expect(release.assets.single.arch, 'arm64-v8a');
     },
   );
 }
