@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app/update/application/app_update_boundary.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/clipboard_source_scope_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
@@ -149,6 +150,7 @@ class DiscoverySettingsPage extends StatelessWidget {
     required this.configuredDiscoveryTargetsStore,
     required this.desktopWindowService,
     required this.debugLogAccessService,
+    required this.appUpdateBoundary,
     super.key,
   });
 
@@ -157,6 +159,7 @@ class DiscoverySettingsPage extends StatelessWidget {
   final ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore;
   final DesktopWindowService desktopWindowService;
   final DebugLogAccessService debugLogAccessService;
+  final AppUpdateBoundary appUpdateBoundary;
 
   @override
   Widget build(BuildContext context) {
@@ -166,10 +169,12 @@ class DiscoverySettingsPage extends StatelessWidget {
           controller,
           readModel,
           configuredDiscoveryTargetsStore,
+          appUpdateBoundary,
         ]),
         builder: (context, _) {
           return AppSettingsSheet(
             settings: readModel.settings,
+            appUpdateBoundary: appUpdateBoundary,
             configuredDiscoveryTargets: configuredDiscoveryTargetsStore.targets,
             configuredTargetValidator:
                 configuredDiscoveryTargetsStore.validationErrorFor,

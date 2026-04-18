@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:landa/app/discovery/discovery_composition.dart';
+import 'package:landa/app/update/application/app_update_boundary.dart';
+import 'package:landa/app/update/domain/app_update_models.dart';
 import 'package:landa/core/utils/app_notification_service.dart';
 import 'package:landa/core/utils/desktop_window_service.dart';
 import 'package:landa/core/utils/path_opener.dart';
@@ -72,6 +76,7 @@ class TestDiscoveryControllerHarness {
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
     required this.previewCacheOwner,
+    required this.appUpdateBoundary,
     required this.pathOpener,
   });
 
@@ -91,6 +96,7 @@ class TestDiscoveryControllerHarness {
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
+  final AppUpdateBoundary appUpdateBoundary;
   final PathOpener pathOpener;
 
   DiscoveryCompositionResult createEntryComposition({
@@ -114,6 +120,7 @@ class TestDiscoveryControllerHarness {
         remoteClipboardProjectionStore: remoteClipboardProjectionStore,
         desktopWindowService: desktopWindowService,
         transferStorageService: transferStorageService,
+        appUpdateBoundary: appUpdateBoundary,
         createNearbyTransferSessionStore: createNearbyTransferSessionStore,
       ),
     );
@@ -304,6 +311,38 @@ class TestDiscoveryControllerHarness {
       ownerMacAddressProvider: () => controller.localDeviceMac,
       settingsProvider: () => settingsStore.settings,
     );
+    final appUpdateBoundary = AppUpdateBoundary(
+      currentVersionLoader: () async => '0.1.0',
+      latestReleaseLoader: () async => const AppUpdateRelease(
+        version: '0.1.0',
+        tag: 'v0.1.0',
+        releasePageUrl:
+            'https://github.com/rslnmzhn/LanDavai/releases/tag/v0.1.0',
+        assets: <AppUpdateAsset>[],
+      ),
+      targetResolver: () async => const AppUpdateTarget(
+        platform: AppUpdateRuntimePlatform.windows,
+        archPreferences: <String>['x86_64'],
+      ),
+      assetSelector:
+          ({
+            required AppUpdateRelease release,
+            required AppUpdateTarget target,
+          }) {
+            throw StateError('No update asset is configured in test harness.');
+          },
+      assetDownloader: (asset) async {
+        throw StateError(
+          'Update download should not be used in this test harness.',
+        );
+      },
+      downloadedAssetOpener:
+          ({required AppUpdateAsset asset, required File file}) async {
+            throw StateError(
+              'Update apply should not be used in this test harness.',
+            );
+          },
+    );
 
     return TestDiscoveryControllerHarness._(
       databaseHarness: databaseHarness,
@@ -322,6 +361,7 @@ class TestDiscoveryControllerHarness {
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       previewCacheOwner: previewCacheOwner,
+      appUpdateBoundary: appUpdateBoundary,
       pathOpener: resolvedPathOpener,
     );
   }
@@ -333,6 +373,7 @@ class TestDiscoveryControllerHarness {
     if (!controller.wasDisposed) {
       controller.dispose();
     }
+    appUpdateBoundary.dispose();
     remoteShareBrowser.dispose();
     previewCacheOwner.dispose();
     await databaseHarness.dispose();

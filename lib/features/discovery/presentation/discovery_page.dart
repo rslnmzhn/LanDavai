@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../../app/update/application/app_update_boundary.dart';
 import '../../../core/utils/desktop_window_service.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../clipboard/application/clipboard_history_store.dart';
@@ -55,6 +56,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.remoteClipboardProjectionStore,
     required this.desktopWindowService,
     required this.transferStorageService,
+    required this.appUpdateBoundary,
     required this.createNearbyTransferSessionStore,
     required this.isBoundaryReady,
     this.debugLogAccessService,
@@ -76,6 +78,7 @@ class DiscoveryPage extends StatefulWidget {
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
+  final AppUpdateBoundary appUpdateBoundary;
   final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
   final bool isBoundaryReady;
   final DebugLogAccessService? debugLogAccessService;
@@ -112,6 +115,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   DesktopWindowService get _desktopWindowService => widget.desktopWindowService;
   TransferStorageService get _transferStorageService =>
       widget.transferStorageService;
+  AppUpdateBoundary get _appUpdateBoundary => widget.appUpdateBoundary;
   NearbyTransferSessionStore Function() get _createNearbyTransferSessionStore =>
       widget.createNearbyTransferSessionStore;
   DebugLogAccessService get _debugLogAccessService =>
@@ -334,6 +338,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           configuredDiscoveryTargetsStore: _configuredDiscoveryTargetsStore,
           desktopWindowService: _desktopWindowService,
           debugLogAccessService: _debugLogAccessService,
+          appUpdateBoundary: _appUpdateBoundary,
         ),
       ),
     );

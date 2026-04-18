@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -6,6 +7,15 @@ import '../../core/storage/app_database.dart';
 import '../../core/utils/app_notification_service.dart';
 import '../../core/utils/desktop_window_service.dart';
 import '../../core/utils/path_opener.dart';
+import '../update/app_update_config.dart';
+import '../update/application/app_update_boundary.dart';
+import '../update/data/app_update_apply_service.dart';
+import '../update/data/app_update_asset_selector.dart';
+import '../update/data/app_update_download_service.dart';
+import '../update/data/app_update_storage_service.dart';
+import '../update/data/device_runtime_update_target_resolver.dart';
+import '../update/data/github_release_update_service.dart';
+import '../update/data/package_info_app_version_loader.dart';
 import '../../features/clipboard/application/clipboard_history_store.dart';
 import '../../features/clipboard/application/remote_clipboard_projection_store.dart';
 import '../../features/clipboard/data/clipboard_capture_service.dart';
@@ -73,6 +83,7 @@ class DiscoveryPageDependencies {
     required this.remoteClipboardProjectionStore,
     required this.desktopWindowService,
     required this.transferStorageService,
+    required this.appUpdateBoundary,
     required this.createNearbyTransferSessionStore,
   });
 
@@ -91,6 +102,7 @@ class DiscoveryPageDependencies {
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
+  final AppUpdateBoundary appUpdateBoundary;
   final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
 }
 
@@ -127,6 +139,8 @@ class DiscoveryCompositionResult {
     await pageDependencies.desktopWindowService.setMinimizeToTrayEnabled(
       pageDependencies.readModel.settings.minimizeToTrayOnClose,
     );
+    await pageDependencies.appUpdateBoundary.initialize();
+    unawaited(pageDependencies.appUpdateBoundary.checkForUpdates());
   }
 
   void dispose() {
@@ -152,6 +166,7 @@ class DiscoveryCompositionFactory {
         desktopWindowService ?? DesktopWindowService();
     final resolvedTransferStorageService =
         transferStorageService ?? TransferStorageService();
+    final pathOpener = PathOpener();
     final deviceAliasRepository = DeviceAliasRepository(database: database);
     final friendRepository = FriendRepository(database: database);
     final localPeerIdentityStore = LocalPeerIdentityStore(database: database);
@@ -223,6 +238,27 @@ class DiscoveryCompositionFactory {
     );
     final remoteShareBrowser = RemoteShareBrowser(
       sharedCacheCatalog: sharedCacheCatalog,
+    );
+    final githubReleaseUpdateService = GithubReleaseUpdateService(
+      owner: AppUpdateConfig.githubOwner,
+      repository: AppUpdateConfig.githubRepository,
+    );
+    final packageInfoAppVersionLoader = PackageInfoAppVersionLoader();
+    final deviceRuntimeUpdateTargetResolver =
+        DeviceRuntimeUpdateTargetResolver();
+    final appUpdateAssetSelector = AppUpdateAssetSelector();
+    final appUpdateStorageService = AppUpdateStorageService();
+    final appUpdateDownloadService = AppUpdateDownloadService(
+      storageService: appUpdateStorageService,
+    );
+    final appUpdateApplyService = AppUpdateApplyService(pathOpener: pathOpener);
+    final appUpdateBoundary = AppUpdateBoundary(
+      currentVersionLoader: packageInfoAppVersionLoader.loadVersion,
+      latestReleaseLoader: githubReleaseUpdateService.fetchLatestStableRelease,
+      targetResolver: deviceRuntimeUpdateTargetResolver.resolve,
+      assetSelector: appUpdateAssetSelector.selectAsset,
+      assetDownloader: appUpdateDownloadService.downloadAsset,
+      downloadedAssetOpener: appUpdateApplyService.openDownloadedAsset,
     );
     final remoteShareMediaProjectionBoundary =
         RemoteShareMediaProjectionBoundary(
@@ -317,7 +353,7 @@ class DiscoveryCompositionFactory {
       fileTransferService: fileTransferService,
       transferStorageService: resolvedTransferStorageService,
       previewCacheOwner: previewCacheOwner,
-      pathOpener: PathOpener(),
+      pathOpener: pathOpener,
       nearbyTransferAvailabilityStore: nearbyTransferAvailabilityStore,
       lanDiscoveryService: lanDiscoveryService,
       networkHostScanner: NetworkHostScanner(
@@ -365,6 +401,7 @@ class DiscoveryCompositionFactory {
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       desktopWindowService: resolvedDesktopWindowService,
       transferStorageService: resolvedTransferStorageService,
+      appUpdateBoundary: appUpdateBoundary,
       createNearbyTransferSessionStore: () {
         return NearbyTransferSessionStore(
           capabilityService: nearbyTransferCapabilityService,
@@ -394,6 +431,7 @@ class DiscoveryCompositionFactory {
         readModel.dispose();
         discoveryNetworkScopeStore.dispose();
         remoteShareBrowser.dispose();
+        appUpdateBoundary.dispose();
         previewCacheOwner.dispose();
         videoLinkSessionBoundary.dispose();
         controller.dispose();

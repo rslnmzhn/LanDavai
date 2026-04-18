@@ -178,8 +178,8 @@ void main() {
       );
       await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      final responsePacket = transportAdapter.sentPackets.singleWhere(
-        (packet) => packet.context == LanPacketCodec.clipboardCatalogPrefix,
+      final responsePacket = await _waitForClipboardCatalogPacket(
+        transportAdapter,
       );
       final decoded =
           codec.decodeIncomingPacket(utf8.decode(responsePacket.bytes))
@@ -218,6 +218,21 @@ void main() {
       );
     },
   );
+}
+
+Future<_RecordedTransportPacket> _waitForClipboardCatalogPacket(
+  _FakeDiscoveryTransportAdapter transportAdapter,
+) async {
+  for (var i = 0; i < 20; i += 1) {
+    final packet = transportAdapter.sentPackets.where(
+      (value) => value.context == LanPacketCodec.clipboardCatalogPrefix,
+    );
+    if (packet.isNotEmpty) {
+      return packet.first;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  throw StateError('Clipboard catalog response packet was not emitted.');
 }
 
 Future<String> _createOversizedClipboardImage(Directory rootDirectory) async {

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:easy_localization/easy_localization.dart';
 
+import '../../../app/update/application/app_update_boundary.dart';
+import '../../../app/update/domain/app_update_models.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
@@ -56,6 +58,7 @@ class AppSettingsSectionCard extends StatelessWidget {
 class AppSettingsNetworkTab extends StatelessWidget {
   const AppSettingsNetworkTab({
     required this.settings,
+    required this.appUpdateBoundary,
     required this.configuredDiscoveryTargets,
     required this.configuredTargetController,
     required this.onAddConfiguredTarget,
@@ -66,6 +69,7 @@ class AppSettingsNetworkTab extends StatelessWidget {
   });
 
   final AppSettings settings;
+  final AppUpdateBoundary appUpdateBoundary;
   final List<String> configuredDiscoveryTargets;
   final TextEditingController configuredTargetController;
   final Future<void> Function() onAddConfiguredTarget;
@@ -196,6 +200,75 @@ class AppSettingsNetworkTab extends StatelessWidget {
               ),
               contentPadding: EdgeInsets.zero,
               onChanged: onDownloadAttemptNotificationsChanged,
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        AppSettingsSectionCard(
+          title: 'settings.updates_title'.tr(),
+          description: 'settings.updates_description'.tr(),
+          children: [
+            Text(
+              appUpdateBoundary.currentVersion == null
+                  ? 'settings.updates_current_version_unknown'.tr()
+                  : 'settings.updates_current_version'.tr(
+                      namedArgs: {'version': appUpdateBoundary.currentVersion!},
+                    ),
+            ),
+            if (appUpdateBoundary.latestRelease != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'settings.updates_latest_version'.tr(
+                  namedArgs: {
+                    'version': appUpdateBoundary.latestRelease!.version,
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              _updateStatusLabel(appUpdateBoundary).tr(
+                namedArgs: appUpdateBoundary.latestRelease == null
+                    ? const <String, String>{}
+                    : {
+                        'version': appUpdateBoundary.latestRelease!.version,
+                        'path': appUpdateBoundary.applyMessage ?? '',
+                      },
+              ),
+            ),
+            if (appUpdateBoundary.selectedAsset != null) ...[
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'settings.updates_asset'.tr(
+                  namedArgs: {
+                    'fileName': appUpdateBoundary.selectedAsset!.fileName,
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                FilledButton(
+                  onPressed: appUpdateBoundary.isChecking
+                      ? null
+                      : () => unawaited(appUpdateBoundary.checkForUpdates()),
+                  child: Text(
+                    appUpdateBoundary.phase == AppUpdateCheckPhase.failed
+                        ? 'settings.updates_retry'.tr()
+                        : 'settings.updates_check'.tr(),
+                  ),
+                ),
+                if (appUpdateBoundary.isUpdateAvailable)
+                  OutlinedButton(
+                    onPressed: appUpdateBoundary.isApplying
+                        ? null
+                        : () => unawaited(appUpdateBoundary.applyUpdate()),
+                    child: Text(_applyActionLabel(appUpdateBoundary).tr()),
+                  ),
+              ],
             ),
           ],
         ),
@@ -546,6 +619,41 @@ class TextSettingField extends StatelessWidget {
       ],
     );
   }
+}
+
+String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
+  if (appUpdateBoundary.isApplying) {
+    return 'settings.updates_apply_status_applying';
+  }
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.readyToInstall) {
+    return 'settings.updates_apply_status_ready';
+  }
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.failed) {
+    return 'settings.updates_apply_status_failed';
+  }
+  switch (appUpdateBoundary.phase) {
+    case AppUpdateCheckPhase.idle:
+      return 'settings.updates_status_idle';
+    case AppUpdateCheckPhase.checking:
+      return 'settings.updates_status_checking';
+    case AppUpdateCheckPhase.upToDate:
+      return 'settings.updates_status_up_to_date';
+    case AppUpdateCheckPhase.updateAvailable:
+      return 'settings.updates_status_available';
+    case AppUpdateCheckPhase.failed:
+      return 'settings.updates_status_failed';
+  }
+}
+
+String _applyActionLabel(AppUpdateBoundary appUpdateBoundary) {
+  final asset = appUpdateBoundary.selectedAsset;
+  if (asset == null) {
+    return 'settings.updates_apply';
+  }
+  if (asset.platform == 'android' && asset.format == 'apk') {
+    return 'settings.updates_apply_android';
+  }
+  return 'settings.updates_apply_desktop';
 }
 
 String _backgroundScanIntervalLabel(BackgroundScanIntervalOption option) {
