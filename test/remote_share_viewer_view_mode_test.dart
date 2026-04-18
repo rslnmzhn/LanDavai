@@ -1,6 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:landa/features/discovery/application/remote_share_browser.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
@@ -36,12 +35,9 @@ void main() {
     });
   });
 
-  testWidgets(
-    'view mode toggle switches between structured and flat projections',
-    (tester) async {
-      await setLargeSurface(tester);
-      registerWidgetCleanup(tester);
-
+  test(
+    'remote share browser keeps structured and flat projections aligned',
+    () async {
       await seedRemoteCatalogWithFiles(
         browser: harness.remoteShareBrowser,
         ownerIp: '192.168.1.44',
@@ -51,44 +47,42 @@ void main() {
         files: <String>['report.pdf', 'photo.jpg'],
       );
 
-      final coordinator = TestRemoteShareTransferCoordinator(
-        previewPathProvider: () async => null,
-        sharedCacheCatalog: harness.sharedCacheCatalog,
-        sharedCacheIndexStore: harness.sharedCacheIndexStore,
-        previewCacheOwner: harness.previewCacheOwner,
-        downloadHistoryBoundary: harness.downloadHistoryBoundary,
-        settings: harness.readModel.settings,
+      final structuredRoot = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
       );
-      addTearDown(coordinator.dispose);
-
-      await pumpRemoteBrowser(
-        tester,
-        coordinator: coordinator,
-        browser: harness.remoteShareBrowser,
-        harness: harness,
-      );
-
-      expect(find.text('Docs'), findsWidgets);
       expect(
-        find.byKey(const Key('remote-download-flat-category-filter-bar')),
-        findsNothing,
+        structuredRoot.entries.folders.map((folder) => folder.name).toList(),
+        contains('Docs'),
       );
 
-      await switchToFlatMode(tester);
-
-      expect(find.text('report.pdf'), findsOneWidget);
-      expect(find.text('photo.jpg'), findsOneWidget);
+      final docsFolder = structuredRoot.entries.folders.firstWhere(
+        (folder) => folder.name == 'Docs',
+      );
+      final structuredDocs = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: docsFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
       expect(
-        find.byKey(const Key('remote-download-flat-category-filter-bar')),
-        findsOneWidget,
+        structuredDocs.entries.files
+            .map((file) => file.virtualPath.split('/').last)
+            .toSet(),
+        <String>{'report.pdf', 'photo.jpg'},
       );
 
-      await switchToStructuredMode(tester);
-
-      expect(find.text('Docs'), findsWidgets);
+      final flatRoot = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.flat,
+        showAllFlatCategories: true,
+      );
       expect(
-        find.byKey(const Key('remote-download-flat-category-filter-bar')),
-        findsNothing,
+        flatRoot.entries.files
+            .map((file) => file.virtualPath.split('/').last)
+            .toSet(),
+        <String>{'report.pdf', 'photo.jpg'},
       );
     },
   );

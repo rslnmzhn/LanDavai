@@ -8,6 +8,7 @@
     "cancel": "Cancel",
     "remove": "Remove",
     "save": "Save",
+    "reset": "Reset",
     "add": "Add",
     "delete": "Delete",
     "copy": "Copy",
@@ -19,7 +20,21 @@
     "sort": "Sort",
     "search_files": "Search files",
     "send": "Send",
-    "reject": "Reject"
+    "reject": "Reject",
+    "accept": "Accept",
+    "open_folder": "Open folder",
+    "remove_from_friends": "Remove from friends",
+    "decline": "Decline",
+    "format_size_b": "{value} B",
+    "format_size_kb": "{value} KB",
+    "format_size_mb": "{value} MB",
+    "format_size_gb": "{value} GB",
+    "format_speed_b": "{value} B/s",
+    "format_speed_kb": "{value} KB/s",
+    "format_speed_mb": "{value} MB/s",
+    "format_speed_gb": "{value} GB/s",
+    "eta_unavailable": "ETA --:--",
+    "eta_value": "ETA {value}"
   },
   "duplicate_instance": {
     "title": "Landa is already running",
@@ -103,7 +118,35 @@
       "target": "Target",
       "app_found": "App found",
       "lan_host": "LAN host",
-      "stale": "Stale"
+      "stale": "Stale",
+      "mac_value": "MAC {value}",
+      "os_value": "OS {value}",
+      "rename": "Rename device",
+      "already_friends": "Already friends",
+      "friend_request_pending": "Friend request pending",
+      "add_to_friends": "Add to friends",
+      "rename_custom_name": "Custom name",
+      "rename_helper": "Name is bound to device MAC address."
+    },
+    "share_sheet": {
+      "add_shared_folder": "Add shared folder",
+      "add_shared_folder_description": "Create lightweight cache index for folder",
+      "add_shared_files": "Add shared files",
+      "add_shared_files_description": "Create lightweight cache index for files"
+    },
+    "friends_sheet": {
+      "title": "Friends",
+      "description": "Friendship requires confirmation from both devices.",
+      "tab_friends": "Friends ({count})",
+      "tab_requests": "Requests ({count})",
+      "empty_friends": "No friends yet.\nOpen a device menu and send a friend request.",
+      "empty_requests": "No pending friend requests.",
+      "received_at": "Received {value}"
+    },
+    "history_sheet": {
+      "empty": "Download history is empty for now.",
+      "file_summary": "{count} files • {size}",
+      "more_files": "+{count} more files"
     },
     "empty": {
       "title": "No devices found yet",
@@ -145,7 +188,8 @@
     "flat_category_videos": "Videos",
     "flat_category_music": "Music",
     "flat_category_documents": "Documents",
-    "flat_category_programs": "Programs"
+    "flat_category_programs": "Programs",
+    "file_list_capped": "Showing first {shown} files (hidden: {hidden}) for stable browsing."
   },
   "files": {
     "title": "Files",
@@ -187,7 +231,15 @@
     "viewer_text_truncated": "Preview is truncated to 2 MB.",
     "viewer_pdf_unavailable": "PDF preview/viewing is temporarily unavailable. Open the file externally to view it.",
     "viewer_unsupported": "This file type is not supported by the built-in viewer yet.",
-    "viewer_open_external": "Open externally"
+    "viewer_open_external": "Open externally",
+    "viewer_image_open_failed": "Cannot open image file.",
+    "viewer_video_open_failed": "Cannot open video in built-in player.\n{error}",
+    "viewer_video_platform_open_failed": "Cannot open video in built-in player on this platform.\n{error}",
+    "viewer_audio_open_failed": "Cannot open audio in built-in player.\n{error}",
+    "viewer_back_10s": "Back 10s",
+    "viewer_pause": "Pause",
+    "viewer_play": "Play",
+    "viewer_forward_10s": "Forward 10s"
   },
   "settings": {
     "title": "Settings",

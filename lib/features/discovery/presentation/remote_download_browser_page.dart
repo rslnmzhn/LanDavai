@@ -531,8 +531,12 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
               Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: Text(
-                  'Показаны первые ${directory.entries.files.length} файлов '
-                  '(скрыто: ${directory.hiddenFilesCount}) для стабильной работы.',
+                  'remote_download.file_list_capped'.tr(
+                    namedArgs: <String, String>{
+                      'shown': '${directory.entries.files.length}',
+                      'hidden': '${directory.hiddenFilesCount}',
+                    },
+                  ),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: AppColors.textSecondary,
                   ),
@@ -1048,18 +1052,26 @@ class _SharedDownloadStatusCard extends StatelessWidget {
 
   static String _formatBytes(int bytes) {
     if (bytes < 1024) {
-      return '$bytes B';
+      return 'common.format_size_b'.tr(
+        namedArgs: <String, String>{'value': '$bytes'},
+      );
     }
     final kb = bytes / 1024;
     if (kb < 1024) {
-      return '${kb.toStringAsFixed(1)} KB';
+      return 'common.format_size_kb'.tr(
+        namedArgs: <String, String>{'value': kb.toStringAsFixed(1)},
+      );
     }
     final mb = kb / 1024;
     if (mb < 1024) {
-      return '${mb.toStringAsFixed(1)} MB';
+      return 'common.format_size_mb'.tr(
+        namedArgs: <String, String>{'value': mb.toStringAsFixed(1)},
+      );
     }
     final gb = mb / 1024;
-    return '${gb.toStringAsFixed(2)} GB';
+    return 'common.format_size_gb'.tr(
+      namedArgs: <String, String>{'value': gb.toStringAsFixed(2)},
+    );
   }
 }
 

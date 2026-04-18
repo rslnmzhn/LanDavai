@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_colors.dart';
@@ -30,17 +31,32 @@ class DiscoveryFriendsSheet extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Friends', style: Theme.of(context).textTheme.titleLarge),
+                Text(
+                  'discovery.friends_sheet.title'.tr(),
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  'Friendship requires confirmation from both devices.',
+                  'discovery.friends_sheet.description'.tr(),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 TabBar(
                   tabs: [
-                    Tab(text: 'Friends (${friends.length})'),
-                    Tab(text: 'Requests (${requests.length})'),
+                    Tab(
+                      text: 'discovery.friends_sheet.tab_friends'.tr(
+                        namedArgs: <String, String>{
+                          'count': '${friends.length}',
+                        },
+                      ),
+                    ),
+                    Tab(
+                      text: 'discovery.friends_sheet.tab_requests'.tr(
+                        namedArgs: <String, String>{
+                          'count': '${requests.length}',
+                        },
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -48,9 +64,9 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                   child: TabBarView(
                     children: [
                       friends.isEmpty
-                          ? const Center(
+                          ? Center(
                               child: Text(
-                                'No friends yet.\nOpen a device menu and send a friend request.',
+                                'discovery.friends_sheet.empty_friends'.tr(),
                                 textAlign: TextAlign.center,
                               ),
                             )
@@ -63,10 +79,18 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                                 final subtitleParts = <String>[
                                   friend.ip,
                                   if (friend.macAddress != null)
-                                    'MAC ${friend.macAddress}',
+                                    'discovery.device.mac_value'.tr(
+                                      namedArgs: <String, String>{
+                                        'value': friend.macAddress!,
+                                      },
+                                    ),
                                   if (friend.operatingSystem != null &&
                                       friend.operatingSystem!.isNotEmpty)
-                                    'OS ${friend.operatingSystem}',
+                                    'discovery.device.os_value'.tr(
+                                      namedArgs: <String, String>{
+                                        'value': friend.operatingSystem!,
+                                      },
+                                    ),
                                 ];
                                 return Card(
                                   child: ListTile(
@@ -77,7 +101,8 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                                     title: Text(friend.displayName),
                                     subtitle: Text(subtitleParts.join(' • ')),
                                     trailing: IconButton(
-                                      tooltip: 'Remove from friends',
+                                      tooltip: 'common.remove_from_friends'
+                                          .tr(),
                                       onPressed:
                                           controller.isFriendMutationInProgress
                                           ? null
@@ -98,8 +123,10 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                               },
                             ),
                       requests.isEmpty
-                          ? const Center(
-                              child: Text('No pending friend requests.'),
+                          ? Center(
+                              child: Text(
+                                'discovery.friends_sheet.empty_requests'.tr(),
+                              ),
                             )
                           : ListView.separated(
                               itemCount: requests.length,
@@ -114,15 +141,16 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                                     ),
                                     title: Text(request.senderName),
                                     subtitle: Text(
-                                      '${request.senderIp} • MAC ${request.senderMacAddress}\n'
-                                      'Received ${_formatTime(request.createdAt)}',
+                                      '${request.senderIp} • '
+                                      '${'discovery.device.mac_value'.tr(namedArgs: <String, String>{'value': request.senderMacAddress})}\n'
+                                      '${'discovery.friends_sheet.received_at'.tr(namedArgs: <String, String>{'value': _formatTime(request.createdAt)})}',
                                     ),
                                     isThreeLine: true,
                                     trailing: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         IconButton(
-                                          tooltip: 'Decline',
+                                          tooltip: 'common.decline'.tr(),
                                           onPressed:
                                               controller
                                                   .isFriendMutationInProgress
@@ -140,7 +168,7 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                                           icon: const Icon(Icons.close_rounded),
                                         ),
                                         IconButton(
-                                          tooltip: 'Accept',
+                                          tooltip: 'common.accept'.tr(),
                                           onPressed:
                                               controller
                                                   .isFriendMutationInProgress

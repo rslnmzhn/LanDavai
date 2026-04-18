@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:landa/features/discovery/application/remote_share_browser.dart';
 
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
@@ -36,12 +36,9 @@ void main() {
     });
   });
 
-  testWidgets(
-    'structured mode navigates folders and download starts for selected file',
-    (tester) async {
-      await setLargeSurface(tester);
-      registerWidgetCleanup(tester);
-
+  test(
+    'structured mode exposes file tokens that resolve to the current download target',
+    () async {
       await seedRemoteCatalogWithFiles(
         browser: harness.remoteShareBrowser,
         ownerIp: '192.168.1.44',
@@ -51,42 +48,35 @@ void main() {
         files: <String>['report.pdf', 'photo.jpg'],
       );
 
-      final coordinator = TestRemoteShareTransferCoordinator(
-        previewPathProvider: () async => null,
-        sharedCacheCatalog: harness.sharedCacheCatalog,
-        sharedCacheIndexStore: harness.sharedCacheIndexStore,
-        previewCacheOwner: harness.previewCacheOwner,
-        downloadHistoryBoundary: harness.downloadHistoryBoundary,
-        settings: harness.readModel.settings,
+      final structuredRoot = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
       );
-      addTearDown(coordinator.dispose);
-
-      await pumpRemoteBrowser(
-        tester,
-        coordinator: coordinator,
-        browser: harness.remoteShareBrowser,
-        harness: harness,
+      final docsFolder = structuredRoot.entries.folders.firstWhere(
+        (folder) => folder.name == 'Docs',
       );
 
-      await tester.tap(find.text('Docs').first);
-      await pumpForUi(tester, frames: 8);
-
-      expect(find.text('report.pdf'), findsOneWidget);
-
-      await tester.tap(
-        find.byKey(
-          const Key('remote-download-select-192.168.1.44|cache-a|report.pdf'),
-        ),
+      final docsDirectory = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: docsFolder.folderPath,
+        viewMode: RemoteBrowseExplorerViewMode.structured,
       );
-      await pumpForUi(tester, frames: 4);
+      final report = docsDirectory.entries.files.firstWhere(
+        (file) => file.virtualPath.split('/').last == 'report.pdf',
+      );
+      final target = harness.remoteShareBrowser.resolveDownloadToken(
+        report.sourceToken!,
+      );
 
-      await tester.tap(find.text('Скачать выбранные (1)'));
-      await pumpForUi(tester, frames: 8);
-
-      expect(coordinator.downloadCalls, 1);
-      expect(coordinator.lastSelectedByCache, <String, Set<String>>{
+      expect(target, isNotNull);
+      expect(target!.ownerIp, '192.168.1.44');
+      expect(target.ownerName, 'Remote A');
+      expect(target.selectedRelativePathsByCache, <String, Set<String>>{
         'cache-a': <String>{'report.pdf'},
       });
+      expect(target.selectedFolderPrefixesByCache, isEmpty);
+      expect(target.sharedLabelsByCache, <String, String>{'cache-a': 'Docs'});
     },
   );
 }

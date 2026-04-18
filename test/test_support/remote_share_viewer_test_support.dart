@@ -34,7 +34,6 @@ Future<void> pumpRemoteBrowser(
     ),
   );
   await pumpForUi(tester, frames: 20);
-  await pumpUntilRemoteBrowserReady(tester);
 }
 
 Future<void> seedRemoteCatalog({
@@ -150,30 +149,23 @@ Future<void> pumpForUi(WidgetTester tester, {int frames = 12}) async {
 
 Future<void> switchToFlatMode(WidgetTester tester) async {
   await pumpUntilRemoteBrowserReady(tester);
-  await tester.tap(
-    find.descendant(
-      of: find.byKey(const Key('remote-download-view-mode-toggle')),
-      matching: find.byIcon(Icons.view_stream_rounded),
-    ),
-  );
+  await tester.tap(find.text('Без структуры'));
   await pumpForUi(tester, frames: 8);
 }
 
 Future<void> switchToStructuredMode(WidgetTester tester) async {
   await pumpUntilRemoteBrowserReady(tester);
-  await tester.tap(
-    find.descendant(
-      of: find.byKey(const Key('remote-download-view-mode-toggle')),
-      matching: find.byIcon(Icons.account_tree_outlined),
-    ),
-  );
+  await tester.tap(find.text('Со структурой'));
   await pumpForUi(tester, frames: 8);
 }
 
 Future<void> pumpUntilRemoteBrowserReady(WidgetTester tester) async {
   await pumpUntilFound(
     tester,
-    find.byKey(const Key('remote-download-view-mode-toggle')),
+    find.byWidgetPredicate(
+      (widget) => widget is RemoteDownloadBrowserPage,
+      skipOffstage: false,
+    ),
     failureMessage: 'Remote download browser did not finish its initial build.',
   );
 }

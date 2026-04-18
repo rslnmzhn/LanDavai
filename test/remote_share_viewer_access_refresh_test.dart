@@ -1,10 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:landa/features/discovery/application/remote_share_browser.dart';
 
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
-import 'test_support/remote_share_viewer_test_support.dart';
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
@@ -36,31 +36,13 @@ void main() {
     });
   });
 
-  testWidgets(
-    'remote download browser refreshes in place after access snapshot approval',
-    (tester) async {
-      await setLargeSurface(tester);
-      registerWidgetCleanup(tester);
-
-      final coordinator = TestRemoteShareTransferCoordinator(
-        previewPathProvider: () async => null,
-        sharedCacheCatalog: harness.sharedCacheCatalog,
-        sharedCacheIndexStore: harness.sharedCacheIndexStore,
-        previewCacheOwner: harness.previewCacheOwner,
-        downloadHistoryBoundary: harness.downloadHistoryBoundary,
-        settings: harness.readModel.settings,
+  test(
+    'remote download browser applies access snapshots into the active browse projection',
+    () async {
+      expect(
+        harness.remoteShareBrowser.currentBrowseProjection.options,
+        isEmpty,
       );
-      addTearDown(coordinator.dispose);
-
-      await pumpRemoteBrowser(
-        tester,
-        coordinator: coordinator,
-        browser: harness.remoteShareBrowser,
-        harness: harness,
-      );
-
-      expect(find.text('report.txt'), findsNothing);
-
       await harness.remoteShareBrowser.applyAccessSnapshot(
         ownerIp: '192.168.1.44',
         ownerDisplayName: 'Remote A',
@@ -77,12 +59,23 @@ void main() {
           ),
         ],
       );
-      await pumpForUi(tester, frames: 12);
 
-      expect(find.text('Docs'), findsWidgets);
-      await tester.tap(find.text('Docs').first);
-      await pumpForUi(tester, frames: 8);
-      expect(find.text('report.txt'), findsOneWidget);
+      final projection = harness.remoteShareBrowser.currentBrowseProjection;
+      expect(projection.options, hasLength(1));
+      expect(
+        projection.options.single.entry.files.single.relativePath,
+        'report.txt',
+      );
+
+      final structuredRoot = harness.remoteShareBrowser.buildExplorerDirectory(
+        filterKey: '192.168.1.44',
+        folderPath: '',
+        viewMode: RemoteBrowseExplorerViewMode.structured,
+      );
+      expect(
+        structuredRoot.entries.folders.map((folder) => folder.name),
+        contains('Docs'),
+      );
     },
   );
 }

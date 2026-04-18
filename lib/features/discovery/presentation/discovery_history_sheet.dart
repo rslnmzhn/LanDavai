@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_spacing.dart';
@@ -27,14 +28,14 @@ class DiscoveryHistorySheet extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'История загрузок',
+                  'discovery.menu.history'.tr(),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Expanded(
                   child: history.isEmpty
-                      ? const Center(
-                          child: Text('История загрузок пока пустая'),
+                      ? Center(
+                          child: Text('discovery.history_sheet.empty'.tr()),
                         )
                       : ListView.separated(
                           itemCount: history.length,
@@ -68,7 +69,15 @@ class DiscoveryHistorySheet extends StatelessWidget {
                                     ),
                                     const SizedBox(height: AppSpacing.xxs),
                                     Text(
-                                      '${item.fileCount} files • ${_formatBytes(item.totalBytes)}',
+                                      'discovery.history_sheet.file_summary'.tr(
+                                        namedArgs: <String, String>{
+                                          'count': '${item.fileCount}',
+                                          'size': _formatBytes(
+                                            context,
+                                            item.totalBytes,
+                                          ),
+                                        },
+                                      ),
                                       style: Theme.of(
                                         context,
                                       ).textTheme.bodySmall,
@@ -90,7 +99,12 @@ class DiscoveryHistorySheet extends StatelessWidget {
                                     if (item.savedPaths.length > 6) ...[
                                       const SizedBox(height: AppSpacing.xxs),
                                       Text(
-                                        '+${item.savedPaths.length - 6} more files',
+                                        'discovery.history_sheet.more_files'.tr(
+                                          namedArgs: <String, String>{
+                                            'count':
+                                                '${item.savedPaths.length - 6}',
+                                          },
+                                        ),
                                         style: Theme.of(
                                           context,
                                         ).textTheme.bodySmall,
@@ -101,7 +115,7 @@ class DiscoveryHistorySheet extends StatelessWidget {
                                       onPressed: () =>
                                           onOpenPath(item.rootPath),
                                       icon: const Icon(Icons.folder_open),
-                                      label: const Text('Открыть папку'),
+                                      label: Text('common.open_folder'.tr()),
                                     ),
                                   ],
                                 ),
@@ -118,20 +132,28 @@ class DiscoveryHistorySheet extends StatelessWidget {
     );
   }
 
-  String _formatBytes(int bytes) {
+  String _formatBytes(BuildContext context, int bytes) {
     if (bytes < 1024) {
-      return '$bytes B';
+      return 'common.format_size_b'.tr(
+        namedArgs: <String, String>{'value': '$bytes'},
+      );
     }
     final kb = bytes / 1024;
     if (kb < 1024) {
-      return '${kb.toStringAsFixed(1)} KB';
+      return 'common.format_size_kb'.tr(
+        namedArgs: <String, String>{'value': kb.toStringAsFixed(1)},
+      );
     }
     final mb = kb / 1024;
     if (mb < 1024) {
-      return '${mb.toStringAsFixed(1)} MB';
+      return 'common.format_size_mb'.tr(
+        namedArgs: <String, String>{'value': mb.toStringAsFixed(1)},
+      );
     }
     final gb = mb / 1024;
-    return '${gb.toStringAsFixed(2)} GB';
+    return 'common.format_size_gb'.tr(
+      namedArgs: <String, String>{'value': gb.toStringAsFixed(2)},
+    );
   }
 
   String _formatTime(DateTime time) {

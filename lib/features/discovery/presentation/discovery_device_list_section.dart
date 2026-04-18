@@ -375,25 +375,39 @@ class _TransferProgressCard extends StatelessWidget {
   }) {
     final speedText = speedBytesPerSecond > 0
         ? _formatSpeed(speedBytesPerSecond)
-        : '-- B/s';
-    final etaText = eta == null ? 'ETA --:--' : 'ETA ${_formatEta(eta)}';
+        : 'common.format_speed_b'.tr(
+            namedArgs: <String, String>{'value': '--'},
+          );
+    final etaText = eta == null
+        ? 'common.eta_unavailable'.tr()
+        : 'common.eta_value'.tr(
+            namedArgs: <String, String>{'value': _formatEta(eta)},
+          );
     return '$speedText • $etaText';
   }
 
   String _formatSpeed(double bytesPerSecond) {
     if (bytesPerSecond < 1024) {
-      return '${bytesPerSecond.toStringAsFixed(0)} B/s';
+      return 'common.format_speed_b'.tr(
+        namedArgs: <String, String>{'value': bytesPerSecond.toStringAsFixed(0)},
+      );
     }
     final kb = bytesPerSecond / 1024;
     if (kb < 1024) {
-      return '${kb.toStringAsFixed(1)} KB/s';
+      return 'common.format_speed_kb'.tr(
+        namedArgs: <String, String>{'value': kb.toStringAsFixed(1)},
+      );
     }
     final mb = kb / 1024;
     if (mb < 1024) {
-      return '${mb.toStringAsFixed(1)} MB/s';
+      return 'common.format_speed_mb'.tr(
+        namedArgs: <String, String>{'value': mb.toStringAsFixed(1)},
+      );
     }
     final gb = mb / 1024;
-    return '${gb.toStringAsFixed(2)} GB/s';
+    return 'common.format_speed_gb'.tr(
+      namedArgs: <String, String>{'value': gb.toStringAsFixed(2)},
+    );
   }
 
   String _formatEta(Duration eta) {

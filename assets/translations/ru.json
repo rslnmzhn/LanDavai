@@ -8,6 +8,7 @@
     "cancel": "Отмена",
     "remove": "Удалить",
     "save": "Сохранить",
+    "reset": "Сбросить",
     "add": "Добавить",
     "delete": "Удалить",
     "copy": "Копировать",
@@ -19,7 +20,21 @@
     "sort": "Сортировка",
     "search_files": "Поиск файлов",
     "send": "Отправить",
-    "reject": "Отказать"
+    "reject": "Отказать",
+    "accept": "Принять",
+    "open_folder": "Открыть папку",
+    "remove_from_friends": "Убрать из друзей",
+    "decline": "Отклонить",
+    "format_size_b": "{value} Б",
+    "format_size_kb": "{value} КБ",
+    "format_size_mb": "{value} МБ",
+    "format_size_gb": "{value} ГБ",
+    "format_speed_b": "{value} Б/с",
+    "format_speed_kb": "{value} КБ/с",
+    "format_speed_mb": "{value} МБ/с",
+    "format_speed_gb": "{value} ГБ/с",
+    "eta_unavailable": "ETA --:--",
+    "eta_value": "ETA {value}"
   },
   "duplicate_instance": {
     "title": "Landa уже запущена",
@@ -103,7 +118,35 @@
       "target": "Цель",
       "app_found": "Приложение найдено",
       "lan_host": "Узел LAN",
-      "stale": "Неактуально"
+      "stale": "Неактуально",
+      "mac_value": "MAC {value}",
+      "os_value": "OS {value}",
+      "rename": "Переименовать устройство",
+      "already_friends": "Уже в друзьях",
+      "friend_request_pending": "Запрос в друзья ожидает подтверждения",
+      "add_to_friends": "Добавить в друзья",
+      "rename_custom_name": "Пользовательское имя",
+      "rename_helper": "Имя привязано к MAC-адресу устройства."
+    },
+    "share_sheet": {
+      "add_shared_folder": "Добавить общую папку",
+      "add_shared_folder_description": "Создать лёгкий кэш-индекс для папки",
+      "add_shared_files": "Добавить общие файлы",
+      "add_shared_files_description": "Создать лёгкий кэш-индекс для файлов"
+    },
+    "friends_sheet": {
+      "title": "Друзья",
+      "description": "Дружба требует подтверждения с обеих сторон.",
+      "tab_friends": "Друзья ({count})",
+      "tab_requests": "Запросы ({count})",
+      "empty_friends": "Друзей пока нет.\nОткройте меню устройства и отправьте запрос в друзья.",
+      "empty_requests": "Входящих запросов в друзья нет.",
+      "received_at": "Получен {value}"
+    },
+    "history_sheet": {
+      "empty": "История загрузок пока пустая",
+      "file_summary": "{count} файлов • {size}",
+      "more_files": "+ещё {count} файлов"
     },
     "empty": {
       "title": "Устройства пока не найдены",
@@ -145,7 +188,8 @@
     "flat_category_videos": "Видео",
     "flat_category_music": "Музыка",
     "flat_category_documents": "Документы",
-    "flat_category_programs": "Программы"
+    "flat_category_programs": "Программы",
+    "file_list_capped": "Показаны первые {shown} файлов (скрыто: {hidden}) для стабильной работы."
   },
   "files": {
     "title": "Файлы",
@@ -187,7 +231,15 @@
     "viewer_text_truncated": "Предпросмотр обрезан до 2 МБ.",
     "viewer_pdf_unavailable": "Предпросмотр PDF временно недоступен. Откройте файл внешним приложением.",
     "viewer_unsupported": "Этот тип файла пока не поддерживается встроенным просмотрщиком.",
-    "viewer_open_external": "Открыть внешним приложением"
+    "viewer_open_external": "Открыть внешним приложением",
+    "viewer_image_open_failed": "Не удалось открыть изображение.",
+    "viewer_video_open_failed": "Не удалось открыть видео во встроенном плеере.\n{error}",
+    "viewer_video_platform_open_failed": "Не удалось открыть видео во встроенном плеере на этой платформе.\n{error}",
+    "viewer_audio_open_failed": "Не удалось открыть аудио во встроенном плеере.\n{error}",
+    "viewer_back_10s": "Назад на 10 сек",
+    "viewer_pause": "Пауза",
+    "viewer_play": "Воспроизвести",
+    "viewer_forward_10s": "Вперёд на 10 сек"
   },
   "settings": {
     "title": "Настройки",

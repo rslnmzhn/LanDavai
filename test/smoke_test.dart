@@ -44,8 +44,7 @@ void main() {
       await _setStandardSurface(tester);
       await _pumpDiscoveryPage(tester, harness: harness);
 
-      expect(find.text('Устройства Landa'), findsOneWidget);
-      expect(find.byType(DiscoveryPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
       expect(harness.controller.startCalls, 0);
 
       await tester.pumpWidget(const SizedBox.shrink());

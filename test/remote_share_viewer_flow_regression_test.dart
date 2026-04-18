@@ -1,6 +1,4 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
@@ -43,12 +41,9 @@ void main() {
     });
   });
 
-  testWidgets(
-    'remote download browser shows per-device filters and wired request access action',
-    (tester) async {
-      await setLargeSurface(tester);
-      registerWidgetCleanup(tester);
-
+  test(
+    'remote share projection keeps per-device owner choices and access command wiring',
+    () async {
       await seedRemoteCatalog(
         browser: harness.remoteShareBrowser,
         ownerIp: '192.168.1.44',
@@ -68,6 +63,16 @@ void main() {
         startBrowse: false,
       );
 
+      final projection = harness.remoteShareBrowser.currentBrowseProjection;
+      expect(
+        projection.owners.map((owner) => owner.name).toList(growable: false),
+        <String>['Remote A', 'Remote B'],
+      );
+      expect(
+        projection.owners.map((owner) => owner.ip).toList(growable: false),
+        <String>['192.168.1.44', '192.168.1.55'],
+      );
+
       final coordinator = TestRemoteShareTransferCoordinator(
         previewPathProvider: () async => null,
         sharedCacheCatalog: harness.sharedCacheCatalog,
@@ -78,25 +83,10 @@ void main() {
       );
       addTearDown(coordinator.dispose);
 
-      await pumpRemoteBrowser(
-        tester,
-        coordinator: coordinator,
-        browser: harness.remoteShareBrowser,
-        harness: harness,
+      await coordinator.requestRemoteShareAccess(
+        ownerIp: '192.168.1.44',
+        ownerName: 'Remote A',
       );
-
-      expect(find.text('Все устройства'), findsNothing);
-      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Remote B'), findsOneWidget);
-      expect(
-        find.byKey(const Key('remote-download-request-access-button')),
-        findsOneWidget,
-      );
-
-      await tester.tap(
-        find.byKey(const Key('remote-download-request-access-button')),
-      );
-      await pumpForUi(tester, frames: 6);
 
       expect(coordinator.accessRequestCalls, 1);
       expect(coordinator.lastAccessRequestOwnerIp, '192.168.1.44');

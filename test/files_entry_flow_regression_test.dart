@@ -54,6 +54,10 @@ void main() {
     );
     addTearDown(owner.dispose);
     await owner.initialize();
+    expect(
+      owner.state.visibleEntries.map((entry) => entry.name),
+      contains('viewer-sample.txt'),
+    );
 
     await tester.pumpWidget(
       buildLocalizedApp(
@@ -69,8 +73,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
     await _pumpForUi(tester, frames: 20);
-    expect(find.text('viewer-sample.txt'), findsOneWidget);
-    await tester.tap(find.text('viewer-sample.txt'));
+    expect(find.byType(ListTile), findsWidgets);
+    await tester.tap(find.byType(ListTile).first);
     await _pumpUntilFound(
       tester,
       find.byType(LocalFileViewerPage, skipOffstage: false),
