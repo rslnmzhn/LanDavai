@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../clipboard/application/clipboard_history_store.dart';
@@ -42,7 +43,10 @@ class DiscoveryMenuPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DiscoveryDestinationPageScaffold(title: 'Menu', child: child);
+    return DiscoveryDestinationPageScaffold(
+      title: 'discovery.menu.title'.tr(),
+      child: child,
+    );
   }
 }
 

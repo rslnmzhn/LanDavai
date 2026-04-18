@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -139,7 +140,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     final owner = _owner;
     if (owner == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Files')),
+        appBar: AppBar(title: Text('files.title'.tr())),
         body: Center(
           child: _launchErrorMessage == null
               ? const CircularProgressIndicator()
@@ -152,7 +153,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                       const SizedBox(height: AppSpacing.sm),
                       FilledButton(
                         onPressed: _initializeLaunchOwner,
-                        child: const Text('Retry'),
+                        child: Text('common.retry'.tr()),
                       ),
                     ],
                   ),
@@ -175,15 +176,15 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
         final canRemoveSharedCachesFromFiles =
             selectedRoot?.isSharedFolder == true;
         final refreshActionTooltip = canRecacheSelectedRoot
-            ? 'Re-cache shared folders/files'
-            : 'Refresh';
+            ? 'files.recache'.tr()
+            : 'files.refresh'.tr();
         final refreshActionIcon = canRecacheSelectedRoot
             ? Icons.cached_rounded
             : Icons.refresh_rounded;
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Files'),
+            title: Text('files.title'.tr()),
             actions: [
               IconButton(
                 tooltip: refreshActionTooltip,
@@ -204,7 +205,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   ExplorerPathHeader(
-                    rootLabel: selectedRoot?.label ?? 'Files',
+                    rootLabel: selectedRoot?.label ?? 'files.title'.tr(),
                     relativePath: owner.relativePathLabel(),
                     canGoUp: owner.canGoUp,
                     onGoUp: owner.canGoUp ? () => owner.goUp() : null,
@@ -225,10 +226,10 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                           child: TextField(
                             controller: _searchController,
                             onChanged: owner.setSearchQuery,
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               isDense: true,
                               border: OutlineInputBorder(),
-                              hintText: 'Search files',
+                              hintText: 'common.search_files'.tr(),
                               prefixIcon: Icon(Icons.search_rounded, size: 18),
                               prefixIconConstraints: BoxConstraints(
                                 minWidth: 34,
@@ -244,70 +245,84 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                       ),
                       const SizedBox(width: AppSpacing.xs),
                       PopupMenuButton<ExplorerMenuAction>(
-                        tooltip: 'Sort',
+                        tooltip: 'common.sort'.tr(),
                         onSelected: _handleMenuAction,
                         itemBuilder: (context) {
                           var menuTileSize = state.gridTileExtent;
                           return [
-                            const PopupMenuItem<ExplorerMenuAction>(
+                            PopupMenuItem<ExplorerMenuAction>(
                               enabled: false,
-                              child: Text('Sort'),
+                              child: Text('common.sort'.tr()),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortNameAsc,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.nameAsc,
-                              child: const Text('A-Z'),
+                              child: Text('remote_download.sort_name_asc'.tr()),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortNameDesc,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.nameDesc,
-                              child: const Text('Z-A'),
+                              child: Text(
+                                'remote_download.sort_name_desc'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortModifiedNewest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.modifiedNewest,
-                              child: const Text('Modified: newest'),
+                              child: Text(
+                                'remote_download.sort_modified_newest'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortModifiedOldest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.modifiedOldest,
-                              child: const Text('Modified: oldest'),
+                              child: Text(
+                                'remote_download.sort_modified_oldest'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortChangedNewest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.changedNewest,
-                              child: const Text('Created/changed: newest'),
+                              child: Text(
+                                'remote_download.sort_changed_newest'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortChangedOldest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.changedOldest,
-                              child: const Text('Created/changed: oldest'),
+                              child: Text(
+                                'remote_download.sort_changed_oldest'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortSizeLargest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.sizeLargest,
-                              child: const Text('Size: largest'),
+                              child: Text(
+                                'remote_download.sort_size_largest'.tr(),
+                              ),
                             ),
                             CheckedPopupMenuItem<ExplorerMenuAction>(
                               value: ExplorerMenuAction.sortSizeSmallest,
                               checked:
                                   state.sortOption ==
                                   FilesFeatureSortOption.sizeSmallest,
-                              child: const Text('Size: smallest'),
+                              child: Text(
+                                'remote_download.sort_size_smallest'.tr(),
+                              ),
                             ),
                             const PopupMenuDivider(),
                             PopupMenuItem<ExplorerMenuAction>(
@@ -320,7 +335,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       Text(
-                                        'Tile size',
+                                        'remote_download.sort_tile_size'.tr(),
                                         style: Theme.of(
                                           context,
                                         ).textTheme.labelMedium,
@@ -386,7 +401,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                   const SizedBox(height: AppSpacing.sm),
                   Expanded(
                     child: visibleEntries.isEmpty
-                        ? const Center(child: Text('Folder is empty'))
+                        ? Center(child: Text('files.folder_empty'.tr()))
                         : state.viewMode == FilesFeatureViewMode.list
                         ? ListView.separated(
                             itemCount: visibleEntries.length,
@@ -469,20 +484,29 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     final agreed = await showDialog<bool>(
       context: context,
       builder: (context) {
-        final subjectLabel = entry.isDirectory ? 'folder' : 'file';
+        final subjectLabel = _sharedSubjectLabel(entry).tr();
         return AlertDialog(
-          title: Text('Remove shared $subjectLabel?'),
+          title: Text(
+            'files.remove_shared_title'.tr(
+              namedArgs: <String, String>{'subject': subjectLabel},
+            ),
+          ),
           content: Text(
-            'The $subjectLabel "${entry.name}" will be removed from shared access.',
+            'files.remove_shared_message'.tr(
+              namedArgs: <String, String>{
+                'subject': subjectLabel,
+                'name': entry.name,
+              },
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text('common.cancel'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Remove'),
+              child: Text('common.remove'.tr()),
             ),
           ],
         );
@@ -499,10 +523,16 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       );
     } catch (error) {
       if (mounted) {
-        final subjectLabel = entry.isDirectory ? 'folder' : 'file';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to remove shared $subjectLabel: $error'),
+            content: Text(
+              'files.remove_failed'.tr(
+                namedArgs: <String, String>{
+                  'subject': _sharedSubjectLabel(entry).tr(),
+                  'error': '$error',
+                },
+              ),
+            ),
           ),
         );
       }
@@ -513,9 +543,16 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return;
     }
     if (!removed || !mounted) {
-      final subjectLabel = entry.isDirectory ? 'folder' : 'file';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Shared $subjectLabel is no longer available.')),
+        SnackBar(
+          content: Text(
+            'files.remove_missing'.tr(
+              namedArgs: <String, String>{
+                'subject': _sharedSubjectLabel(entry).tr(),
+              },
+            ),
+          ),
+        ),
       );
       return;
     }
@@ -527,7 +564,13 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Removed from sharing: ${entry.name}')),
+      SnackBar(
+        content: Text(
+          'files.remove_success'.tr(
+            namedArgs: <String, String>{'name': entry.name},
+          ),
+        ),
+      ),
     );
   }
 
@@ -583,7 +626,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
               return ListTile(
                 leading: const Icon(Icons.folder_special_rounded),
                 title: Text(root.label),
-                subtitle: Text(root.isVirtual ? 'All shared files' : root.path),
+                subtitle: Text(
+                  root.isVirtual
+                      ? 'files.root_all_shared_files'.tr()
+                      : root.path,
+                ),
                 trailing: index == state.selectedRootIndex
                     ? const Icon(Icons.check_rounded)
                     : null,
@@ -629,8 +676,8 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
         SnackBar(
           content: Text(
             normalizedFolder.isEmpty
-                ? 'No shared folders/files to re-cache yet.'
-                : 'Selected folder has no shared files to re-cache.',
+                ? 'files.no_shared_content'.tr()
+                : 'files.no_shared_content_selected'.tr(),
           ),
         ),
       );
@@ -655,8 +702,12 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Before cache: ${report.before.totalFiles} files, '
-              'after re-cache: ${report.after.totalFiles} files.',
+              'files.recache_success'.tr(
+                namedArgs: <String, String>{
+                  'before': '${report.before.totalFiles}',
+                  'after': '${report.after.totalFiles}',
+                },
+              ),
             ),
           ),
         );
@@ -665,7 +716,11 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to re-cache shared folders/files: $error'),
+            content: Text(
+              'files.recache_failed'.tr(
+                namedArgs: <String, String>{'error': '$error'},
+              ),
+            ),
           ),
         );
       }
@@ -682,28 +737,46 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
-        final folderLabel = before.folderCaches == 1 ? 'folder' : 'folders';
-        final fileLabel = before.totalFiles == 1 ? 'file' : 'files';
+        final folderLabel = before.folderCaches == 1
+            ? 'files.folder_label_one'.tr()
+            : 'files.folder_label_many'.tr();
+        final fileLabel = before.totalFiles == 1
+            ? 'files.file_label_one'.tr()
+            : 'files.file_label_many'.tr();
         final selectionText = before.selectionCaches > 0
-            ? '\nSelection caches: ${before.selectionCaches}'
+            ? 'files.recache_selection_text'.tr(
+                namedArgs: <String, String>{
+                  'count': '${before.selectionCaches}',
+                },
+              )
             : '';
         final scopeText = virtualFolderPath.isEmpty
-            ? 'Re-cache will rebuild indexes for all shared folders/files.'
-            : 'Re-cache will rebuild indexes only in: $virtualFolderPath';
+            ? 'files.recache_scope_all'.tr()
+            : 'files.recache_scope_selected'.tr(
+                namedArgs: <String, String>{'path': virtualFolderPath},
+              );
         return AlertDialog(
-          title: const Text('Start re-cache?'),
+          title: Text('files.recache_start_title'.tr()),
           content: Text(
-            'Currently cached: ${before.folderCaches} $folderLabel, '
-            '${before.totalFiles} $fileLabel.$selectionText\n\n$scopeText',
+            'files.recache_summary'.tr(
+              namedArgs: <String, String>{
+                'folderCount': '${before.folderCaches}',
+                'folderLabel': folderLabel,
+                'fileCount': '${before.totalFiles}',
+                'fileLabel': fileLabel,
+                'selectionText': selectionText,
+                'scopeText': scopeText,
+              },
+            ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text('common.cancel'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Start'),
+              child: Text('files.recache_start'.tr()),
             ),
           ],
         );
@@ -788,7 +861,9 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
         return;
       }
       setState(() {
-        _launchErrorMessage = 'Cannot open files: $error';
+        _launchErrorMessage = 'files.launch_error'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
       });
     }
   }
@@ -813,16 +888,22 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
 
     final publicDownloadsPath = config.publicDownloadsDirectoryPath?.trim();
     if (publicDownloadsPath != null && publicDownloadsPath.isNotEmpty) {
-      addLocalRoot(label: 'Landa Downloads', path: publicDownloadsPath);
+      addLocalRoot(
+        label: 'files.root_landa_downloads'.tr(),
+        path: publicDownloadsPath,
+      );
     }
-    addLocalRoot(label: 'Incoming', path: config.receiveDirectoryPath);
+    addLocalRoot(
+      label: 'files.root_incoming'.tr(),
+      path: config.receiveDirectoryPath,
+    );
 
     final ownerCaches = await _loadOwnerCaches(config);
     final hasSharedFiles = ownerCaches.any((cache) => cache.itemCount > 0);
     if (hasSharedFiles) {
       roots.add(
         FileExplorerRoot(
-          label: 'My files',
+          label: 'files.root_my_files'.tr(),
           path: 'virtual://my-files',
           isSharedFolder: true,
           virtualDirectoryLoader: (folderPath) =>
@@ -1053,4 +1134,8 @@ class _FileExplorerLaunchConfig {
   final String ownerMacAddress;
   final String receiveDirectoryPath;
   final String? publicDownloadsDirectoryPath;
+}
+
+String _sharedSubjectLabel(FilesFeatureEntry entry) {
+  return entry.isDirectory ? 'files.subject_folder' : 'files.subject_file';
 }

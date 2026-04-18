@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -942,7 +943,9 @@ class _TextFileViewerState extends State<_TextFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage = 'Cannot read text file: $error';
+        _errorMessage = 'files.viewer_text_read_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
         _isLoading = false;
       });
     }
@@ -970,9 +973,9 @@ class _TextFileViewerState extends State<_TextFileViewer> {
                 color: AppColors.warning.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(AppRadius.md),
               ),
-              child: const Text(
-                'Preview is truncated to 2 MB.',
-                style: TextStyle(color: AppColors.textSecondary),
+              child: Text(
+                'files.viewer_text_truncated'.tr(),
+                style: const TextStyle(color: AppColors.textSecondary),
               ),
             ),
           if (_truncated) const SizedBox(height: AppSpacing.sm),
@@ -1002,9 +1005,7 @@ class _PdfFileViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     return _UnsupportedFileViewer(
       filePath: filePath,
-      hintMessage:
-          'PDF preview/viewing is temporarily unavailable. '
-          'Open the file externally to view it.',
+      hintMessage: 'files.viewer_pdf_unavailable'.tr(),
     );
   }
 }
@@ -1026,8 +1027,7 @@ class _UnsupportedFileViewer extends StatelessWidget {
             const Icon(Icons.insert_drive_file_rounded, size: 42),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              hintMessage ??
-                  'This file type is not supported by the built-in viewer yet.',
+              hintMessage ?? 'files.viewer_unsupported'.tr(),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -1036,7 +1036,7 @@ class _UnsupportedFileViewer extends StatelessWidget {
                 await OpenFilex.open(filePath);
               },
               icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Open externally'),
+              label: Text('files.viewer_open_external'.tr()),
             ),
           ],
         ),

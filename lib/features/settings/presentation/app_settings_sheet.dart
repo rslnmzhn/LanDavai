@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_colors.dart';
@@ -149,7 +150,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   void _saveCacheSize() {
     final parsed = int.tryParse(_cacheSizeController.text.trim());
     if (parsed == null || parsed < 0) {
-      _showValidationMessage('Введите неотрицательное число (ГБ).');
+      _showValidationMessage('settings.validation_non_negative_gb'.tr());
       return;
     }
     widget.onPreviewCacheMaxSizeGbChanged(parsed);
@@ -158,7 +159,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   void _saveCacheAge() {
     final parsed = int.tryParse(_cacheAgeController.text.trim());
     if (parsed == null || parsed < 0) {
-      _showValidationMessage('Введите неотрицательное число (дни).');
+      _showValidationMessage('settings.validation_non_negative_days'.tr());
       return;
     }
     widget.onPreviewCacheMaxAgeDaysChanged(parsed);
@@ -167,7 +168,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   void _saveClipboardLimit() {
     final parsed = int.tryParse(_clipboardLimitController.text.trim());
     if (parsed == null || parsed < 0) {
-      _showValidationMessage('Введите неотрицательное число записей.');
+      _showValidationMessage('settings.validation_non_negative_entries'.tr());
       return;
     }
     widget.onClipboardHistoryMaxEntriesChanged(parsed);
@@ -176,7 +177,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   void _saveRecacheParallelWorkers() {
     final parsed = int.tryParse(_recacheWorkersController.text.trim());
     if (parsed == null || parsed < 0) {
-      _showValidationMessage('Введите неотрицательное число потоков.');
+      _showValidationMessage('settings.validation_non_negative_workers'.tr());
       return;
     }
     widget.onRecacheParallelWorkersChanged(parsed);
@@ -185,7 +186,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
   void _saveDebugLogRetainedLines() {
     final parsed = int.tryParse(_debugLogRetainedLinesController.text.trim());
     if (parsed == null || parsed <= 0) {
-      _showValidationMessage('Введите положительное число строк.');
+      _showValidationMessage('settings.validation_positive_lines'.tr());
       return;
     }
     widget.onDebugLogRetainedLinesChanged(parsed);
@@ -225,7 +226,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
     }
     final added = await widget.onAddConfiguredDiscoveryTarget(raw);
     if (!added) {
-      _showValidationMessage('Не удалось добавить IP-адрес.');
+      _showValidationMessage('settings.validation_add_ip_failed'.tr());
       return;
     }
     _configuredTargetController.clear();
@@ -246,7 +247,8 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
               AppSpacing.sm,
             ),
             child: Text(
-              'Настройки',
+              'settings.title'.tr(),
+              key: const Key('settings-sheet-title'),
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
@@ -258,7 +260,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 borderRadius: BorderRadius.circular(AppRadius.lg),
                 border: Border.all(color: AppColors.mutedBorder),
               ),
-              child: const TabBar(
+              child: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
                 dividerColor: Colors.transparent,
@@ -271,10 +273,22 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
                 ),
                 padding: EdgeInsets.all(AppSpacing.xs),
                 tabs: [
-                  Tab(text: 'Сеть'),
-                  Tab(text: 'Интерфейс'),
-                  Tab(text: 'Хранилище'),
-                  Tab(text: 'Доступ'),
+                  Tab(
+                    key: const Key('settings-tab-network'),
+                    text: 'settings.tab_network'.tr(),
+                  ),
+                  Tab(
+                    key: const Key('settings-tab-interface'),
+                    text: 'settings.tab_interface'.tr(),
+                  ),
+                  Tab(
+                    key: const Key('settings-tab-storage'),
+                    text: 'settings.tab_storage'.tr(),
+                  ),
+                  Tab(
+                    key: const Key('settings-tab-access'),
+                    text: 'settings.tab_access'.tr(),
+                  ),
                 ],
               ),
             ),

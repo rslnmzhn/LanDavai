@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -233,7 +234,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                       ? Builder(
                           builder: (buttonContext) {
                             return IconButton(
-                              tooltip: 'Menu',
+                              tooltip: 'discovery.menu.menu_tooltip'.tr(),
                               onPressed: () {
                                 _requestVideoSurfaceReload();
                                 Scaffold.of(buttonContext).openDrawer();
@@ -243,13 +244,13 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                           },
                         )
                       : null,
-                  title: const Text('Landa devices'),
+                  title: Text('app.devices_title'.tr()),
                   actions: [
                     if (!isLeftHanded)
                       Builder(
                         builder: (buttonContext) {
                           return IconButton(
-                            tooltip: 'Menu',
+                            tooltip: 'discovery.menu.menu_tooltip'.tr(),
                             onPressed: () {
                               _requestVideoSurfaceReload();
                               Scaffold.of(buttonContext).openEndDrawer();
@@ -266,7 +267,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           endDrawerEnableOpenDragGesture: !isWideLayout && !isLeftHanded,
           body: isWideLayout
               ? DiscoveryWideLayoutSurface(
-                  title: 'Landa devices',
+                  title: 'app.devices_title'.tr(),
                   mainContent: mainContent,
                   sidePanel: panelSurface,
                   actionBar: actionBar,

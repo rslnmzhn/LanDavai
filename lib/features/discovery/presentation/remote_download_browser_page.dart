@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -99,7 +100,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         return device.name;
       }
     }
-    return _activeFilterKey.trim().isEmpty ? 'Устройства' : _activeFilterKey;
+    return _activeFilterKey.trim().isEmpty
+        ? 'remote_download.access_select_device'.tr()
+        : _activeFilterKey;
   }
 
   bool get _canRequestAccess => _activeFilterKey.trim().isNotEmpty;
@@ -280,10 +283,10 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Скачать из сети'),
+            title: Text('remote_download.title'.tr()),
             actions: [
               IconButton(
-                tooltip: 'Запросить доступ',
+                tooltip: 'remote_download.request_access_tooltip'.tr(),
                 onPressed: _canRequestAccess
                     ? () => unawaited(_requestAccessForActiveDevice())
                     : null,
@@ -328,7 +331,6 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       if (_viewMode == RemoteBrowseExplorerViewMode.flat) ...[
                         const SizedBox(height: AppSpacing.sm),
                         _FlatCategoryFilterBar(
-                          browser: _browser,
                           showAll: _showAllFlatCategories,
                           selectedCategories: _visibleFlatCategories,
                           onShowAllChanged: _handleShowAllFlatCategoriesChanged,
@@ -406,7 +408,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                       _selectedTokens.clear();
                                     });
                                   },
-                            child: const Text('Очистить'),
+                            child: Text('remote_download.clear'.tr()),
                           ),
                         ),
                         const SizedBox(width: AppSpacing.xs),
@@ -426,7 +428,11 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                                   )
                                 : const Icon(Icons.download_rounded),
                             label: Text(
-                              'Скачать выбранные (${_selectedTokens.length})',
+                              'remote_download.download_selected'.tr(
+                                namedArgs: <String, String>{
+                                  'count': '${_selectedTokens.length}',
+                                },
+                              ),
                             ),
                           ),
                         ),
@@ -474,10 +480,10 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                     child: TextField(
                       controller: _searchController,
                       onChanged: activeOwner.setSearchQuery,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         isDense: true,
                         border: OutlineInputBorder(),
-                        hintText: 'Search files',
+                        hintText: 'common.search_files'.tr(),
                         prefixIcon: Icon(Icons.search_rounded, size: 18),
                         prefixIconConstraints: BoxConstraints(
                           minWidth: 34,
@@ -493,7 +499,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                 ),
                 const SizedBox(width: AppSpacing.xs),
                 PopupMenuButton<ExplorerMenuAction>(
-                  tooltip: 'Sort',
+                  tooltip: 'common.sort'.tr(),
                   onSelected: (action) => activeOwner.setSortOption(
                     _sortOptionFromMenuAction(action),
                   ),
@@ -861,49 +867,49 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     FilesFeatureStateOwner owner,
   ) {
     return <PopupMenuEntry<ExplorerMenuAction>>[
-      const PopupMenuItem<ExplorerMenuAction>(
+      PopupMenuItem<ExplorerMenuAction>(
         enabled: false,
-        child: Text('Sort'),
+        child: Text('common.sort'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortNameAsc,
         checked: state.sortOption == FilesFeatureSortOption.nameAsc,
-        child: const Text('A-Z'),
+        child: Text('remote_download.sort_name_asc'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortNameDesc,
         checked: state.sortOption == FilesFeatureSortOption.nameDesc,
-        child: const Text('Z-A'),
+        child: Text('remote_download.sort_name_desc'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortModifiedNewest,
         checked: state.sortOption == FilesFeatureSortOption.modifiedNewest,
-        child: const Text('Modified: newest'),
+        child: Text('remote_download.sort_modified_newest'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortModifiedOldest,
         checked: state.sortOption == FilesFeatureSortOption.modifiedOldest,
-        child: const Text('Modified: oldest'),
+        child: Text('remote_download.sort_modified_oldest'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortChangedNewest,
         checked: state.sortOption == FilesFeatureSortOption.changedNewest,
-        child: const Text('Created/changed: newest'),
+        child: Text('remote_download.sort_changed_newest'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortChangedOldest,
         checked: state.sortOption == FilesFeatureSortOption.changedOldest,
-        child: const Text('Created/changed: oldest'),
+        child: Text('remote_download.sort_changed_oldest'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortSizeLargest,
         checked: state.sortOption == FilesFeatureSortOption.sizeLargest,
-        child: const Text('Size: largest'),
+        child: Text('remote_download.sort_size_largest'.tr()),
       ),
       CheckedPopupMenuItem<ExplorerMenuAction>(
         value: ExplorerMenuAction.sortSizeSmallest,
         checked: state.sortOption == FilesFeatureSortOption.sizeSmallest,
-        child: const Text('Size: smallest'),
+        child: Text('remote_download.sort_size_smallest'.tr()),
       ),
       const PopupMenuDivider(),
       PopupMenuItem<ExplorerMenuAction>(
@@ -916,7 +922,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tile size',
+                  'remote_download.sort_tile_size'.tr(),
                   style: Theme.of(context).textTheme.labelMedium,
                 ),
                 Slider(
@@ -970,10 +976,13 @@ class _SharedDownloadStatusCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final preparation = coordinator.sharedDownloadPreparationState;
     final isDownloading = coordinator.isDownloading;
-    final title = isDownloading ? 'Скачивание' : 'Подготовка скачивания';
+    final title = isDownloading
+        ? 'remote_download.status_downloading'.tr()
+        : 'remote_download.status_preparing'.tr();
     final message = isDownloading
-        ? 'Передача началась. Файлы уже загружаются.'
-        : preparation?.message ?? 'Подготовка скачивания...';
+        ? 'remote_download.status_downloading_message'.tr()
+        : preparation?.message ??
+              'remote_download.status_preparing_default'.tr();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -1054,6 +1063,21 @@ class _SharedDownloadStatusCard extends StatelessWidget {
   }
 }
 
+String _flatCategoryLabel(RemoteBrowseFlatFileCategory category) {
+  switch (category) {
+    case RemoteBrowseFlatFileCategory.images:
+      return 'remote_download.flat_category_images';
+    case RemoteBrowseFlatFileCategory.videos:
+      return 'remote_download.flat_category_videos';
+    case RemoteBrowseFlatFileCategory.music:
+      return 'remote_download.flat_category_music';
+    case RemoteBrowseFlatFileCategory.documents:
+      return 'remote_download.flat_category_documents';
+    case RemoteBrowseFlatFileCategory.programs:
+      return 'remote_download.flat_category_programs';
+  }
+}
+
 class _DeviceFilterChoice {
   const _DeviceFilterChoice({required this.key, required this.label});
 
@@ -1077,16 +1101,16 @@ class _RemoteDownloadViewModeToggle extends StatelessWidget {
         Expanded(
           child: SegmentedButton<RemoteBrowseExplorerViewMode>(
             key: const Key('remote-download-view-mode-toggle'),
-            segments: const <ButtonSegment<RemoteBrowseExplorerViewMode>>[
+            segments: <ButtonSegment<RemoteBrowseExplorerViewMode>>[
               ButtonSegment<RemoteBrowseExplorerViewMode>(
                 value: RemoteBrowseExplorerViewMode.structured,
-                icon: Icon(Icons.account_tree_outlined),
-                label: Text('Со структурой'),
+                icon: const Icon(Icons.account_tree_outlined),
+                label: Text('remote_download.view_structured'.tr()),
               ),
               ButtonSegment<RemoteBrowseExplorerViewMode>(
                 value: RemoteBrowseExplorerViewMode.flat,
-                icon: Icon(Icons.view_stream_rounded),
-                label: Text('Без структуры'),
+                icon: const Icon(Icons.view_stream_rounded),
+                label: Text('remote_download.view_flat'.tr()),
               ),
             ],
             selected: <RemoteBrowseExplorerViewMode>{viewMode},
@@ -1134,14 +1158,12 @@ class _DeviceFilterBar extends StatelessWidget {
 
 class _FlatCategoryFilterBar extends StatelessWidget {
   const _FlatCategoryFilterBar({
-    required this.browser,
     required this.showAll,
     required this.selectedCategories,
     required this.onShowAllChanged,
     required this.onCategoryChanged,
   });
 
-  final RemoteShareBrowser browser;
   final bool showAll;
   final Set<RemoteBrowseFlatFileCategory> selectedCategories;
   final ValueChanged<bool> onShowAllChanged;
@@ -1153,14 +1175,14 @@ class _FlatCategoryFilterBar extends StatelessWidget {
     final chips = <Widget>[
       FilterChip(
         key: const Key('remote-download-show-all-chip'),
-        label: const Text('Показывать все'),
+        label: Text('remote_download.show_all'.tr()),
         selected: showAll,
         onSelected: onShowAllChanged,
       ),
       ...RemoteBrowseFlatFileCategory.values.map((category) {
         return FilterChip(
           key: Key('remote-download-category-${category.name}'),
-          label: Text(browser.flatCategoryLabel(category)),
+          label: Text(_flatCategoryLabel(category).tr()),
           selected: !showAll && selectedCategories.contains(category),
           onSelected: (value) => onCategoryChanged(category, value),
         );
@@ -1170,7 +1192,7 @@ class _FlatCategoryFilterBar extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Категории файлов',
+          'remote_download.categories_title'.tr(),
           style: Theme.of(
             context,
           ).textTheme.labelLarge?.copyWith(color: AppColors.textSecondary),
@@ -1226,14 +1248,15 @@ class _RemoteShareAccessActionRow extends StatelessWidget {
               children: [
                 Text(
                   deviceLabel.trim().isEmpty
-                      ? 'Выберите устройство'
-                      : 'Доступ к файлам: $deviceLabel',
+                      ? 'remote_download.access_select_device'.tr()
+                      : 'remote_download.access_title'.tr(
+                          namedArgs: <String, String>{'device': deviceLabel},
+                        ),
                   style: Theme.of(context).textTheme.labelLarge,
                 ),
                 const SizedBox(height: AppSpacing.xxs),
                 Text(
-                  message ??
-                      'Запросите доступ у выбранного устройства, чтобы загрузить актуальное дерево общих файлов.',
+                  message ?? 'remote_download.access_description'.tr(),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: AppColors.textSecondary,
                   ),
@@ -1248,7 +1271,7 @@ class _RemoteShareAccessActionRow extends StatelessWidget {
                 ? null
                 : () => onRequestAccess!(),
             icon: const Icon(Icons.lock_open_rounded),
-            label: const Text('Запросить доступ'),
+            label: Text('remote_download.request_access'.tr()),
           ),
         ],
       ),
@@ -1429,12 +1452,12 @@ class _RemoteDownloadEmptyState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = !hasOwners
-        ? 'Нет доступных устройств с приложением в сети.'
+        ? 'remote_download.empty_no_devices'.tr()
         : hasQuery
-        ? 'По текущему запросу ничего не найдено.'
+        ? 'remote_download.empty_no_results'.tr()
         : hasLoadedCatalog
-        ? 'На этом устройстве пока нет доступных файлов в выбранном режиме.'
-        : 'Сначала запросите доступ у выбранного устройства.';
+        ? 'remote_download.empty_no_files'.tr()
+        : 'remote_download.empty_request_access'.tr();
     return Center(child: Text(message, textAlign: TextAlign.center));
   }
 }

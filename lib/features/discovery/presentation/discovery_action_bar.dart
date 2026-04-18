@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -51,9 +52,9 @@ class DiscoveryActionBar extends StatelessWidget {
                   child: _AdaptiveActionButton.filled(
                     onPressed: onReceive,
                     icon: Icons.arrow_downward,
-                    label: 'Скачать',
-                    compactLabel: 'Скачать',
-                    tooltip: 'Скачать файлы из сети',
+                    label: 'discovery.action_bar.download'.tr(),
+                    compactLabel: 'discovery.action_bar.download'.tr(),
+                    tooltip: 'discovery.action_bar.download_tooltip'.tr(),
                     availableWidth: perButtonWidth,
                   ),
                 ),
@@ -75,9 +76,10 @@ class DiscoveryActionBar extends StatelessWidget {
                       : _AdaptiveActionButton.outlined(
                           onPressed: isAddingShare ? null : onAdd,
                           icon: Icons.add,
-                          label: 'Общий доступ',
-                          compactLabel: 'Доступ',
-                          tooltip: 'Добавить общий доступ',
+                          label: 'discovery.action_bar.share'.tr(),
+                          compactLabel: 'discovery.action_bar.share_compact'
+                              .tr(),
+                          tooltip: 'discovery.action_bar.share_tooltip'.tr(),
                           availableWidth: perButtonWidth,
                         ),
                 ),
@@ -86,9 +88,9 @@ class DiscoveryActionBar extends StatelessWidget {
                   child: _AdaptiveActionButton.filled(
                     onPressed: isSendingTransfer ? null : onSend,
                     icon: Icons.import_export_rounded,
-                    label: 'Подключиться',
-                    compactLabel: 'Подкл.',
-                    tooltip: 'Открыть nearby transfer',
+                    label: 'discovery.action_bar.connect'.tr(),
+                    compactLabel: 'discovery.action_bar.connect_compact'.tr(),
+                    tooltip: 'discovery.action_bar.connect_tooltip'.tr(),
                     availableWidth: perButtonWidth,
                   ),
                 ),

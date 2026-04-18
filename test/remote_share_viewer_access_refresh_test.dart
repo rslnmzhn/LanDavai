@@ -1,7 +1,7 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
+import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
 import 'test_support/remote_share_viewer_test_support.dart';
@@ -30,13 +30,6 @@ void main() {
         isReachable: true,
         lastSeen: DateTime(2026, 1, 1, 10),
       ),
-      DiscoveredDevice(
-        ip: '192.168.1.55',
-        deviceName: 'Remote B',
-        isAppDetected: true,
-        isReachable: true,
-        lastSeen: DateTime(2026, 1, 1, 10),
-      ),
     ]);
     addTearDown(() async {
       await harness.dispose();
@@ -44,29 +37,10 @@ void main() {
   });
 
   testWidgets(
-    'remote download browser shows per-device filters and wired request access action',
+    'remote download browser refreshes in place after access snapshot approval',
     (tester) async {
       await setLargeSurface(tester);
       registerWidgetCleanup(tester);
-
-      await seedRemoteCatalog(
-        browser: harness.remoteShareBrowser,
-        ownerIp: '192.168.1.44',
-        ownerName: 'Remote A',
-        cacheId: 'cache-a',
-        displayName: 'Docs',
-        filePath: 'report.txt',
-      );
-      await seedRemoteCatalog(
-        browser: harness.remoteShareBrowser,
-        ownerIp: '192.168.1.55',
-        ownerName: 'Remote B',
-        cacheId: 'cache-b',
-        displayName: 'Media',
-        filePath: 'movie.mp4',
-        requestId: 'request-2',
-        startBrowse: false,
-      );
 
       final coordinator = TestRemoteShareTransferCoordinator(
         previewPathProvider: () async => null,
@@ -85,21 +59,30 @@ void main() {
         harness: harness,
       );
 
-      expect(find.text('Все устройства'), findsNothing);
-      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Remote B'), findsOneWidget);
-      expect(
-        find.byKey(const Key('remote-download-request-access-button')),
-        findsOneWidget,
-      );
+      expect(find.text('report.txt'), findsNothing);
 
-      await tester.tap(
-        find.byKey(const Key('remote-download-request-access-button')),
+      await harness.remoteShareBrowser.applyAccessSnapshot(
+        ownerIp: '192.168.1.44',
+        ownerDisplayName: 'Remote A',
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        entries: <SharedCatalogEntryItem>[
+          SharedCatalogEntryItem(
+            cacheId: 'cache-a',
+            displayName: 'Docs',
+            itemCount: 1,
+            totalBytes: 12,
+            files: <SharedCatalogFileItem>[
+              SharedCatalogFileItem(relativePath: 'report.txt', sizeBytes: 12),
+            ],
+          ),
+        ],
       );
-      await pumpForUi(tester, frames: 6);
+      await pumpForUi(tester, frames: 12);
 
-      expect(coordinator.accessRequestCalls, 1);
-      expect(coordinator.lastAccessRequestOwnerIp, '192.168.1.44');
+      expect(find.text('Docs'), findsWidgets);
+      await tester.tap(find.text('Docs').first);
+      await pumpForUi(tester, frames: 8);
+      expect(find.text('report.txt'), findsOneWidget);
     },
   );
 }

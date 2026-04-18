@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme/app_colors.dart';
@@ -39,10 +40,10 @@ class ExplorerEntityGridTile extends StatelessWidget {
                   details.globalPosition.dx,
                   details.globalPosition.dy,
                 ),
-                items: const [
+                items: [
                   PopupMenuItem<String>(
                     value: 'remove',
-                    child: Text('Remove from sharing'),
+                    child: Text('files.remove_from_sharing'.tr()),
                   ),
                 ],
               );
@@ -235,7 +236,7 @@ class DisplayModeToggle extends StatelessWidget {
           isGrid ? Icons.view_list_rounded : Icons.grid_view_rounded,
           size: 18,
         ),
-        label: Text(isGrid ? 'List view' : 'Tile view'),
+        label: Text(isGrid ? 'files.list_view'.tr() : 'files.tile_view'.tr()),
       ),
     );
   }
@@ -272,7 +273,7 @@ class ExplorerErrorBanner extends StatelessWidget {
               ).textTheme.bodySmall?.copyWith(color: AppColors.error),
             ),
           ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
+          TextButton(onPressed: onRetry, child: Text('common.retry'.tr())),
         ],
       ),
     );

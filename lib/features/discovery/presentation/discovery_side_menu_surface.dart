@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
@@ -107,44 +108,50 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
               Padding(
                 padding: const EdgeInsets.all(AppSpacing.md),
                 child: Text(
-                  'Menu',
+                  'discovery.menu.title'.tr(),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
               ),
               _buildItem(
                 context: context,
+                actionKey: 'friends',
                 icon: Icons.group_rounded,
-                title: 'Friends',
+                title: 'discovery.menu.friends'.tr(),
                 onTap: widget.onOpenFriends,
               ),
               _buildItem(
                 context: context,
+                actionKey: 'settings',
                 icon: Icons.tune_rounded,
-                title: 'Settings',
+                title: 'discovery.menu.settings'.tr(),
                 onTap: widget.onOpenSettings,
               ),
               _buildItem(
                 context: context,
+                actionKey: 'clipboard',
                 icon: Icons.content_paste_rounded,
-                title: 'Clipboard',
+                title: 'discovery.menu.clipboard'.tr(),
                 onTap: widget.onOpenClipboard,
               ),
               _buildItem(
                 context: context,
+                actionKey: 'download-history',
                 icon: Icons.history,
-                title: 'Download history',
+                title: 'discovery.menu.history'.tr(),
                 onTap: widget.onOpenHistory,
               ),
               _buildItem(
                 context: context,
+                actionKey: 'files',
                 icon: Icons.folder_open_rounded,
-                title: 'Files',
+                title: 'discovery.menu.files'.tr(),
                 onTap: widget.onOpenFiles,
               ),
               _buildItem(
                 context: context,
+                actionKey: 'refresh',
                 icon: Icons.refresh_rounded,
-                title: 'Refresh',
+                title: 'discovery.menu.refresh'.tr(),
                 onTap: widget.onRefresh,
               ),
               _VideoLinkServerCard(
@@ -176,6 +183,7 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
 
   Widget _buildItem({
     required BuildContext context,
+    required String actionKey,
     required IconData icon,
     required String title,
     required Future<void> Function()? onTap,
@@ -192,9 +200,7 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
         color: isEnabled ? AppColors.surfaceSoft : AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
         child: InkWell(
-          key: Key(
-            'discovery-menu-action-${title.toLowerCase().replaceAll(' ', '-')}',
-          ),
+          key: Key('discovery-menu-action-$actionKey'),
           borderRadius: BorderRadius.circular(AppRadius.lg),
           onTap: !isEnabled
               ? null
@@ -263,9 +269,9 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
     if (!mounted) {
       return;
     }
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('discovery.menu.copied_to_clipboard'.tr())),
+    );
   }
 
   void _showVideoLinkMessage(String message, {bool isError = false}) {
@@ -302,11 +308,7 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
       });
       if (notifyIfEmpty && files.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'No shared video files available. Add shared files first.',
-            ),
-          ),
+          SnackBar(content: Text('discovery.menu.no_shared_videos'.tr())),
         );
       }
     } finally {
@@ -321,13 +323,16 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
   Future<void> _publishSelectedVideoLink() async {
     final selected = _selectedShareableVideoFile;
     if (selected == null) {
-      _showVideoLinkMessage('Select a video file first.', isError: true);
+      _showVideoLinkMessage(
+        'discovery.menu.select_video_first'.tr(),
+        isError: true,
+      );
       return;
     }
     final password = widget.settings.videoLinkPassword.trim();
     if (password.isEmpty) {
       _showVideoLinkMessage(
-        'Set a web-link password in Settings.',
+        'discovery.menu.set_video_password'.tr(),
         isError: true,
       );
       return;
@@ -344,15 +349,21 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
       }
       _showVideoLinkMessage(
         link == null
-            ? 'Video link updated for ${selected.fileName}.'
-            : 'Video link updated: $link',
+            ? 'discovery.menu.video_link_updated'.tr(
+                namedArgs: <String, String>{'fileName': selected.fileName},
+              )
+            : 'discovery.menu.video_link_updated_with_url'.tr(
+                namedArgs: <String, String>{'url': link},
+              ),
       );
     } catch (error) {
       if (!mounted) {
         return;
       }
       _showVideoLinkMessage(
-        'Failed to publish video link: $error',
+        'discovery.menu.video_link_publish_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        ),
         isError: true,
       );
     }
@@ -383,13 +394,15 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
       if (!mounted) {
         return;
       }
-      _showVideoLinkMessage('Video link sharing stopped.');
+      _showVideoLinkMessage('discovery.menu.video_link_stopped'.tr());
     } catch (error) {
       if (!mounted) {
         return;
       }
       _showVideoLinkMessage(
-        'Failed to stop video link sharing: $error',
+        'discovery.menu.video_link_stop_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        ),
         isError: true,
       );
     }
@@ -400,19 +413,17 @@ class _DiscoverySideMenuSurfaceState extends State<DiscoverySideMenuSurface> {
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Stop video link sharing?'),
-          content: const Text(
-            'The active video link will stop working until you publish a file again.',
-          ),
+          title: Text('discovery.menu.stop_video_link_title'.tr()),
+          content: Text('discovery.menu.stop_video_link_message'.tr()),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text('common.cancel'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
               style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-              child: const Text('Stop'),
+              child: Text('discovery.menu.stop'.tr()),
             ),
           ],
         );
@@ -538,7 +549,7 @@ class _VideoLinkServerCard extends StatelessWidget {
           ),
           value: enabled,
           onChanged: onToggle,
-          title: const Text('Web server for video'),
+          title: Text('discovery.menu.video_server'.tr()),
         ),
         ListTile(
           title: DropdownButtonFormField<String>(
@@ -571,16 +582,23 @@ class _VideoLinkServerCard extends StatelessWidget {
                   .toList(growable: false);
             },
             onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               isDense: true,
-              labelText: 'Video from shared files',
+              labelText: 'discovery.menu.video_picker_label'.tr(),
             ),
           ),
         ),
         if (isLoadingVideos)
           const ListTile(title: LinearProgressIndicator(minHeight: 2)),
         if (activeSession != null)
-          ListTile(dense: true, title: Text('File: ${activeSession.fileName}')),
+          ListTile(
+            dense: true,
+            title: Text(
+              'discovery.menu.video_file_label'.tr(
+                namedArgs: <String, String>{'fileName': activeSession.fileName},
+              ),
+            ),
+          ),
         if (activeUrl != null)
           ListTile(
             dense: true,
@@ -593,7 +611,7 @@ class _VideoLinkServerCard extends StatelessWidget {
             trailing: OutlinedButton.icon(
               onPressed: onCopyLink,
               icon: const Icon(Icons.copy_rounded),
-              label: const Text('Copy'),
+              label: Text('common.copy'.tr()),
             ),
           ),
       ],

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -151,26 +152,54 @@ class _NetworkSummaryCard extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    'Local IP: ${readModel.localIp ?? "Detecting..."}',
+                    'discovery.summary.local_ip'.tr(
+                      namedArgs: <String, String>{
+                        'value':
+                            readModel.localIp ??
+                            'discovery.summary.detecting'.tr(),
+                      },
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
-                    'Devices: $total • App detected: ${readModel.appDetectedCount}',
+                    'discovery.summary.devices'.tr(
+                      namedArgs: <String, String>{
+                        'total': '$total',
+                        'appCount': '${readModel.appDetectedCount}',
+                      },
+                    ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
                     readModel.isAppInForeground
-                        ? 'Auto scan interval: ${readModel.settings.backgroundScanInterval.label}'
-                        : 'Background mode: ${readModel.settings.backgroundScanInterval.label}',
+                        ? 'discovery.summary.auto_scan_interval'.tr(
+                            namedArgs: <String, String>{
+                              'label': _backgroundScanIntervalLabel(
+                                readModel.settings.backgroundScanInterval,
+                              ).tr(),
+                            },
+                          )
+                        : 'discovery.summary.background_mode'.tr(
+                            namedArgs: <String, String>{
+                              'label': _backgroundScanIntervalLabel(
+                                readModel.settings.backgroundScanInterval,
+                              ).tr(),
+                            },
+                          ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
                     selected == null
-                        ? 'Target: not selected'
-                        : 'Target: ${selected.displayName} (${selected.ip})',
+                        ? 'discovery.summary.target_none'.tr()
+                        : 'discovery.summary.target_selected'.tr(
+                            namedArgs: <String, String>{
+                              'name': selected.displayName,
+                              'ip': selected.ip,
+                            },
+                          ),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -222,13 +251,18 @@ class _TransferProgressCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Transfer Progress',
+              'discovery.transfer.title'.tr(),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             if (transferSessionCoordinator.isUploading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Upload: ${(transferSessionCoordinator.uploadProgress * 100).toStringAsFixed(0)}%',
+                'discovery.transfer.upload'.tr(
+                  namedArgs: <String, String>{
+                    'percent': (transferSessionCoordinator.uploadProgress * 100)
+                        .toStringAsFixed(0),
+                  },
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
@@ -254,7 +288,7 @@ class _TransferProgressCard extends StatelessWidget {
                 transferSessionCoordinator.isPreparingSharedUpload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Подготовка отправки',
+                'discovery.transfer.preparing_upload'.tr(),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
@@ -262,7 +296,7 @@ class _TransferProgressCard extends StatelessWidget {
                 transferSessionCoordinator
                         .sharedUploadPreparationState
                         ?.message ??
-                    'Подготавливаем отправку...',
+                    'discovery.transfer.preparing_upload_default'.tr(),
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
@@ -277,7 +311,13 @@ class _TransferProgressCard extends StatelessWidget {
             if (transferSessionCoordinator.isDownloading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Download: ${(transferSessionCoordinator.downloadProgress * 100).toStringAsFixed(0)}%',
+                'discovery.transfer.download'.tr(
+                  namedArgs: <String, String>{
+                    'percent':
+                        (transferSessionCoordinator.downloadProgress * 100)
+                            .toStringAsFixed(0),
+                  },
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
@@ -303,7 +343,7 @@ class _TransferProgressCard extends StatelessWidget {
                 transferSessionCoordinator.isPreparingSharedDownload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'Download preparation',
+                'discovery.transfer.preparing_download'.tr(),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.xxs),
@@ -311,7 +351,7 @@ class _TransferProgressCard extends StatelessWidget {
                 transferSessionCoordinator
                         .sharedDownloadPreparationState
                         ?.message ??
-                    'Preparing shared download...',
+                    'discovery.transfer.preparing_download_default'.tr(),
                 style: Theme.of(
                   context,
                 ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
@@ -390,7 +430,7 @@ class _IncomingSharedDownloadRequestsCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Запросы на скачивание',
+              'discovery.incoming_download_requests.title'.tr(),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -431,7 +471,7 @@ class _IncomingRemoteShareAccessRequestsCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Запросы доступа к общим папкам',
+              'discovery.incoming_access_requests.title'.tr(),
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -477,12 +517,14 @@ class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Устройство "${request.requesterName}" хочет получить доступ к вашим общим папкам.',
+            'discovery.incoming_access_requests.message'.tr(
+              namedArgs: <String, String>{'requester': request.requesterName},
+            ),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'После подтверждения будет отправлен актуальный snapshot списка файлов.',
+            'discovery.incoming_access_requests.note'.tr(),
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
@@ -493,13 +535,13 @@ class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
               FilledButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
-                child: const Text('Отправить'),
+                child: Text('common.send'.tr()),
               ),
               const SizedBox(width: AppSpacing.sm),
               OutlinedButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: false),
-                child: const Text('Отказать'),
+                child: Text('common.reject'.tr()),
               ),
             ],
           ),
@@ -528,7 +570,12 @@ class _IncomingSharedDownloadRequestTile extends StatelessWidget {
     final compactSummary = labels.take(3).map(_compactLabel).join(', ');
     final remainingCount = labels.length - 3;
     final summary = remainingCount > 0
-        ? '$compactSummary и ещё $remainingCount'
+        ? 'discovery.incoming_download_requests.and_more'.tr(
+            namedArgs: <String, String>{
+              'summary': compactSummary,
+              'count': '$remainingCount',
+            },
+          )
         : compactSummary;
     return Container(
       width: double.infinity,
@@ -542,14 +589,24 @@ class _IncomingSharedDownloadRequestTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Устройство "${request.requesterName}" хочет скачать у вас ${_requestKind(request)}: $summary',
+            'discovery.incoming_download_requests.message'.tr(
+              namedArgs: <String, String>{
+                'requester': request.requesterName,
+                'kind': _requestKind(request).tr(),
+                'summary': summary,
+              },
+            ),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
             request.requestsWholeShare
-                ? 'Будет отправлена вся общая папка "${request.sharedLabel}".'
-                : 'Источник: ${request.sharedLabel}',
+                ? 'discovery.incoming_download_requests.whole_share_source'.tr(
+                    namedArgs: <String, String>{'label': request.sharedLabel},
+                  )
+                : 'discovery.incoming_download_requests.selection_source'.tr(
+                    namedArgs: <String, String>{'label': request.sharedLabel},
+                  ),
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
@@ -560,13 +617,13 @@ class _IncomingSharedDownloadRequestTile extends StatelessWidget {
               FilledButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
-                child: const Text('Отправить'),
+                child: Text('common.send'.tr()),
               ),
               const SizedBox(width: AppSpacing.sm),
               OutlinedButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: false),
-                child: const Text('Отказать'),
+                child: Text('common.reject'.tr()),
               ),
             ],
           ),
@@ -577,15 +634,19 @@ class _IncomingSharedDownloadRequestTile extends StatelessWidget {
 
   static String _requestKind(IncomingSharedDownloadRequest request) {
     if (request.requestsWholeShare) {
-      return 'папку';
+      return 'discovery.incoming_download_requests.kind_folder_one';
     }
     if (request.isMixedSelection) {
-      return 'файлы и папки';
+      return 'discovery.incoming_download_requests.kind_mixed';
     }
     if (request.requestedFolderCount > 0) {
-      return request.requestedFolderCount == 1 ? 'папку' : 'папки';
+      return request.requestedFolderCount == 1
+          ? 'discovery.incoming_download_requests.kind_folder_one'
+          : 'discovery.incoming_download_requests.kind_folder_many';
     }
-    return request.requestedFileCount == 1 ? 'файл' : 'файлы';
+    return request.requestedFileCount == 1
+        ? 'discovery.incoming_download_requests.kind_file_one'
+        : 'discovery.incoming_download_requests.kind_file_many';
   }
 
   static String _compactLabel(String value) {
@@ -682,7 +743,9 @@ class _DeviceTile extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Tooltip(
-                message: device.isTrusted ? 'Friend' : 'Not a friend yet',
+                message: device.isTrusted
+                    ? 'discovery.device.friend'.tr()
+                    : 'discovery.device.not_friend'.tr(),
                 child: Icon(
                   device.isTrusted ? Icons.star : Icons.star_border,
                   color: device.isTrusted
@@ -719,7 +782,7 @@ class _StatusChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.xl),
         ),
         child: Text(
-          'Target',
+          'discovery.device.target'.tr(),
           style: Theme.of(
             context,
           ).textTheme.labelMedium?.copyWith(color: AppColors.brandPrimaryDark),
@@ -737,7 +800,7 @@ class _StatusChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.xl),
         ),
         child: Text(
-          'App found',
+          'discovery.device.app_found'.tr(),
           style: Theme.of(
             context,
           ).textTheme.labelMedium?.copyWith(color: AppColors.success),
@@ -755,7 +818,10 @@ class _StatusChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.xl),
       ),
       child: Text(
-        device.isReachable ? 'LAN host' : 'Stale',
+        (device.isReachable
+                ? 'discovery.device.lan_host'
+                : 'discovery.device.stale')
+            .tr(),
         style: Theme.of(
           context,
         ).textTheme.labelMedium?.copyWith(color: AppColors.textSecondary),
@@ -782,24 +848,39 @@ class _EmptyState extends StatelessWidget {
               const Icon(Icons.wifi_find, size: 48, color: AppColors.mutedIcon),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                'No devices found yet',
+                'discovery.empty.title'.tr(),
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                'Make sure you are on the same Wi-Fi / LAN and refresh.',
+                'discovery.empty.description'.tr(),
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               const SizedBox(height: AppSpacing.md),
               FilledButton(
                 onPressed: onRefresh,
-                child: const Text('Refresh scan'),
+                child: Text('discovery.empty.refresh_scan'.tr()),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+}
+
+String _backgroundScanIntervalLabel(BackgroundScanIntervalOption option) {
+  switch (option) {
+    case BackgroundScanIntervalOption.tenSeconds:
+      return 'settings.background_interval_ten_seconds';
+    case BackgroundScanIntervalOption.thirtySeconds:
+      return 'settings.background_interval_thirty_seconds';
+    case BackgroundScanIntervalOption.fiveMinutes:
+      return 'settings.background_interval_five_minutes';
+    case BackgroundScanIntervalOption.fifteenMinutes:
+      return 'settings.background_interval_fifteen_minutes';
+    case BackgroundScanIntervalOption.oneHour:
+      return 'settings.background_interval_one_hour';
   }
 }

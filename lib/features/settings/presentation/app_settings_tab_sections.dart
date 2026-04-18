@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -82,17 +83,15 @@ class AppSettingsNetworkTab extends StatelessWidget {
         AppSpacing.lg,
       ),
       children: [
-        const AppSettingsSectionCard(
-          title: 'Сеть и обнаружение',
-          description:
-              'Настройте фоновое обнаружение и fallback-поведение для routed/virtual сетей.',
-          children: [],
+        AppSettingsSectionCard(
+          title: 'settings.network_section_title'.tr(),
+          description: 'settings.network_section_description'.tr(),
+          children: const [],
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Фоновое сканирование сети',
-          description:
-              'Интервал управляет авто-сканированием. Для немедленного обновления используйте кнопку Refresh.',
+          title: 'settings.background_scan_title'.tr(),
+          description: 'settings.background_scan_description'.tr(),
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
@@ -109,7 +108,9 @@ class AppSettingsNetworkTab extends StatelessWidget {
                       .map(
                         (option) => DropdownMenuItem(
                           value: option,
-                          child: Text(option.label),
+                          child: Text(
+                            _backgroundScanIntervalLabel(option).tr(),
+                          ),
                         ),
                       )
                       .toList(growable: false),
@@ -126,9 +127,8 @@ class AppSettingsNetworkTab extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Явные discovery targets',
-          description:
-              'Fallback для virtual/routed сетей, где автообнаружение может не сработать. Landa будет отправлять discovery-пакеты только на указанные IPv4-адреса.',
+          title: 'settings.discovery_targets_title'.tr(),
+          description: 'settings.discovery_targets_description'.tr(),
           children: [
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
@@ -140,8 +140,8 @@ class AppSettingsNetworkTab extends StatelessWidget {
                     inputFormatters: <TextInputFormatter>[
                       FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
                     ],
-                    decoration: const InputDecoration(
-                      labelText: 'IPv4-адрес устройства',
+                    decoration: InputDecoration(
+                      labelText: 'settings.discovery_target_field'.tr(),
                       border: OutlineInputBorder(),
                       isDense: true,
                     ),
@@ -153,7 +153,7 @@ class AppSettingsNetworkTab extends StatelessWidget {
                   height: 48,
                   child: FilledButton(
                     onPressed: () => unawaited(onAddConfiguredTarget()),
-                    child: const Text('Добавить'),
+                    child: Text('common.add'.tr()),
                   ),
                 ),
               ],
@@ -161,7 +161,7 @@ class AppSettingsNetworkTab extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             if (configuredDiscoveryTargets.isEmpty)
               Text(
-                'Список пуст. Добавьте IP-адреса устройств виртуальной сети, если они не находятся автоматически.',
+                'settings.discovery_targets_empty'.tr(),
                 style: Theme.of(context).textTheme.bodySmall,
               )
             else
@@ -173,7 +173,7 @@ class AppSettingsNetworkTab extends StatelessWidget {
                         dense: true,
                         title: Text(target),
                         trailing: IconButton(
-                          tooltip: 'Удалить',
+                          tooltip: 'common.delete'.tr(),
                           onPressed: () =>
                               unawaited(onRemoveConfiguredTarget(target)),
                           icon: const Icon(Icons.delete_outline_rounded),
@@ -186,13 +186,13 @@ class AppSettingsNetworkTab extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Уведомления',
+          title: 'settings.notifications_title'.tr(),
           children: [
             SwitchListTile.adaptive(
               value: settings.downloadAttemptNotificationsEnabled,
-              title: const Text('Уведомлять о попытках скачивания'),
-              subtitle: const Text(
-                'Показывать системное уведомление, когда устройство просит ваши файлы.',
+              title: Text('settings.download_attempt_notifications'.tr()),
+              subtitle: Text(
+                'settings.download_attempt_notifications_description'.tr(),
               ),
               contentPadding: EdgeInsets.zero,
               onChanged: onDownloadAttemptNotificationsChanged,
@@ -231,22 +231,19 @@ class AppSettingsDesktopTab extends StatelessWidget {
         AppSpacing.lg,
       ),
       children: [
-        const AppSettingsSectionCard(
-          title: 'Окно и поведение',
-          description:
-              'Настройки интерфейса и поведения Landa на текущем устройстве.',
-          children: [],
+        AppSettingsSectionCard(
+          title: 'settings.window_section_title'.tr(),
+          description: 'settings.window_section_description'.tr(),
+          children: const [],
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Интерфейс',
+          title: 'settings.interface_title'.tr(),
           children: [
             SwitchListTile.adaptive(
               value: settings.isLeftHandedMode,
-              title: const Text('Режим для левшей'),
-              subtitle: const Text(
-                'Меню с тремя полосками и боковая панель переедут на левую сторону.',
-              ),
+              title: Text('settings.left_handed_mode'.tr()),
+              subtitle: Text('settings.left_handed_mode_description'.tr()),
               contentPadding: EdgeInsets.zero,
               onChanged: onLeftHandedModeChanged,
             ),
@@ -255,13 +252,13 @@ class AppSettingsDesktopTab extends StatelessWidget {
         if (isDesktop) ...[
           const SizedBox(height: AppSpacing.md),
           AppSettingsSectionCard(
-            title: 'Desktop',
+            title: 'settings.desktop_title'.tr(),
             children: [
               SwitchListTile.adaptive(
                 value: settings.useStandardAppDownloadFolder,
-                title: const Text('Скачивать в стандартную папку Landa'),
-                subtitle: const Text(
-                  'Если выключено, Windows/Linux будут спрашивать папку назначения перед скачиванием из общих папок.',
+                title: Text('settings.use_standard_download_folder'.tr()),
+                subtitle: Text(
+                  'settings.use_standard_download_folder_description'.tr(),
                 ),
                 contentPadding: EdgeInsets.zero,
                 onChanged: onUseStandardAppDownloadFolderChanged,
@@ -269,10 +266,8 @@ class AppSettingsDesktopTab extends StatelessWidget {
               const SizedBox(height: AppSpacing.xs),
               SwitchListTile.adaptive(
                 value: settings.minimizeToTrayOnClose,
-                title: const Text('Сворачивать в трей при закрытии'),
-                subtitle: const Text(
-                  'Окно скрывается в трей, приложение продолжает работу в фоне.',
-                ),
+                title: Text('settings.minimize_to_tray'.tr()),
+                subtitle: Text('settings.minimize_to_tray_description'.tr()),
                 contentPadding: EdgeInsets.zero,
                 onChanged: onMinimizeToTrayChanged,
               ),
@@ -329,57 +324,54 @@ class AppSettingsStorageTab extends StatelessWidget {
       ),
       children: [
         AppSettingsSectionCard(
-          title: 'Preview-кэш',
-          description:
-              '0 = без ограничений. Если срок = 0, файлы живут бессрочно и удаляются только по лимиту размера.',
+          title: 'settings.preview_cache_title'.tr(),
+          description: 'settings.preview_cache_description'.tr(),
           children: [
             IntegerSettingField(
               controller: cacheSizeController,
-              label: 'Максимальный размер кэша (ГБ)',
+              label: 'settings.preview_cache_max_size'.tr(),
               onSave: onSaveCacheSize,
             ),
             const SizedBox(height: AppSpacing.sm),
             IntegerSettingField(
               controller: cacheAgeController,
-              label: 'Максимальный срок хранения (дни)',
+              label: 'settings.preview_cache_max_age'.tr(),
               onSave: onSaveCacheAge,
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'История буфера обмена',
-          description:
-              'Максимум записей в локальной истории. 0 = без ограничений.',
+          title: 'settings.clipboard_history_title'.tr(),
+          description: 'settings.clipboard_history_description'.tr(),
           children: [
             IntegerSettingField(
               controller: clipboardLimitController,
-              label: 'Максимум записей истории',
+              label: 'settings.clipboard_history_max_entries'.tr(),
               onSave: onSaveClipboardLimit,
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Ускорение re-cache',
-          description: 'Число воркеров для пересборки кэша. 0 = авто (по CPU).',
+          title: 'settings.recache_title'.tr(),
+          description: 'settings.recache_description'.tr(),
           children: [
             IntegerSettingField(
               controller: recacheWorkersController,
-              label: 'Параллельные воркеры re-cache',
+              label: 'settings.recache_parallel_workers'.tr(),
               onSave: onSaveRecacheParallelWorkers,
             ),
           ],
         ),
         const SizedBox(height: AppSpacing.md),
         AppSettingsSectionCard(
-          title: 'Диагностика',
-          description:
-              'debug.log помогает разбирать проблемы shared-download и runtime-сбоев.',
+          title: 'settings.diagnostics_title'.tr(),
+          description: 'settings.diagnostics_description'.tr(),
           children: [
             IntegerSettingField(
               controller: debugLogRetainedLinesController,
-              label: 'Сколько последних строк хранить в debug.log',
+              label: 'settings.debug_log_retained_lines'.tr(),
               onSave: onSaveDebugLogRetainedLines,
               fieldKey: const Key('settings-debug-log-line-cap-field'),
               buttonKey: const Key('settings-debug-log-line-cap-save'),
@@ -401,7 +393,7 @@ class AppSettingsStorageTab extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.description_outlined),
-                  label: const Text('Показать логи'),
+                  label: Text('settings.show_logs'.tr()),
                 ),
                 OutlinedButton.icon(
                   key: const Key('settings-open-logs-folder-action'),
@@ -415,7 +407,7 @@ class AppSettingsStorageTab extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.folder_open_rounded),
-                  label: const Text('Открыть папку с логами'),
+                  label: Text('settings.open_logs_folder'.tr()),
                 ),
               ],
             ),
@@ -447,12 +439,12 @@ class AppSettingsAccessTab extends StatelessWidget {
       ),
       children: [
         AppSettingsSectionCard(
-          title: 'Веб-ссылка',
-          description: 'Используется для доступа к видео по ссылке из меню.',
+          title: 'settings.access_title'.tr(),
+          description: 'settings.access_description'.tr(),
           children: [
             TextSettingField(
               controller: videoLinkPasswordController,
-              label: 'Пароль для веб-сервера',
+              label: 'settings.video_link_password'.tr(),
               obscureText: true,
               onSave: onSaveVideoLinkPassword,
             ),
@@ -504,7 +496,7 @@ class IntegerSettingField extends StatelessWidget {
           child: FilledButton(
             key: buttonKey,
             onPressed: onSave,
-            child: const Text('Сохранить'),
+            child: Text('common.save'.tr()),
           ),
         ),
       ],
@@ -548,10 +540,25 @@ class TextSettingField extends StatelessWidget {
           height: 48,
           child: FilledButton(
             onPressed: onSave,
-            child: const Text('Сохранить'),
+            child: Text('common.save'.tr()),
           ),
         ),
       ],
     );
+  }
+}
+
+String _backgroundScanIntervalLabel(BackgroundScanIntervalOption option) {
+  switch (option) {
+    case BackgroundScanIntervalOption.tenSeconds:
+      return 'settings.background_interval_ten_seconds';
+    case BackgroundScanIntervalOption.thirtySeconds:
+      return 'settings.background_interval_thirty_seconds';
+    case BackgroundScanIntervalOption.fiveMinutes:
+      return 'settings.background_interval_five_minutes';
+    case BackgroundScanIntervalOption.fifteenMinutes:
+      return 'settings.background_interval_fifteen_minutes';
+    case BackgroundScanIntervalOption.oneHour:
+      return 'settings.background_interval_one_hour';
   }
 }

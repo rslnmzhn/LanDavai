@@ -30,13 +30,6 @@ void main() {
         isReachable: true,
         lastSeen: DateTime(2026, 1, 1, 10),
       ),
-      DiscoveredDevice(
-        ip: '192.168.1.55',
-        deviceName: 'Remote B',
-        isAppDetected: true,
-        isReachable: true,
-        lastSeen: DateTime(2026, 1, 1, 10),
-      ),
     ]);
     addTearDown(() async {
       await harness.dispose();
@@ -44,28 +37,18 @@ void main() {
   });
 
   testWidgets(
-    'remote download browser shows per-device filters and wired request access action',
+    'view mode toggle switches between structured and flat projections',
     (tester) async {
       await setLargeSurface(tester);
       registerWidgetCleanup(tester);
 
-      await seedRemoteCatalog(
+      await seedRemoteCatalogWithFiles(
         browser: harness.remoteShareBrowser,
         ownerIp: '192.168.1.44',
         ownerName: 'Remote A',
         cacheId: 'cache-a',
         displayName: 'Docs',
-        filePath: 'report.txt',
-      );
-      await seedRemoteCatalog(
-        browser: harness.remoteShareBrowser,
-        ownerIp: '192.168.1.55',
-        ownerName: 'Remote B',
-        cacheId: 'cache-b',
-        displayName: 'Media',
-        filePath: 'movie.mp4',
-        requestId: 'request-2',
-        startBrowse: false,
+        files: <String>['report.pdf', 'photo.jpg'],
       );
 
       final coordinator = TestRemoteShareTransferCoordinator(
@@ -85,21 +68,28 @@ void main() {
         harness: harness,
       );
 
-      expect(find.text('Все устройства'), findsNothing);
-      expect(find.widgetWithText(ChoiceChip, 'Remote A'), findsOneWidget);
-      expect(find.widgetWithText(ChoiceChip, 'Remote B'), findsOneWidget);
+      expect(find.text('Docs'), findsWidgets);
       expect(
-        find.byKey(const Key('remote-download-request-access-button')),
+        find.byKey(const Key('remote-download-flat-category-filter-bar')),
+        findsNothing,
+      );
+
+      await switchToFlatMode(tester);
+
+      expect(find.text('report.pdf'), findsOneWidget);
+      expect(find.text('photo.jpg'), findsOneWidget);
+      expect(
+        find.byKey(const Key('remote-download-flat-category-filter-bar')),
         findsOneWidget,
       );
 
-      await tester.tap(
-        find.byKey(const Key('remote-download-request-access-button')),
-      );
-      await pumpForUi(tester, frames: 6);
+      await switchToStructuredMode(tester);
 
-      expect(coordinator.accessRequestCalls, 1);
-      expect(coordinator.lastAccessRequestOwnerIp, '192.168.1.44');
+      expect(find.text('Docs'), findsWidgets);
+      expect(
+        find.byKey(const Key('remote-download-flat-category-filter-bar')),
+        findsNothing,
+      );
     },
   );
 }
