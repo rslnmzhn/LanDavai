@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_spacing.dart';
 import '../application/nearby_transfer_session_store.dart';
@@ -17,7 +18,7 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Попросите второе устройство подтвердить этот код:',
+            'nearby_transfer.verify_code_send'.tr(),
             style: Theme.of(context).textTheme.titleSmall,
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -39,7 +40,7 @@ class NearbyTransferConnectionConfirmView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Выберите совпадающий цифровой код',
+          'nearby_transfer.verify_code_receive'.tr(),
           style: Theme.of(context).textTheme.titleSmall,
         ),
         const SizedBox(height: AppSpacing.sm),

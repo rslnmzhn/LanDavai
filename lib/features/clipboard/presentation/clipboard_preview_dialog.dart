@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_spacing.dart';
@@ -37,7 +38,7 @@ Future<void> showClipboardTextPreviewDialog({
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Close'),
+            child: Text('clipboard.close'.tr()),
           ),
         ],
       );
@@ -90,9 +91,11 @@ Future<void> showClipboardImagePreviewDialog({
                         child: Image(
                           image: imageProvider,
                           fit: BoxFit.contain,
-                          errorBuilder: (_, error, stackTrace) => const Padding(
-                            padding: EdgeInsets.all(AppSpacing.lg),
-                            child: Text('Unable to load image preview.'),
+                          errorBuilder: (_, error, stackTrace) => Padding(
+                            padding: const EdgeInsets.all(AppSpacing.lg),
+                            child: Text(
+                              'clipboard.image_preview_unavailable'.tr(),
+                            ),
                           ),
                         ),
                       ),
@@ -104,7 +107,7 @@ Future<void> showClipboardImagePreviewDialog({
                   alignment: Alignment.centerRight,
                   child: TextButton(
                     onPressed: () => Navigator.of(dialogContext).pop(),
-                    child: const Text('Close'),
+                    child: Text('clipboard.close'.tr()),
                   ),
                 ),
               ],

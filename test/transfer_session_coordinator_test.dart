@@ -3331,13 +3331,17 @@ void main() {
         expect(snapshotPayload['ownerName'], 'Local device');
         expect(snapshotPayload['entries'], isA<List<dynamic>>());
 
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-        final logFile = await diagnosticStore.resolveLogFile();
-        expect(logFile, isNotNull);
-        final logContents = await logFile!.readAsString();
+        final preflightLogContents = await _awaitDiagnosticLogContents(
+          diagnosticStore,
+          containsStage: 'share_access_snapshot_send_preflight',
+        );
         expect(
-          logContents,
+          preflightLogContents,
           contains('"stage":"share_access_snapshot_send_preflight"'),
+        );
+        final logContents = await _awaitDiagnosticLogContents(
+          diagnosticStore,
+          containsStage: 'send_complete',
         );
         expect(logContents, contains('"stage":"send_complete"'));
         expect(logContents.contains('"stage":"send_failure"'), isFalse);
@@ -4212,6 +4216,30 @@ void main() {
       }
     },
   );
+}
+
+Future<String> _awaitDiagnosticLogContents(
+  SharedDownloadDiagnosticLogStore store, {
+  required String containsStage,
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  final deadline = DateTime.now().add(timeout);
+  while (DateTime.now().isBefore(deadline)) {
+    final logFile = await store.resolveLogFile();
+    if (logFile != null && await logFile.exists()) {
+      final contents = await logFile.readAsString();
+      if (contents.contains('"stage":"$containsStage"')) {
+        return contents;
+      }
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+  }
+
+  final logFile = await store.resolveLogFile();
+  if (logFile == null || !await logFile.exists()) {
+    return '';
+  }
+  return logFile.readAsString();
 }
 
 TransferSessionCoordinator _buildCoordinator({

@@ -201,6 +201,22 @@ Rules:
 - Errors must be actionable and human-readable.
 - Empty states must contain a next step.
 
+## Localization Guardrails
+- All new user-facing strings must go through the localization system.
+- Do not hardcode new user-facing text directly in widgets/pages when it should
+  be translatable.
+- Keep localization at the presentation/assets seam.
+- Do not move localization truth into controllers, stores, repositories,
+  boundaries, or helpers.
+- Translation files must remain contributor-editable JSON assets under
+  `assets/translations/`.
+- When adding new user-facing text, update the base translation file in the
+  same PR and keep key naming consistent with the existing dotted structure.
+- Placeholders must stay stable, named where practical, and translator-friendly.
+- New strings must not break fallback behavior for missing keys or locales.
+- Feature work that adds UI copy must update localization assets in the same PR
+  unless there is a documented reason not to.
+
 ## Networking Contract (Current Implementation Baseline)
 - App presence discovery: UDP broadcast handshake in LAN.
 - Handshake payload identifiers: `LANDA_DISCOVER_V1` / `LANDA_HERE_V1`.
@@ -297,7 +313,7 @@ When implementing changes:
 1. State assumptions briefly.
 2. Implement code, not only proposals.
 3. Report exact files changed.
-4. Include verification (`analyze`, `test`, manual checks run).
+4. Include verification (`analyze`, `test`).
 5. List remaining risks / TODOs.
 
 ## Prompt Template

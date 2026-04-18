@@ -8,6 +8,7 @@ import 'package:landa/features/discovery/presentation/discovery_page.dart';
 import 'package:landa/features/history/domain/transfer_history_record.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
+import 'test_support/localized_test_app.dart';
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
@@ -85,7 +86,7 @@ Future<void> _pumpDiscoveryPage(
   );
 
   await tester.pumpWidget(
-    MaterialApp(
+    buildLocalizedTestApp(
       home: DiscoveryPage(
         controller: harness.controller,
         readModel: harness.readModel,
@@ -109,12 +110,12 @@ Future<void> _pumpDiscoveryPage(
       ),
     ),
   );
-  await tester.pump();
+  await tester.pumpAndSettle();
   await _pumpForUi(tester, frames: 20);
 }
 
 Future<void> _openMenu(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Menu'));
+  await tester.tap(find.byTooltip('Меню', skipOffstage: false));
   await _pumpForUi(tester, frames: 20);
 }
 

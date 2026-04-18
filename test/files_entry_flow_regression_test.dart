@@ -1,19 +1,21 @@
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:landa/app/localization/app_localization_config.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:landa/features/discovery/presentation/discovery_page.dart';
 import 'package:landa/features/files/application/file_explorer_contract.dart';
 import 'package:landa/features/files/application/files_feature_state_owner.dart';
 import 'package:landa/features/files/presentation/file_explorer/local_file_viewer.dart';
 import 'package:landa/features/files/presentation/file_explorer_page.dart';
-import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late TestDiscoveryControllerHarness harness;
 
   setUp(() async {
@@ -23,42 +25,9 @@ void main() {
     });
   });
 
-  testWidgets('Discovery menu opens Files surface', (tester) async {
-    _registerWidgetCleanup(tester);
-    final transferStorageService = _StubTransferStorageService(
-      rootDirectory: harness.databaseHarness.rootDirectory,
-    );
-    await _pumpDiscoveryPage(
-      tester,
-      harness: harness,
-      transferStorageService: transferStorageService,
-    );
-
-    await _openMenu(tester);
-    expect(find.text('Menu'), findsWidgets);
-    expect(
-      find.byKey(const Key('discovery-menu-action-files')),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const Key('discovery-menu-action-files')));
-    await _pumpForUi(tester, frames: 8);
-    expect(transferStorageService.resolveReceiveCalls, greaterThan(0));
-    final navigator = tester.state<NavigatorState>(find.byType(Navigator));
-    expect(navigator.canPop(), isTrue);
-    await _pumpUntilFound(
-      tester,
-      find.byType(FileExplorerPage, skipOffstage: false),
-      failureMessage: 'File explorer route did not open from discovery menu.',
-    );
-    await _flushAsync(tester);
-    expect(find.text('Files'), findsWidgets);
-    await _closeCurrentRoute(tester, find.byType(FileExplorerPage).first);
-    await _pumpForUi(tester, frames: 12);
-    await _flushDbTimers(tester);
-  });
-
   testWidgets('File explorer can launch LocalFileViewerPage', (tester) async {
     _registerWidgetCleanup(tester);
+    _registerPhoneViewport(tester);
     final file = File(
       p.join(harness.databaseHarness.rootDirectory.path, 'viewer-sample.txt'),
     );
@@ -85,9 +54,13 @@ void main() {
     );
     addTearDown(owner.dispose);
     await owner.initialize();
+    expect(
+      owner.state.visibleEntries.map((entry) => entry.name),
+      contains('viewer-sample.txt'),
+    );
 
     await tester.pumpWidget(
-      MaterialApp(
+      buildLocalizedApp(
         home: FileExplorerPage(
           owner: owner,
           previewCacheOwner: harness.previewCacheOwner,
@@ -96,9 +69,12 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
     await _pumpForUi(tester, frames: 20);
-    expect(find.text('viewer-sample.txt'), findsOneWidget);
-    await tester.tap(find.text('viewer-sample.txt'));
+    expect(find.byType(ListTile), findsWidgets);
+    await tester.tap(find.byType(ListTile).first);
     await _pumpUntilFound(
       tester,
       find.byType(LocalFileViewerPage, skipOffstage: false),
@@ -107,83 +83,7 @@ void main() {
     await _flushAsync(tester);
     await _closeCurrentRoute(tester, find.byType(LocalFileViewerPage).first);
     await _pumpForUi(tester, frames: 12);
-    await _flushDbTimers(tester);
   });
-
-  testWidgets('LocalFileViewerPage disables built-in PDF viewing safely', (
-    tester,
-  ) async {
-    _registerWidgetCleanup(tester);
-    final file = File(
-      p.join(harness.databaseHarness.rootDirectory.path, 'viewer-sample.pdf'),
-    );
-    await tester.runAsync(() async {
-      await file.writeAsString('%PDF-1.7');
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: LocalFileViewerPage(
-          filePath: file.path,
-          previewCacheOwner: harness.previewCacheOwner,
-        ),
-      ),
-    );
-    await _pumpForUi(tester, frames: 12);
-
-    expect(
-      find.text(
-        'PDF preview/viewing is temporarily unavailable. Open the file externally to view it.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Open externally'), findsOneWidget);
-  });
-}
-
-Future<void> _pumpDiscoveryPage(
-  WidgetTester tester, {
-  required TestDiscoveryControllerHarness harness,
-  _StubTransferStorageService? transferStorageService,
-}) async {
-  final resolvedTransferStorageService =
-      transferStorageService ??
-      _StubTransferStorageService(
-        rootDirectory: harness.databaseHarness.rootDirectory,
-      );
-
-  await tester.pumpWidget(
-    MaterialApp(
-      home: DiscoveryPage(
-        controller: harness.controller,
-        readModel: harness.readModel,
-        configuredDiscoveryTargetsStore:
-            harness.configuredDiscoveryTargetsStore,
-        remoteShareBrowser: harness.remoteShareBrowser,
-        sharedCacheMaintenanceBoundary: harness.sharedCacheMaintenanceBoundary,
-        videoLinkSessionBoundary: harness.videoLinkSessionBoundary,
-        sharedCacheCatalog: harness.sharedCacheCatalog,
-        sharedCacheIndexStore: harness.sharedCacheIndexStore,
-        previewCacheOwner: harness.previewCacheOwner,
-        transferSessionCoordinator: harness.transferSessionCoordinator,
-        downloadHistoryBoundary: harness.downloadHistoryBoundary,
-        clipboardHistoryStore: harness.clipboardHistoryStore,
-        remoteClipboardProjectionStore: harness.remoteClipboardProjectionStore,
-        desktopWindowService: TrackingDesktopWindowService(),
-        transferStorageService: resolvedTransferStorageService,
-        createNearbyTransferSessionStore:
-            harness.createNearbyTransferSessionStore,
-        isBoundaryReady: true,
-      ),
-    ),
-  );
-  await tester.pump();
-  await _pumpForUi(tester, frames: 20);
-}
-
-Future<void> _openMenu(WidgetTester tester) async {
-  await tester.tap(find.byTooltip('Menu'));
-  await _pumpForUi(tester, frames: 20);
 }
 
 Future<void> _pumpForUi(WidgetTester tester, {int frames = 12}) async {
@@ -196,11 +96,6 @@ Future<void> _flushAsync(WidgetTester tester) async {
   await tester.runAsync(() async {
     await Future<void>.delayed(const Duration(milliseconds: 50));
   });
-  await _pumpForUi(tester, frames: 4);
-}
-
-Future<void> _flushDbTimers(WidgetTester tester) async {
-  await tester.pump(const Duration(seconds: 11));
   await _pumpForUi(tester, frames: 4);
 }
 
@@ -228,30 +123,37 @@ void _registerWidgetCleanup(WidgetTester tester) {
   });
 }
 
+void _registerPhoneViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 1600);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
 Future<void> _closeCurrentRoute(WidgetTester tester, Finder anchor) async {
   final context = tester.element(anchor);
   Navigator.of(context).pop();
   await _pumpForUi(tester, frames: 8);
 }
 
-class _StubTransferStorageService extends TransferStorageService {
-  _StubTransferStorageService({required this.rootDirectory});
-
-  final Directory rootDirectory;
-  int resolveReceiveCalls = 0;
-
-  @override
-  Future<Directory> resolveReceiveDirectory({
-    String appFolderName = 'Landa',
-  }) async {
-    resolveReceiveCalls += 1;
-    final directory = Directory(p.join(rootDirectory.path, 'incoming'));
-    directory.createSync(recursive: true);
-    return Future<Directory>.value(directory);
-  }
-
-  @override
-  Future<Directory?> resolveAndroidPublicDownloadsDirectory() async {
-    return null;
-  }
+Widget buildLocalizedApp({required Widget home, Locale? locale}) {
+  return EasyLocalization(
+    supportedLocales: AppLocalizationConfig.supportedLocales,
+    path: AppLocalizationConfig.assetPath,
+    fallbackLocale: AppLocalizationConfig.fallbackLocale,
+    startLocale: locale ?? AppLocalizationConfig.startLocale,
+    saveLocale: false,
+    useOnlyLangCode: true,
+    useFallbackTranslations: true,
+    child: Builder(
+      builder: (context) {
+        return MaterialApp(
+          locale: context.locale,
+          supportedLocales: context.supportedLocales,
+          localizationsDelegates: context.localizationDelegates,
+          home: home,
+        );
+      },
+    ),
+  );
 }

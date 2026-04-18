@@ -5,6 +5,7 @@ import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_ad
 import 'package:landa/features/nearby_transfer/presentation/nearby_transfer_send_view.dart';
 
 import 'test_support/fake_nearby_transfer.dart';
+import 'test_support/localized_test_app.dart';
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
@@ -39,11 +40,15 @@ void main() {
         lanAdapter: lanAdapter,
       );
       addTearDown(store.dispose);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _pumpForUi(tester, frames: 4);
+      });
 
       await store.prepareSendFlow();
 
       await tester.pumpWidget(
-        MaterialApp(
+        buildLocalizedTestApp(
           home: Scaffold(
             body: AnimatedBuilder(
               animation: store,
@@ -92,8 +97,8 @@ void main() {
       expect(lanAdapter.sendHandshakeOfferCalls, 1);
       expect(lanAdapter.lastVerificationCode, hasLength(6));
 
+      await store.resetForEntrySelection();
       await tester.pumpWidget(const SizedBox.shrink());
-      store.dispose();
       await _pumpForUi(tester, frames: 2);
     },
   );

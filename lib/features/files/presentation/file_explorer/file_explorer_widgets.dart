@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -41,7 +42,7 @@ class ExplorerPathHeader extends StatelessWidget {
         child: Row(
           children: [
             IconButton(
-              tooltip: 'Up',
+              tooltip: 'files.path_up'.tr(),
               onPressed: canGoUp ? onGoUp : null,
               icon: const Icon(Icons.arrow_upward_rounded),
             ),
@@ -50,7 +51,7 @@ class ExplorerPathHeader extends StatelessWidget {
               child: Text(full, maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
             IconButton(
-              tooltip: 'Select root',
+              tooltip: 'files.path_select_root'.tr(),
               onPressed: canSelectRoot ? onSelectRoot : null,
               icon: const Icon(Icons.source_outlined),
             ),
@@ -96,7 +97,7 @@ class ExplorerEntityTile extends StatelessWidget {
       trailing: onDelete == null
           ? null
           : IconButton(
-              tooltip: 'Remove from sharing',
+              tooltip: 'files.remove_from_sharing'.tr(),
               onPressed: () async {
                 await onDelete!();
               },

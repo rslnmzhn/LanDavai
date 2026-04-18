@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/app_spacing.dart';
@@ -83,12 +84,12 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                         ),
                       Expanded(
                         child: Text(
-                          'Nearby transfer',
+                          'nearby_transfer.title'.tr(),
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                       ),
                       IconButton(
-                        tooltip: 'Закрыть',
+                        tooltip: 'nearby_transfer.close'.tr(),
                         onPressed: _handleCloseRequested,
                         icon: const Icon(Icons.close_rounded),
                       ),
@@ -124,7 +125,7 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                   });
                 },
                 icon: const Icon(Icons.download_rounded),
-                label: const Text('Принять файлы'),
+                label: Text('nearby_transfer.receive_files'.tr()),
               ),
               const SizedBox(height: AppSpacing.sm),
               OutlinedButton.icon(
@@ -138,7 +139,7 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                   });
                 },
                 icon: const Icon(Icons.upload_rounded),
-                label: const Text('Отдать файлы'),
+                label: Text('nearby_transfer.send_files'.tr()),
               ),
             ],
           ),
@@ -173,15 +174,15 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Разорвать соединение?'),
+          title: Text('nearby_transfer.disconnect_title'.tr()),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Отмена'),
+              child: Text('common.cancel'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Разорвать'),
+              child: Text('nearby_transfer.disconnect_confirm'.tr()),
             ),
           ],
         );

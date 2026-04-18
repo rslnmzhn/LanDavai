@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
 import 'theme/app_theme.dart';
@@ -12,7 +13,10 @@ class DuplicateInstanceNoticeApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Landa',
+      locale: context.locale,
+      supportedLocales: context.supportedLocales,
+      localizationsDelegates: context.localizationDelegates,
+      onGenerateTitle: (BuildContext context) => 'app.title'.tr(),
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       home: Scaffold(
@@ -28,13 +32,12 @@ class DuplicateInstanceNoticeApp extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      'Landa уже запущена',
+                      'duplicate_instance.title'.tr(),
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 12),
                     Text(
-                      'На этом устройстве уже работает другой экземпляр Landa. '
-                      'Закройте его перед повторным запуском.',
+                      'duplicate_instance.message'.tr(),
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 20),
@@ -42,7 +45,7 @@ class DuplicateInstanceNoticeApp extends StatelessWidget {
                       alignment: Alignment.centerRight,
                       child: FilledButton(
                         onPressed: onClose ?? _defaultClose,
-                        child: const Text('Закрыть'),
+                        child: Text('common.close'.tr()),
                       ),
                     ),
                   ],

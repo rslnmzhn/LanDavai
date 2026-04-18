@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -21,8 +22,8 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
         children: [
           Text(
             store.phase == NearbyTransferSessionPhase.transferring
-                ? 'Получение файлов...'
-                : 'Соединение установлено. Ожидаем список файлов от подключённого устройства.',
+                ? 'nearby_transfer.offer_receiving'.tr()
+                : 'nearby_transfer.offer_waiting'.tr(),
             style: Theme.of(context).textTheme.titleSmall,
           ),
           if (store.transferProgress != null) ...[
@@ -42,7 +43,7 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
         ),
         const SizedBox(height: AppSpacing.xs),
         Text(
-          'Выберите файлы для загрузки. Предпросмотр доступен для поддерживаемых форматов.',
+          'nearby_transfer.offer_description'.tr(),
           style: Theme.of(
             context,
           ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
@@ -64,7 +65,7 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
               ? store.downloadSelectedIncomingFiles
               : null,
           icon: const Icon(Icons.download_rounded),
-          label: const Text('Скачать выбранные'),
+          label: Text('nearby_transfer.download_selected'.tr()),
         ),
       ],
     );
@@ -99,7 +100,7 @@ class _IncomingFileTile extends StatelessWidget {
           },
         ),
         title: Text(file.relativePath),
-        subtitle: Text(_formatBytes(file.sizeBytes)),
+        subtitle: Text(_formatBytes(context, file.sizeBytes)),
         trailing: file.previewKind == NearbyTransferRemotePreviewKind.none
             ? null
             : TextButton.icon(
@@ -127,22 +128,32 @@ class _IncomingFileTile extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.visibility_rounded),
-                label: const Text('Preview'),
+                label: Text('common.preview'.tr()),
               ),
       ),
     );
   }
 }
 
-String _formatBytes(int bytes) {
+String _formatBytes(BuildContext context, int bytes) {
   if (bytes < 1024) {
-    return '$bytes B';
+    return 'common.format_size_b'.tr(namedArgs: <String, String>{'value': '$bytes'});
   }
   if (bytes < 1024 * 1024) {
-    return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return 'common.format_size_kb'.tr(
+      namedArgs: <String, String>{'value': (bytes / 1024).toStringAsFixed(1)},
+    );
   }
   if (bytes < 1024 * 1024 * 1024) {
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return 'common.format_size_mb'.tr(
+      namedArgs: <String, String>{
+        'value': (bytes / (1024 * 1024)).toStringAsFixed(1),
+      },
+    );
   }
-  return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  return 'common.format_size_gb'.tr(
+    namedArgs: <String, String>{
+      'value': (bytes / (1024 * 1024 * 1024)).toStringAsFixed(1),
+    },
+  );
 }

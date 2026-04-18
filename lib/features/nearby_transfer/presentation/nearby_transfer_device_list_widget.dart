@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
@@ -27,13 +28,13 @@ class NearbyTransferDeviceListWidget extends StatelessWidget {
         Row(
           children: [
             Text(
-              'Устройства рядом',
+              'nearby_transfer.devices_nearby'.tr(),
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const Spacer(),
             if (onRefresh != null)
               IconButton(
-                tooltip: 'Обновить список',
+                tooltip: 'nearby_transfer.refresh_devices'.tr(),
                 onPressed: onRefresh == null ? null : () => onRefresh!(),
                 icon: const Icon(Icons.refresh_rounded),
               ),
@@ -41,7 +42,7 @@ class NearbyTransferDeviceListWidget extends StatelessWidget {
         ),
         if (devices.isEmpty)
           Text(
-            'Подходящие устройства пока не видны.',
+            'nearby_transfer.devices_empty'.tr(),
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),

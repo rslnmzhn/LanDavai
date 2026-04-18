@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
@@ -108,7 +109,7 @@ class _ImageFileViewer extends StatelessWidget {
           File(filePath),
           fit: BoxFit.contain,
           errorBuilder: (context, error, stackTrace) {
-            return const _ViewerError(message: 'Cannot open image file.');
+            return _ViewerError(message: 'files.viewer_image_open_failed'.tr());
           },
         ),
       ),
@@ -207,7 +208,9 @@ class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage = 'Cannot open video in built-in player.\n$error';
+        _errorMessage = 'files.viewer_video_open_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
       });
     }
   }
@@ -301,7 +304,7 @@ class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
               ),
               const Spacer(),
               IconButton(
-                tooltip: 'Back 10s',
+                tooltip: 'files.viewer_back_10s'.tr(),
                 onPressed: () {
                   final target = _position - const Duration(seconds: 10);
                   _player.seek(target.isNegative ? Duration.zero : target);
@@ -309,7 +312,9 @@ class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
                 icon: const Icon(Icons.replay_10_rounded),
               ),
               IconButton(
-                tooltip: _isPlaying ? 'Pause' : 'Play',
+                tooltip: _isPlaying
+                    ? 'files.viewer_pause'.tr()
+                    : 'files.viewer_play'.tr(),
                 onPressed: () {
                   if (_isPlaying) {
                     _player.pause();
@@ -325,7 +330,7 @@ class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
                 ),
               ),
               IconButton(
-                tooltip: 'Forward 10s',
+                tooltip: 'files.viewer_forward_10s'.tr(),
                 onPressed: () {
                   final target = _position + const Duration(seconds: 10);
                   final bounded =
@@ -426,7 +431,9 @@ class _MediaKitAudioFileViewerState extends State<_MediaKitAudioFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage = 'Cannot open audio in built-in player.\n$error';
+        _errorMessage = 'files.viewer_audio_open_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
       });
     }
   }
@@ -503,7 +510,7 @@ class _MediaKitAudioFileViewerState extends State<_MediaKitAudioFileViewer> {
               ),
               const Spacer(),
               IconButton(
-                tooltip: 'Back 10s',
+                tooltip: 'files.viewer_back_10s'.tr(),
                 onPressed: () {
                   final target = _position - const Duration(seconds: 10);
                   _player.seek(target.isNegative ? Duration.zero : target);
@@ -511,7 +518,9 @@ class _MediaKitAudioFileViewerState extends State<_MediaKitAudioFileViewer> {
                 icon: const Icon(Icons.replay_10_rounded),
               ),
               IconButton(
-                tooltip: _isPlaying ? 'Pause' : 'Play',
+                tooltip: _isPlaying
+                    ? 'files.viewer_pause'.tr()
+                    : 'files.viewer_play'.tr(),
                 onPressed: () {
                   if (_isPlaying) {
                     _player.pause();
@@ -527,7 +536,7 @@ class _MediaKitAudioFileViewerState extends State<_MediaKitAudioFileViewer> {
                 ),
               ),
               IconButton(
-                tooltip: 'Forward 10s',
+                tooltip: 'files.viewer_forward_10s'.tr(),
                 onPressed: () {
                   final target = _position + const Duration(seconds: 10);
                   final bounded =
@@ -599,8 +608,9 @@ class _VideoFileViewerState extends State<_VideoFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage =
-            'Cannot open video in built-in player on this platform.\n$error';
+        _errorMessage = 'files.viewer_video_platform_open_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
       });
     }
   }
@@ -679,7 +689,9 @@ class _VideoFileViewerState extends State<_VideoFileViewer> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             IconButton(
-              tooltip: isPlaying ? 'Pause' : 'Play',
+              tooltip: isPlaying
+                  ? 'files.viewer_pause'.tr()
+                  : 'files.viewer_play'.tr(),
               onPressed: () async {
                 if (isPlaying) {
                   await controller.pause();
@@ -755,7 +767,9 @@ class _AudioFileViewerState extends State<_AudioFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage = 'Cannot open audio in built-in player.\n$error';
+        _errorMessage = 'files.viewer_audio_open_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
       });
     }
   }
@@ -840,7 +854,7 @@ class _AudioFileViewerState extends State<_AudioFileViewer> {
                   ),
                   const Spacer(),
                   IconButton(
-                    tooltip: 'Back 10s',
+                    tooltip: 'files.viewer_back_10s'.tr(),
                     onPressed: () async {
                       final target = position - const Duration(seconds: 10);
                       await controller.seekTo(
@@ -850,7 +864,9 @@ class _AudioFileViewerState extends State<_AudioFileViewer> {
                     icon: const Icon(Icons.replay_10_rounded),
                   ),
                   IconButton(
-                    tooltip: isPlaying ? 'Pause' : 'Play',
+                    tooltip: isPlaying
+                        ? 'files.viewer_pause'.tr()
+                        : 'files.viewer_play'.tr(),
                     onPressed: () async {
                       if (isPlaying) {
                         await controller.pause();
@@ -866,7 +882,7 @@ class _AudioFileViewerState extends State<_AudioFileViewer> {
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Forward 10s',
+                    tooltip: 'files.viewer_forward_10s'.tr(),
                     onPressed: () async {
                       final target = position + const Duration(seconds: 10);
                       final bounded =
@@ -942,7 +958,9 @@ class _TextFileViewerState extends State<_TextFileViewer> {
         return;
       }
       setState(() {
-        _errorMessage = 'Cannot read text file: $error';
+        _errorMessage = 'files.viewer_text_read_failed'.tr(
+          namedArgs: <String, String>{'error': '$error'},
+        );
         _isLoading = false;
       });
     }
@@ -970,9 +988,9 @@ class _TextFileViewerState extends State<_TextFileViewer> {
                 color: AppColors.warning.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(AppRadius.md),
               ),
-              child: const Text(
-                'Preview is truncated to 2 MB.',
-                style: TextStyle(color: AppColors.textSecondary),
+              child: Text(
+                'files.viewer_text_truncated'.tr(),
+                style: const TextStyle(color: AppColors.textSecondary),
               ),
             ),
           if (_truncated) const SizedBox(height: AppSpacing.sm),
@@ -1002,9 +1020,7 @@ class _PdfFileViewer extends StatelessWidget {
   Widget build(BuildContext context) {
     return _UnsupportedFileViewer(
       filePath: filePath,
-      hintMessage:
-          'PDF preview/viewing is temporarily unavailable. '
-          'Open the file externally to view it.',
+      hintMessage: 'files.viewer_pdf_unavailable'.tr(),
     );
   }
 }
@@ -1026,8 +1042,7 @@ class _UnsupportedFileViewer extends StatelessWidget {
             const Icon(Icons.insert_drive_file_rounded, size: 42),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              hintMessage ??
-                  'This file type is not supported by the built-in viewer yet.',
+              hintMessage ?? 'files.viewer_unsupported'.tr(),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: AppSpacing.md),
@@ -1036,7 +1051,7 @@ class _UnsupportedFileViewer extends StatelessWidget {
                 await OpenFilex.open(filePath);
               },
               icon: const Icon(Icons.open_in_new_rounded),
-              label: const Text('Open externally'),
+              label: Text('files.viewer_open_external'.tr()),
             ),
           ],
         ),

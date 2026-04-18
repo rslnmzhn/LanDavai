@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_spacing.dart';
 import '../domain/clipboard_entry.dart';
@@ -207,12 +208,12 @@ class _LocalEntryTile extends StatelessWidget {
         onTap: () => onPreviewEntry(source),
         actions: <Widget>[
           IconButton(
-            tooltip: 'Copy text',
+            tooltip: 'clipboard.copy_text'.tr(),
             icon: const Icon(Icons.copy_rounded),
             onPressed: text.isEmpty ? null : () => onCopyEntry(source),
           ),
           IconButton(
-            tooltip: 'Delete',
+            tooltip: 'clipboard.delete'.tr(),
             icon: const Icon(Icons.delete_outline_rounded),
             onPressed: () => onDeleteEntry(source),
           ),
@@ -224,18 +225,18 @@ class _LocalEntryTile extends StatelessWidget {
       leading: _ClipboardThumbnail(provider: entry.imageProvider),
       metadata: entry.createdLabel,
       preview: Text(
-        'Tap to preview image',
+        'clipboard.tap_preview_image'.tr(),
         style: Theme.of(context).textTheme.bodySmall,
       ),
       onTap: () => onPreviewEntry(source),
       actions: <Widget>[
         IconButton(
-          tooltip: 'Copy image',
+          tooltip: 'clipboard.copy_image'.tr(),
           icon: const Icon(Icons.copy_rounded),
           onPressed: () => onCopyEntry(source),
         ),
         IconButton(
-          tooltip: 'Delete',
+          tooltip: 'clipboard.delete'.tr(),
           icon: const Icon(Icons.delete_outline_rounded),
           onPressed: () => onDeleteEntry(source),
         ),
@@ -272,7 +273,7 @@ class _RemoteEntryTile extends StatelessWidget {
         onTap: () => onPreviewEntry(source),
         actions: <Widget>[
           IconButton(
-            tooltip: 'Copy text',
+            tooltip: 'clipboard.copy_text'.tr(),
             icon: const Icon(Icons.copy_rounded),
             onPressed: text.isEmpty ? null : () => onCopyText(text),
           ),
@@ -284,7 +285,7 @@ class _RemoteEntryTile extends StatelessWidget {
       leading: _ClipboardThumbnail(provider: entry.imageProvider),
       metadata: entry.createdLabel,
       preview: Text(
-        'Preview only',
+        'clipboard.preview_only'.tr(),
         style: Theme.of(context).textTheme.bodySmall,
       ),
       onTap: () => onPreviewEntry(source),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../application/discovery_controller.dart';
 import '../domain/discovered_device.dart';
@@ -25,11 +26,11 @@ Future<void> showDiscoveryDeviceActionsMenu({
     context: context,
     position: position ?? const RelativeRect.fromLTRB(24, 180, 24, 0),
     items: [
-      const PopupMenuItem<_DiscoveryDeviceAction>(
+      PopupMenuItem<_DiscoveryDeviceAction>(
         value: _DiscoveryDeviceAction.rename,
         child: ListTile(
           leading: Icon(Icons.edit_outlined),
-          title: Text('Rename device'),
+          title: Text('discovery.device.rename'.tr()),
           contentPadding: EdgeInsets.zero,
         ),
       ),
@@ -48,10 +49,10 @@ Future<void> showDiscoveryDeviceActionsMenu({
           ),
           title: Text(
             isFriend
-                ? 'Already friends'
+                ? 'discovery.device.already_friends'.tr()
                 : hasPendingRequest
-                ? 'Friend request pending'
-                : 'Add to friends',
+                ? 'discovery.device.friend_request_pending'.tr()
+                : 'discovery.device.add_to_friends'.tr(),
           ),
           contentPadding: EdgeInsets.zero,
         ),
@@ -87,27 +88,27 @@ Future<void> _showDiscoveryRenameDialog({
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('Rename device'),
+          title: Text('discovery.device.rename'.tr()),
           content: TextField(
             controller: textController,
             autofocus: true,
-            decoration: const InputDecoration(
-              hintText: 'Custom name',
-              helperText: 'Name is bound to device MAC address.',
+            decoration: InputDecoration(
+              hintText: 'discovery.device.rename_custom_name'.tr(),
+              helperText: 'discovery.device.rename_helper'.tr(),
             ),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              child: Text('common.cancel'.tr()),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(''),
-              child: const Text('Reset'),
+              child: Text('common.reset'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(textController.text),
-              child: const Text('Save'),
+              child: Text('common.save'.tr()),
             ),
           ],
         );
