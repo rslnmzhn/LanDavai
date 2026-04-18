@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 
+import '../../../app/update/application/app_update_boundary.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
@@ -12,6 +13,7 @@ import 'app_settings_tab_sections.dart';
 class AppSettingsSheet extends StatefulWidget {
   const AppSettingsSheet({
     required this.settings,
+    required this.appUpdateBoundary,
     required this.configuredDiscoveryTargets,
     required this.configuredTargetValidator,
     required this.onAddConfiguredDiscoveryTarget,
@@ -33,6 +35,7 @@ class AppSettingsSheet extends StatefulWidget {
   });
 
   final AppSettings settings;
+  final AppUpdateBoundary appUpdateBoundary;
   final List<String> configuredDiscoveryTargets;
   final String? Function(String raw) configuredTargetValidator;
   final Future<bool> Function(String raw) onAddConfiguredDiscoveryTarget;
@@ -299,6 +302,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
               children: [
                 AppSettingsNetworkTab(
                   settings: widget.settings,
+                  appUpdateBoundary: widget.appUpdateBoundary,
                   configuredDiscoveryTargets: widget.configuredDiscoveryTargets,
                   configuredTargetController: _configuredTargetController,
                   onAddConfiguredTarget: _addConfiguredTarget,
