@@ -8,7 +8,7 @@
 - media_kit_libs_windows_video 1.0.11 (MIT) used for Windows desktop runtime
 
 ## Build
-- Android: `flutter build apk --release`
+- Android: `flutter build apk --release --split-per-abi`
 - Linux: `flutter build linux --release`
 - Windows: `flutter build windows --release`
 - macOS: `flutter build macos --release` didn't tested

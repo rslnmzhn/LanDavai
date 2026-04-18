@@ -370,6 +370,16 @@ jobs:
             zip -r "landa-v${VERSION}-windows-x64.zip" "${WINDOWS_ROOT_DIR}"
           )
 
+      - name: Generate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/generate_release_manifest.sh \
+            --assets-dir "release_assets" \
+            --version "${{ needs.resolve_release.outputs.release_version }}" \
+            --tag "${{ needs.resolve_release.outputs.release_tag }}" \
+            --repository "${{ github.repository }}"
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
@@ -384,3 +394,4 @@ jobs:
             release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-linux-x64.zip
             release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-windows-x64.zip
             release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-linux-x86_64.AppImage
+            release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-release-manifest.json
