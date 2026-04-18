@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -19,8 +20,12 @@ class NearbyTransferModeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = message == null || message!.trim().isEmpty
-        ? 'Режим: $label'
-        : 'Режим: $label • $message';
+        ? 'nearby_transfer.mode_prefix'.tr(
+            namedArgs: <String, String>{'label': label},
+          )
+        : 'nearby_transfer.mode_with_message'.tr(
+            namedArgs: <String, String>{'label': label, 'message': message!},
+          );
     final color = isError ? AppColors.error : AppColors.brandPrimary;
     return Container(
       width: double.infinity,

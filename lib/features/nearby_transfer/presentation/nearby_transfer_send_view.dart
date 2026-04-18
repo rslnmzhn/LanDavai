@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_spacing.dart';
 import '../application/nearby_transfer_session_store.dart';
@@ -42,7 +43,7 @@ class NearbyTransferSendView extends StatelessWidget {
             _SendActions(store: store)
           else
             Text(
-              'Ожидаем подключение второго устройства.',
+              'nearby_transfer.waiting_for_peer'.tr(),
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           const SizedBox(height: AppSpacing.lg),
@@ -51,7 +52,7 @@ class NearbyTransferSendView extends StatelessWidget {
             const SizedBox(height: AppSpacing.lg),
             OutlinedButton(
               onPressed: onDisconnectRequested,
-              child: const Text('Отключиться'),
+              child: Text('nearby_transfer.disconnect'.tr()),
             ),
           ],
         ],
@@ -83,8 +84,8 @@ class _SendActions extends StatelessWidget {
               icon: const Icon(Icons.upload_file_rounded),
               label: Text(
                 store.shouldShowSendMore
-                    ? 'Отправить ещё файлы'
-                    : 'Выбрать файлы',
+                    ? 'nearby_transfer.choose_more_files'.tr()
+                    : 'nearby_transfer.choose_files'.tr(),
               ),
             ),
             if (store.canSendDirectory)
@@ -93,8 +94,8 @@ class _SendActions extends StatelessWidget {
                 icon: const Icon(Icons.folder_open_rounded),
                 label: Text(
                   store.shouldShowSendMore
-                      ? 'Отправить ещё папку'
-                      : 'Выбрать папку',
+                      ? 'nearby_transfer.choose_more_folder'.tr()
+                      : 'nearby_transfer.choose_folder'.tr(),
                 ),
               ),
           ],

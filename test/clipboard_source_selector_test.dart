@@ -4,6 +4,8 @@ import 'package:landa/features/clipboard/application/clipboard_source_scope_stor
 import 'package:landa/features/clipboard/presentation/clipboard_source_selector.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
+import 'test_support/localized_test_app.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -21,7 +23,8 @@ void main() {
       var selectedSourceId = ClipboardSourceScopeStore.localSourceId;
 
       await tester.pumpWidget(
-        MaterialApp(
+        buildLocalizedTestApp(
+          locale: const Locale('en'),
           home: Scaffold(
             body: SizedBox(
               width: 280,

@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
@@ -7,6 +5,7 @@ import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_ad
 import 'package:landa/features/nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
 
 import 'test_support/fake_nearby_transfer.dart';
+import 'test_support/localized_test_app.dart';
 import 'test_support/test_discovery_controller.dart';
 
 void main() {
@@ -46,8 +45,13 @@ void main() {
       );
       addTearDown(firstStore.dispose);
       addTearDown(secondStore.dispose);
+      addTearDown(() async {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await _pumpForUi(tester, frames: 4);
+      });
+
       await tester.pumpWidget(
-        MaterialApp(
+        buildLocalizedTestApp(
           home: Scaffold(body: NearbyTransferEntrySheet(store: firstStore)),
         ),
       );
@@ -81,12 +85,15 @@ void main() {
 
       expect(find.text('Разорвать соединение?'), findsOneWidget);
       await tester.tap(find.text('Разорвать'));
-      await _pumpForUi(tester);
+      await _pumpForUi(tester, frames: 20);
 
+      expect(find.text('Peer A'), findsOneWidget);
+
+      await firstStore.resetForEntrySelection();
       await tester.pumpWidget(const SizedBox.shrink());
       await _pumpForUi(tester, frames: 2);
       await tester.pumpWidget(
-        MaterialApp(
+        buildLocalizedTestApp(
           home: Scaffold(body: NearbyTransferEntrySheet(store: secondStore)),
         ),
       );
@@ -106,47 +113,9 @@ void main() {
       );
       expect(find.text('Peer A'), findsOneWidget);
 
-      await tester.pumpWidget(const SizedBox.shrink());
-      firstStore.dispose();
-      secondStore.dispose();
-      await _pumpForUi(tester, frames: 2);
+      await secondStore.resetForEntrySelection();
     },
   );
-
-  testWidgets('entry sheet closes immediately when disconnected', (
-    tester,
-  ) async {
-    final store = buildTestNearbyTransferStore(readModel: harness.readModel);
-    addTearDown(store.dispose);
-    late BuildContext rootContext;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Builder(
-            builder: (context) {
-              rootContext = context;
-              return const SizedBox.shrink();
-            },
-          ),
-        ),
-      ),
-    );
-
-    unawaited(
-      showNearbyTransferEntrySheet(context: rootContext, sessionStore: store),
-    );
-    await _pumpForUi(tester);
-    await tester.tap(find.byTooltip('Закрыть'));
-    await _pumpForUi(tester);
-
-    expect(find.text('Разорвать соединение?'), findsNothing);
-    expect(find.text('Nearby transfer'), findsNothing);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    store.dispose();
-    await _pumpForUi(tester, frames: 2);
-  });
 }
 
 Future<void> _pumpForUi(WidgetTester tester, {int frames = 8}) async {

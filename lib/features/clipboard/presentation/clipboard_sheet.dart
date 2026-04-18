@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -90,7 +91,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     }
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(const SnackBar(content: Text('Copied to clipboard')));
+    ).showSnackBar(SnackBar(content: Text('clipboard.copied'.tr())));
   }
 
   Future<void> _copyLocalEntry(ClipboardHistoryEntry entry) async {
@@ -101,7 +102,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(errorMessage ?? 'Copied to clipboard')),
+      SnackBar(content: Text(errorMessage ?? 'clipboard.copied'.tr())),
     );
   }
 
@@ -113,7 +114,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
       }
       await showClipboardTextPreviewDialog(
         context: context,
-        title: 'Clipboard text',
+        title: 'clipboard.text_title'.tr(),
         text: text,
       );
       return;
@@ -127,14 +128,14 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Clipboard image is unavailable.')),
+        SnackBar(content: Text('clipboard.image_unavailable'.tr())),
       );
       return;
     }
 
     await showClipboardImagePreviewDialog(
       context: context,
-      title: 'Clipboard image',
+      title: 'clipboard.image_title'.tr(),
       imageProvider: imageProvider,
     );
   }
@@ -147,10 +148,9 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
       }
       await showClipboardTextPreviewDialog(
         context: context,
-        title: 'Remote clipboard text',
+        title: 'clipboard.remote_text_title'.tr(),
         text: text,
-        note:
-            'Shown as received from the remote clipboard catalog. It may be shortened.',
+        note: 'clipboard.remote_text_note'.tr(),
       );
       return;
     }
@@ -161,17 +161,16 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Remote image preview is unavailable.')),
+        SnackBar(content: Text('clipboard.remote_image_unavailable'.tr())),
       );
       return;
     }
 
     await showClipboardImagePreviewDialog(
       context: context,
-      title: 'Remote clipboard image preview',
+      title: 'clipboard.remote_image_title'.tr(),
       imageProvider: MemoryImage(bytes),
-      note:
-          'Preview quality only. Original remote clipboard image is not available.',
+      note: 'clipboard.remote_image_note'.tr(),
     );
   }
 
@@ -180,19 +179,19 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
       context: context,
       builder: (context) {
         final message = entry.type == ClipboardEntryType.text
-            ? 'Delete this text entry from history?'
-            : 'Delete this image entry from history?';
+            ? 'clipboard.remove_history_text'.tr()
+            : 'clipboard.remove_history_image'.tr();
         return AlertDialog(
-          title: const Text('Remove from history'),
+          title: Text('clipboard.remove_history_title'.tr()),
           content: Text(message),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
+              child: Text('common.cancel'.tr()),
             ),
             FilledButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
+              child: Text('clipboard.delete'.tr()),
             ),
           ],
         );
@@ -250,12 +249,23 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
               widget.remoteClipboardProjectionStore.hasEntriesFor(
                 selectedRemoteIp,
               );
-          final remoteLoadLabel = remoteHasCachedEntries ? 'Refresh' : 'Load';
+          final remoteLoadLabelKey = remoteHasCachedEntries
+              ? 'common.refresh'
+              : 'common.load';
           final emptyMessage = isLocalSelected
-              ? 'History is empty. Copy text or image to start.'
+              ? 'clipboard.history_empty'.tr()
               : !selectedRemoteDevice.isTrusted
-              ? 'Confirm ${selectedRemoteDevice.displayName} as a friend to view its clipboard.'
-              : 'No clipboard entries loaded for ${selectedRemoteDevice.displayName}. Use $remoteLoadLabel to request them.';
+              ? 'clipboard.friend_required'.tr(
+                  namedArgs: <String, String>{
+                    'device': selectedRemoteDevice.displayName,
+                  },
+                )
+              : 'clipboard.remote_empty'.tr(
+                  namedArgs: <String, String>{
+                    'device': selectedRemoteDevice.displayName,
+                    'action': remoteLoadLabelKey.tr(),
+                  },
+                );
 
           return Padding(
             padding: const EdgeInsets.all(AppSpacing.md),
@@ -263,7 +273,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Clipboard',
+                  'clipboard.title'.tr(),
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -284,7 +294,7 @@ class _ClipboardSheetState extends State<ClipboardSheet> {
                     onLoad: selectedRemoteDevice.isTrusted && !isRemoteLoading
                         ? _loadSelectedRemoteClipboard
                         : null,
-                    loadLabel: remoteLoadLabel,
+                    loadLabel: remoteLoadLabelKey.tr(),
                   ),
                 ],
                 const SizedBox(height: AppSpacing.sm),
@@ -327,8 +337,10 @@ class _RemoteClipboardScopeBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final message = device.isTrusted
-        ? 'Viewing ${device.displayName}.'
-        : 'Remote clipboard is available only for confirmed friends.';
+        ? 'clipboard.remote_viewing'.tr(
+            namedArgs: <String, String>{'device': device.displayName},
+          )
+        : 'clipboard.remote_friends_only'.tr();
     return Row(
       children: [
         Expanded(

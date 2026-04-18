@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
@@ -25,14 +26,17 @@ class ClipboardSourceSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Clipboard source', style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          'clipboard.source_title'.tr(),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
         const SizedBox(height: AppSpacing.xs),
         HorizontalChipRow(
           scrollKey: const Key('clipboard-source-chip-row'),
           spacing: AppSpacing.xs,
           children: <Widget>[
             _ClipboardSourceChip(
-              label: 'Current device',
+              label: 'clipboard.current_device'.tr(),
               selected:
                   selectedSourceId == ClipboardSourceScopeStore.localSourceId,
               onSelected: onSelectLocal,
