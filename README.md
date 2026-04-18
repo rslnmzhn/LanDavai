@@ -1,6 +1,7 @@
 # Landa
 
 ## Third-party
+- easy_localization 3.0.8 (MIT) used for app localization
 - media_kit 1.2.6 (MIT) used for media playback
 - media_kit_video 2.0.1 (MIT) used for media playback
 - media_kit_libs_linux 1.2.1 (MIT) used for Linux desktop runtime
