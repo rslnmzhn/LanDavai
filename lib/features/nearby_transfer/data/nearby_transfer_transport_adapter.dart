@@ -243,6 +243,53 @@ class NearbyTransferIncomingSelectionOfferedEvent
   }
 }
 
+class NearbyTransferSelectionPreparationStartedEvent
+    extends NearbyTransferTransportEvent {
+  const NearbyTransferSelectionPreparationStartedEvent({
+    required this.label,
+    required this.totalItemCount,
+    required this.totalBytes,
+  });
+
+  final String label;
+  final int totalItemCount;
+  final int totalBytes;
+}
+
+class NearbyTransferSelectionPreparationProgressEvent
+    extends NearbyTransferTransportEvent {
+  const NearbyTransferSelectionPreparationProgressEvent({
+    required this.label,
+    required this.completedItemCount,
+    required this.totalItemCount,
+    required this.preparedBytes,
+    required this.totalBytes,
+    required this.currentRelativePath,
+  });
+
+  final String label;
+  final int completedItemCount;
+  final int totalItemCount;
+  final int preparedBytes;
+  final int totalBytes;
+  final String currentRelativePath;
+}
+
+class NearbyTransferSelectionPreparationCompletedEvent
+    extends NearbyTransferTransportEvent {
+  const NearbyTransferSelectionPreparationCompletedEvent({
+    required this.requestId,
+    required this.label,
+    required this.totalItemCount,
+    required this.totalBytes,
+  });
+
+  final String requestId;
+  final String label;
+  final int totalItemCount;
+  final int totalBytes;
+}
+
 class NearbyTransferRemotePreviewReadyEvent
     extends NearbyTransferTransportEvent {
   const NearbyTransferRemotePreviewReadyEvent({required this.preview});

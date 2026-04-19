@@ -87,6 +87,14 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   int _transferCompletedBytes = 0;
   int _transferTotalBytes = 0;
   bool _hasCompletedOutgoingTransfer = false;
+  String? _outgoingSelectionLabel;
+  List<String> _outgoingSelectionRoots = const <String>[];
+  int _outgoingSelectionItemCount = 0;
+  int _outgoingSelectionTotalBytes = 0;
+  bool _isPreparingOutgoingSelection = false;
+  int _outgoingPreparationCompletedItemCount = 0;
+  int _outgoingPreparationTotalItemCount = 0;
+  String? _outgoingPreparationCurrentPath;
   NearbyTransferIncomingSelectionOfferedEvent? _incomingOffer;
   Set<String> _selectedIncomingFileIds = <String>{};
   Map<String, NearbyTransferRemoteOfferNode> _incomingNodesById =
@@ -156,6 +164,36 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool get shouldShowSendMore =>
       _role == NearbyTransferRole.send && _hasCompletedOutgoingTransfer;
+
+  String? get outgoingSelectionLabel => _outgoingSelectionLabel;
+
+  List<String> get outgoingSelectionRoots =>
+      List<String>.unmodifiable(_outgoingSelectionRoots);
+
+  int get outgoingSelectionItemCount => _outgoingSelectionItemCount;
+
+  int get outgoingSelectionTotalBytes => _outgoingSelectionTotalBytes;
+
+  bool get hasOutgoingSelection => _outgoingSelectionLabel != null;
+
+  bool get isPreparingOutgoingSelection => _isPreparingOutgoingSelection;
+
+  String? get outgoingPreparationCurrentPath => _outgoingPreparationCurrentPath;
+
+  double? get outgoingPreparationProgress {
+    if (_outgoingPreparationTotalItemCount <= 0) {
+      return null;
+    }
+    return (_outgoingPreparationCompletedItemCount /
+            _outgoingPreparationTotalItemCount)
+        .clamp(0.0, 1.0);
+  }
+
+  int get outgoingPreparationCompletedItemCount =>
+      _outgoingPreparationCompletedItemCount;
+
+  int get outgoingPreparationTotalItemCount =>
+      _outgoingPreparationTotalItemCount;
 
   NearbyTransferIncomingSelectionOfferedEvent? get incomingOffer =>
       _incomingOffer;
@@ -591,6 +629,35 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   Future<void> _handleTransportEvent(NearbyTransferTransportEvent event) async {
+    if (event is NearbyTransferSelectionPreparationStartedEvent) {
+      _isPreparingOutgoingSelection = true;
+      _outgoingPreparationCompletedItemCount = 0;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = null;
+      _setBanner('Готовим список файлов для отправки...');
+      notifyListeners();
+      return;
+    }
+    if (event is NearbyTransferSelectionPreparationProgressEvent) {
+      _isPreparingOutgoingSelection = true;
+      _outgoingPreparationCompletedItemCount = event.completedItemCount;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = event.currentRelativePath;
+      _setBanner('Подготавливаем файлы для отправки...');
+      notifyListeners();
+      return;
+    }
+    if (event is NearbyTransferSelectionPreparationCompletedEvent) {
+      _isPreparingOutgoingSelection = false;
+      _outgoingPreparationCompletedItemCount = event.totalItemCount;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = null;
+      _setBanner(
+        'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+      );
+      notifyListeners();
+      return;
+    }
     if (event is NearbyTransferConnectedEvent) {
       _peer = event.peer;
       _sessionId = event.sessionId;
@@ -692,10 +759,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (!canSendFiles) {
       return;
     }
-    _phase = NearbyTransferSessionPhase.connected;
-    _setBanner(
-      'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+    _outgoingSelectionLabel = selection.label;
+    _outgoingSelectionRoots = _collectOutgoingSelectionRoots(selection);
+    _outgoingSelectionItemCount = selection.entries.length;
+    _outgoingSelectionTotalBytes = selection.entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
     );
+    _isPreparingOutgoingSelection = true;
+    _outgoingPreparationCompletedItemCount = 0;
+    _outgoingPreparationTotalItemCount = selection.entries.length;
+    _outgoingPreparationCurrentPath = null;
+    _phase = NearbyTransferSessionPhase.connected;
+    _setBanner('Готовим список файлов для отправки...');
     notifyListeners();
     await _activeAdapter?.sendSelection(selection);
   }
@@ -744,6 +820,14 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _selectedCandidateId = null;
     _candidateRefreshTimer?.cancel();
     _candidateRefreshTimer = null;
+    _isPreparingOutgoingSelection = false;
+    _outgoingPreparationCompletedItemCount = 0;
+    _outgoingPreparationTotalItemCount = 0;
+    _outgoingPreparationCurrentPath = null;
+    _outgoingSelectionLabel = null;
+    _outgoingSelectionRoots = const <String>[];
+    _outgoingSelectionItemCount = 0;
+    _outgoingSelectionTotalBytes = 0;
   }
 
   void _clearHandshakeValidationState() {
@@ -830,6 +914,26 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
     collect(node);
     return fileIds;
+  }
+
+  List<String> _collectOutgoingSelectionRoots(
+    NearbyTransferSelection selection,
+  ) {
+    final roots = <String>[];
+    for (final entry in selection.entries) {
+      final segments = entry.relativePath
+          .split(RegExp(r'[\\/]'))
+          .where((segment) => segment.trim().isNotEmpty)
+          .toList(growable: false);
+      if (segments.isEmpty) {
+        continue;
+      }
+      final root = segments.first;
+      if (!roots.contains(root)) {
+        roots.add(root);
+      }
+    }
+    return List<String>.unmodifiable(roots);
   }
 
   @override

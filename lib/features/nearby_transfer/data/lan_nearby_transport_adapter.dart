@@ -129,10 +129,25 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       throw StateError('Nearby transfer is not connected.');
     }
 
+    final totalItemCount = selection.entries.length;
+    final totalBytes = selection.entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
+    );
+    _events.add(
+      NearbyTransferSelectionPreparationStartedEvent(
+        label: selection.label,
+        totalItemCount: totalItemCount,
+        totalBytes: totalBytes,
+      ),
+    );
+
     final requestId = _fileHashService.buildStableId(
       '$sessionId-${DateTime.now().microsecondsSinceEpoch}',
     );
     final entries = <_PendingOutgoingOfferEntry>[];
+    var preparedBytes = 0;
+    var completedItemCount = 0;
     for (final entry in selection.entries) {
       final sha256 = await _fileHashService.computeSha256ForPath(
         entry.sourcePath,
@@ -161,6 +176,18 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           previewKind: previewKind,
         ),
       );
+      completedItemCount += 1;
+      preparedBytes += entry.sizeBytes;
+      _events.add(
+        NearbyTransferSelectionPreparationProgressEvent(
+          label: selection.label,
+          completedItemCount: completedItemCount,
+          totalItemCount: totalItemCount,
+          preparedBytes: preparedBytes,
+          totalBytes: totalBytes,
+          currentRelativePath: entry.relativePath,
+        ),
+      );
     }
 
     _pendingOutgoingOffers[requestId] = _PendingOutgoingOffer(
@@ -180,6 +207,14 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           .map((node) => _offerNodeToJson(node))
           .toList(growable: false),
     });
+    _events.add(
+      NearbyTransferSelectionPreparationCompletedEvent(
+        requestId: requestId,
+        label: selection.label,
+        totalItemCount: totalItemCount,
+        totalBytes: totalBytes,
+      ),
+    );
   }
 
   @override

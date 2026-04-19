@@ -700,6 +700,109 @@ void main() {
   );
 
   test(
+    'send selection exposes sender summary and real preparation progress before offer is ready',
+    () async {
+      final filePicker = StubNearbyTransferFilePicker(
+        fileSelection: const NearbyTransferSelection(
+          label: 'Trip',
+          entries: <NearbyTransferPickedEntry>[
+            NearbyTransferPickedEntry(
+              sourcePath: '/tmp/Trip/photo.png',
+              relativePath: 'Trip/photo.png',
+              sizeBytes: 2048,
+            ),
+            NearbyTransferPickedEntry(
+              sourcePath: '/tmp/Trip/docs/notes.txt',
+              relativePath: 'Trip/docs/notes.txt',
+              sizeBytes: 128,
+            ),
+          ],
+        ),
+      );
+      final lanAdapter = FakeNearbyTransferTransportAdapter(
+        onSendSelection: (adapter, selection) async {
+          adapter.emit(
+            NearbyTransferSelectionPreparationStartedEvent(
+              label: selection.label,
+              totalItemCount: selection.entries.length,
+              totalBytes: selection.entries.fold<int>(
+                0,
+                (sum, entry) => sum + entry.sizeBytes,
+              ),
+            ),
+          );
+          adapter.emit(
+            const NearbyTransferSelectionPreparationProgressEvent(
+              label: 'Trip',
+              completedItemCount: 1,
+              totalItemCount: 2,
+              preparedBytes: 2048,
+              totalBytes: 2176,
+              currentRelativePath: 'Trip/photo.png',
+            ),
+          );
+          adapter.emit(
+            const NearbyTransferSelectionPreparationCompletedEvent(
+              requestId: 'offer-1',
+              label: 'Trip',
+              totalItemCount: 2,
+              totalBytes: 2176,
+            ),
+          );
+        },
+      );
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+        filePicker: filePicker,
+      );
+      addTearDown(store.dispose);
+      final observedPreparationSteps = <int>[];
+      void listener() {
+        if (store.isPreparingOutgoingSelection) {
+          observedPreparationSteps.add(
+            store.outgoingPreparationCompletedItemCount,
+          );
+        }
+      }
+
+      store.addListener(listener);
+      addTearDown(() => store.removeListener(listener));
+
+      await store.prepareSendFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
+      await Future<void>.delayed(Duration.zero);
+
+      await store.sendFiles();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.outgoingSelectionLabel, 'Trip');
+      expect(store.outgoingSelectionRoots, <String>['Trip']);
+      expect(store.outgoingSelectionItemCount, 2);
+      expect(store.outgoingSelectionTotalBytes, 2176);
+      expect(store.isPreparingOutgoingSelection, isFalse);
+      expect(store.outgoingPreparationCompletedItemCount, 2);
+      expect(store.outgoingPreparationTotalItemCount, 2);
+      expect(observedPreparationSteps, contains(1));
+      expect(
+        store.bannerMessage,
+        'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+      );
+    },
+  );
+
+  test(
     'send flow advertises nearby availability only while the sheet session is active',
     () async {
       final availabilityStore = NearbyTransferAvailabilityStore();

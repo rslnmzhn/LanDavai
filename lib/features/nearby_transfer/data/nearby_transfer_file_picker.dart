@@ -6,14 +6,33 @@ import 'package:path/path.dart' as p;
 import 'nearby_transfer_transport_adapter.dart';
 
 class NearbyTransferFilePicker {
+  NearbyTransferFilePicker({
+    bool? supportsDirectoryPickingOverride,
+    Future<FilePickerResult?> Function()? pickFilesInvoker,
+    Future<String?> Function()? pickDirectoryPathInvoker,
+  }) : _supportsDirectoryPickingOverride = supportsDirectoryPickingOverride,
+       _pickFilesInvoker = pickFilesInvoker,
+       _pickDirectoryPathInvoker = pickDirectoryPathInvoker;
+
+  final bool? _supportsDirectoryPickingOverride;
+  final Future<FilePickerResult?> Function()? _pickFilesInvoker;
+  final Future<String?> Function()? _pickDirectoryPathInvoker;
+
   bool get supportsDirectoryPicking =>
-      Platform.isWindows || Platform.isLinux || Platform.isMacOS;
+      _supportsDirectoryPickingOverride ??
+      Platform.isAndroid ||
+          Platform.isIOS ||
+          Platform.isWindows ||
+          Platform.isLinux ||
+          Platform.isMacOS;
 
   Future<NearbyTransferSelection?> pickFiles() async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      withData: false,
-    );
+    final result =
+        await (_pickFilesInvoker?.call() ??
+            FilePicker.platform.pickFiles(
+              allowMultiple: true,
+              withData: false,
+            ));
     final paths =
         result?.paths
             .whereType<String>()
@@ -57,7 +76,9 @@ class NearbyTransferFilePicker {
       return null;
     }
 
-    final path = await FilePicker.platform.getDirectoryPath();
+    final path =
+        await (_pickDirectoryPathInvoker?.call() ??
+            FilePicker.platform.getDirectoryPath());
     if (path == null || path.trim().isEmpty) {
       return null;
     }
