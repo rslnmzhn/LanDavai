@@ -20,6 +20,10 @@ class NearbyTransferSendView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final shouldShowQr =
+        store.phase != NearbyTransferSessionPhase.awaitingHandshake &&
+        store.phase != NearbyTransferSessionPhase.connected &&
+        store.phase != NearbyTransferSessionPhase.transferring;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
@@ -31,9 +35,9 @@ class NearbyTransferSendView extends StatelessWidget {
             isError: store.bannerIsError,
           ),
           const SizedBox(height: AppSpacing.md),
-          if (store.qrPayloadText != null)
+          if (shouldShowQr && store.qrPayloadText != null)
             NearbyTransferQrView(payload: store.qrPayloadText!)
-          else
+          else if (shouldShowQr)
             const Center(child: CircularProgressIndicator()),
           const SizedBox(height: AppSpacing.md),
           if (store.phase == NearbyTransferSessionPhase.awaitingHandshake)

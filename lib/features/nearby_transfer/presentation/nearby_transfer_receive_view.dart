@@ -22,6 +22,10 @@ class NearbyTransferReceiveView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final shouldShowScanner =
+        store.phase != NearbyTransferSessionPhase.awaitingHandshake &&
+        store.phase != NearbyTransferSessionPhase.connected &&
+        store.phase != NearbyTransferSessionPhase.transferring;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.md),
       child: Column(
@@ -33,13 +37,15 @@ class NearbyTransferReceiveView extends StatelessWidget {
             isError: store.bannerIsError,
           ),
           const SizedBox(height: AppSpacing.md),
-          NearbyTransferScannerView(
-            liveScannerSupported: store.liveQrScannerSupported,
-            onPayloadDetected: (payload) {
-              store.handleQrPayloadText(payload);
-            },
-          ),
-          const SizedBox(height: AppSpacing.md),
+          if (shouldShowScanner) ...[
+            NearbyTransferScannerView(
+              liveScannerSupported: store.liveQrScannerSupported,
+              onPayloadDetected: (payload) {
+                store.handleQrPayloadText(payload);
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
           if (store.phase == NearbyTransferSessionPhase.awaitingHandshake)
             NearbyTransferConnectionConfirmView(store: store)
           else if (store.phase == NearbyTransferSessionPhase.connected ||

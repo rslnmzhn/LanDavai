@@ -103,6 +103,10 @@ void main() {
 
       expect(find.text('Выберите совпадающий цифровой код'), findsOneWidget);
       expect(find.byType(OutlinedButton), findsAtLeastNWidgets(3));
+      expect(
+        find.byKey(const Key('nearby-transfer-scanner-stage')),
+        findsNothing,
+      );
 
       lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
       await _pumpForUi(tester);

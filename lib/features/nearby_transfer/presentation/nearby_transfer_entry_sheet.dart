@@ -8,12 +8,31 @@ import '../application/nearby_transfer_session_store.dart';
 import 'nearby_transfer_receive_view.dart';
 import 'nearby_transfer_send_view.dart';
 
-enum _NearbyTransferStage { menu, send, receive }
+enum NearbyTransferEntryStage { menu, send, receive }
 
 Future<void> showNearbyTransferEntrySheet({
   required BuildContext context,
   required NearbyTransferSessionStore sessionStore,
 }) async {
+  final selectedStage = await showModalBottomSheet<NearbyTransferEntryStage>(
+    context: context,
+    isDismissible: false,
+    enableDrag: false,
+    builder: (context) {
+      return const _NearbyTransferModeChooserSheet();
+    },
+  );
+  if (selectedStage == null) {
+    return;
+  }
+  if (selectedStage == NearbyTransferEntryStage.send) {
+    await sessionStore.prepareSendFlow();
+  } else {
+    await sessionStore.prepareReceiveFlow();
+  }
+  if (!context.mounted) {
+    return;
+  }
   await showModalBottomSheet<void>(
     context: context,
     isDismissible: false,
@@ -22,16 +41,27 @@ Future<void> showNearbyTransferEntrySheet({
     builder: (context) {
       return FractionallySizedBox(
         heightFactor: 0.92,
-        child: NearbyTransferEntrySheet(store: sessionStore),
+        child: NearbyTransferEntrySheet(
+          store: sessionStore,
+          initialStage: selectedStage,
+          showMenuStage: false,
+        ),
       );
     },
   );
 }
 
 class NearbyTransferEntrySheet extends StatefulWidget {
-  const NearbyTransferEntrySheet({required this.store, super.key});
+  const NearbyTransferEntrySheet({
+    required this.store,
+    this.initialStage = NearbyTransferEntryStage.menu,
+    this.showMenuStage = true,
+    super.key,
+  });
 
   final NearbyTransferSessionStore store;
+  final NearbyTransferEntryStage initialStage;
+  final bool showMenuStage;
 
   @override
   State<NearbyTransferEntrySheet> createState() =>
@@ -39,9 +69,15 @@ class NearbyTransferEntrySheet extends StatefulWidget {
 }
 
 class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
-  _NearbyTransferStage _stage = _NearbyTransferStage.menu;
+  late NearbyTransferEntryStage _stage;
 
   NearbyTransferSessionStore get _store => widget.store;
+
+  @override
+  void initState() {
+    super.initState();
+    _stage = widget.initialStage;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,7 +105,8 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                   ),
                   child: Row(
                     children: [
-                      if (_stage != _NearbyTransferStage.menu)
+                      if (widget.showMenuStage &&
+                          _stage != NearbyTransferEntryStage.menu)
                         IconButton(
                           onPressed: () async {
                             await _store.resetForEntrySelection();
@@ -77,7 +114,7 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                               return;
                             }
                             setState(() {
-                              _stage = _NearbyTransferStage.menu;
+                              _stage = NearbyTransferEntryStage.menu;
                             });
                           },
                           icon: const Icon(Icons.arrow_back_rounded),
@@ -108,7 +145,10 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
 
   Widget _buildStage(BuildContext context) {
     switch (_stage) {
-      case _NearbyTransferStage.menu:
+      case NearbyTransferEntryStage.menu:
+        if (!widget.showMenuStage) {
+          return const SizedBox.shrink();
+        }
         return Padding(
           padding: const EdgeInsets.all(AppSpacing.md),
           child: Column(
@@ -121,7 +161,7 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                     return;
                   }
                   setState(() {
-                    _stage = _NearbyTransferStage.receive;
+                    _stage = NearbyTransferEntryStage.receive;
                   });
                 },
                 icon: const Icon(Icons.download_rounded),
@@ -135,7 +175,7 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
                     return;
                   }
                   setState(() {
-                    _stage = _NearbyTransferStage.send;
+                    _stage = NearbyTransferEntryStage.send;
                   });
                 },
                 icon: const Icon(Icons.upload_rounded),
@@ -144,12 +184,12 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
             ],
           ),
         );
-      case _NearbyTransferStage.send:
+      case NearbyTransferEntryStage.send:
         return NearbyTransferSendView(
           store: _store,
           onDisconnectRequested: _handleDisconnectRequested,
         );
-      case _NearbyTransferStage.receive:
+      case NearbyTransferEntryStage.receive:
         return NearbyTransferReceiveView(
           store: _store,
           onDisconnectRequested: _handleDisconnectRequested,
@@ -200,5 +240,60 @@ class _NearbyTransferEntrySheetState extends State<NearbyTransferEntrySheet> {
       return;
     }
     setState(() {});
+  }
+}
+
+class _NearbyTransferModeChooserSheet extends StatelessWidget {
+  const _NearbyTransferModeChooserSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.md,
+          AppSpacing.lg,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'nearby_transfer.title'.tr(),
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'nearby_transfer.close'.tr(),
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop(NearbyTransferEntryStage.receive);
+              },
+              icon: const Icon(Icons.download_rounded),
+              label: Text('nearby_transfer.receive_files'.tr()),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            OutlinedButton.icon(
+              onPressed: () {
+                Navigator.of(context).pop(NearbyTransferEntryStage.send);
+              },
+              icon: const Icon(Icons.upload_rounded),
+              label: Text('nearby_transfer.send_files'.tr()),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

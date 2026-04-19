@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_availability_store.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_session_store.dart';
 import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_adapter.dart';
 import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
 
@@ -177,6 +178,130 @@ void main() {
     expect(store.hasActiveConnection, isFalse);
     expect(store.selectedCandidateId, isNull);
   });
+
+  test(
+    'duplicate taps on the same candidate are ignored while connection is in progress',
+    () async {
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.0.20',
+          macAddress: 'aa:bb:cc:00:00:20',
+          deviceName: 'Peer A',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 45321,
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      final candidate = store.candidateDevices.single;
+
+      await store.connectToCandidate(candidate);
+      await store.connectToCandidate(candidate);
+
+      expect(lanAdapter.connectCalls, 1);
+      expect(store.selectedCandidateId, candidate.id);
+      expect(store.phase, NearbyTransferSessionPhase.connecting);
+    },
+  );
+
+  test(
+    'qr-based receive connection auto-accepts handshake without manual code choice',
+    () async {
+      final senderLanAdapter = FakeNearbyTransferTransportAdapter(
+        hostingPort: 47890,
+      );
+      final receiverLanAdapter = FakeNearbyTransferTransportAdapter();
+      final senderStore = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: senderLanAdapter,
+        localDeviceId: 'sender-device',
+        localDeviceName: 'Sender',
+        localIp: '192.168.0.44',
+      );
+      final receiverStore = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: receiverLanAdapter,
+        localDeviceId: 'receiver-device',
+        localDeviceName: 'Receiver',
+        localIp: '192.168.0.55',
+      );
+      addTearDown(senderStore.dispose);
+      addTearDown(receiverStore.dispose);
+
+      await senderStore.prepareSendFlow();
+      await receiverStore.prepareReceiveFlow();
+      await receiverStore.handleQrPayloadText(senderStore.qrPayloadText!);
+
+      receiverLanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'sender-device',
+            displayName: 'Sender',
+            host: '192.168.0.44',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      receiverLanAdapter.emit(
+        const NearbyTransferHandshakeOfferEvent(
+          verificationCode: <String>['1', '2', '3', '4', '5', '6'],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(receiverLanAdapter.sendHandshakeAcceptedCalls, 1);
+      expect(receiverStore.phase, NearbyTransferSessionPhase.connected);
+      expect(receiverStore.handshakeChallenge, isNull);
+      expect(receiverStore.bannerMessage, 'Соединение подтверждено.');
+    },
+  );
+
+  test(
+    'remote disconnect closes sender session instead of returning to wait',
+    () async {
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareSendFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasActiveConnection, isTrue);
+
+      lanAdapter.emit(
+        const NearbyTransferDisconnectedEvent(message: 'Соединение закрыто.'),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.hasActiveConnection, isFalse);
+      expect(store.peer, isNull);
+      expect(store.phase, NearbyTransferSessionPhase.idle);
+      expect(store.bannerMessage, 'Соединение закрыто.');
+    },
+  );
 
   test(
     'incoming nearby offer stays in listing state until receiver explicitly downloads selected files',

@@ -94,6 +94,7 @@ void main() {
 
       expect(find.text('Выбрать файлы'), findsOneWidget);
       expect(find.text('Выбрать папку'), findsOneWidget);
+      expect(find.byKey(const Key('nearby-transfer-qr-image')), findsNothing);
       expect(lanAdapter.sendHandshakeOfferCalls, 1);
       expect(lanAdapter.lastVerificationCode, hasLength(6));
 

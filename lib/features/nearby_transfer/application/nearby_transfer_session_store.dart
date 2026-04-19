@@ -89,6 +89,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   Set<String> _selectedIncomingFileIds = <String>{};
   String? _previewingFileId;
   NearbyTransferRemoteFilePreview? _activeIncomingPreview;
+  bool _autoAcceptPendingHandshake = false;
   final Map<String, Completer<NearbyTransferRemoteFilePreview?>>
   _pendingPreviewRequests =
       <String, Completer<NearbyTransferRemoteFilePreview?>>{};
@@ -250,6 +251,12 @@ class NearbyTransferSessionStore extends ChangeNotifier {
         port == null) {
       return;
     }
+    if (_phase == NearbyTransferSessionPhase.connecting ||
+        _phase == NearbyTransferSessionPhase.awaitingHandshake ||
+        _phase == NearbyTransferSessionPhase.connected ||
+        _phase == NearbyTransferSessionPhase.transferring) {
+      return;
+    }
     _selectedCandidateId = candidate.id;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
@@ -278,6 +285,13 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (adapter == null) {
       return;
     }
+    if (_phase == NearbyTransferSessionPhase.connecting ||
+        _phase == NearbyTransferSessionPhase.awaitingHandshake ||
+        _phase == NearbyTransferSessionPhase.connected ||
+        _phase == NearbyTransferSessionPhase.transferring) {
+      return;
+    }
+    _autoAcceptPendingHandshake = true;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
     await adapter.connectToSession(
@@ -466,12 +480,22 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _handshakeChallenge = _handshakeService.buildChallenge(
         event.verificationCode,
       );
+      if (_autoAcceptPendingHandshake) {
+        _handshakeChallenge = null;
+        _autoAcceptPendingHandshake = false;
+        _phase = NearbyTransferSessionPhase.connected;
+        _setBanner('Соединение подтверждено.');
+        notifyListeners();
+        await _activeAdapter?.sendHandshakeAccepted();
+        return;
+      }
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
       _setBanner('Выберите совпадающий цифровой код.');
       notifyListeners();
       return;
     }
     if (event is NearbyTransferHandshakeAcceptedEvent) {
+      _autoAcceptPendingHandshake = false;
       _phase = NearbyTransferSessionPhase.connected;
       _handshakeChallenge = null;
       _setBanner('Соединение подтверждено.');
@@ -519,9 +543,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferDisconnectedEvent) {
       _clearConnectionState();
-      _phase = _role == NearbyTransferRole.send
-          ? NearbyTransferSessionPhase.waitingForPeer
-          : NearbyTransferSessionPhase.idle;
+      _phase = NearbyTransferSessionPhase.idle;
       _setBanner(event.message ?? 'Соединение закрыто.');
       notifyListeners();
       return;
@@ -560,12 +582,14 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _handshakeChallenge = null;
     _qrPayloadText = null;
     _hasCompletedOutgoingTransfer = false;
+    _autoAcceptPendingHandshake = false;
   }
 
   void _clearConnectionState() {
     _availabilityStore.clear();
     _peer = null;
     _handshakeChallenge = null;
+    _autoAcceptPendingHandshake = false;
     _transferCompletedBytes = 0;
     _transferTotalBytes = 0;
     _incomingOffer = null;
