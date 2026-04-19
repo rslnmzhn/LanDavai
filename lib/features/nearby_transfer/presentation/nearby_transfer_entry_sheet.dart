@@ -33,21 +33,57 @@ Future<void> showNearbyTransferEntrySheet({
   if (!context.mounted) {
     return;
   }
-  await showModalBottomSheet<void>(
-    context: context,
-    isDismissible: false,
-    enableDrag: false,
-    isScrollControlled: true,
-    builder: (context) {
-      return FractionallySizedBox(
-        heightFactor: 0.92,
-        child: NearbyTransferEntrySheet(
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (context) {
+        return NearbyTransferFlowPage(
           store: sessionStore,
           initialStage: selectedStage,
+        );
+      },
+    ),
+  );
+}
+
+class NearbyTransferFlowPage extends StatelessWidget {
+  const NearbyTransferFlowPage({
+    required this.store,
+    required this.initialStage,
+    super.key,
+  });
+
+  final NearbyTransferSessionStore store;
+  final NearbyTransferEntryStage initialStage;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const Key('nearby-transfer-fullscreen-page'),
+      body: SafeArea(
+        child: NearbyTransferEntrySheet(
+          store: store,
+          initialStage: initialStage,
           showMenuStage: false,
         ),
-      );
-    },
+      ),
+    );
+  }
+}
+
+Future<void> showNearbyTransferFlowPage({
+  required BuildContext context,
+  required NearbyTransferSessionStore sessionStore,
+  required NearbyTransferEntryStage initialStage,
+}) async {
+  await Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (context) {
+        return NearbyTransferFlowPage(
+          store: sessionStore,
+          initialStage: initialStage,
+        );
+      },
+    ),
   );
 }
 
@@ -252,46 +288,50 @@ class _NearbyTransferModeChooserSheet extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.md,
+          AppSpacing.sm,
           AppSpacing.md,
           AppSpacing.md,
-          AppSpacing.lg,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'nearby_transfer.title'.tr(),
-                    style: Theme.of(context).textTheme.titleLarge,
+        child: DecoratedBox(
+          key: const Key('nearby-transfer-launcher-sheet'),
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'nearby_transfer.title'.tr(),
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
                   ),
-                ),
-                IconButton(
-                  tooltip: 'nearby_transfer.close'.tr(),
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            FilledButton.icon(
-              onPressed: () {
-                Navigator.of(context).pop(NearbyTransferEntryStage.receive);
-              },
-              icon: const Icon(Icons.download_rounded),
-              label: Text('nearby_transfer.receive_files'.tr()),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            OutlinedButton.icon(
-              onPressed: () {
-                Navigator.of(context).pop(NearbyTransferEntryStage.send);
-              },
-              icon: const Icon(Icons.upload_rounded),
-              label: Text('nearby_transfer.send_files'.tr()),
-            ),
-          ],
+                  IconButton(
+                    tooltip: 'nearby_transfer.close'.tr(),
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              FilledButton.icon(
+                onPressed: () {
+                  Navigator.of(context).pop(NearbyTransferEntryStage.receive);
+                },
+                icon: const Icon(Icons.download_rounded),
+                label: Text('nearby_transfer.receive_files'.tr()),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.of(context).pop(NearbyTransferEntryStage.send);
+                },
+                icon: const Icon(Icons.upload_rounded),
+                label: Text('nearby_transfer.send_files'.tr()),
+              ),
+            ],
+          ),
         ),
       ),
     );
