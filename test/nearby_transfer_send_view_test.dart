@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
@@ -34,10 +36,70 @@ void main() {
           lastSeen: DateTime(2026, 1, 1, 10),
         ),
       ]);
-      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final prepareCompletion = Completer<void>();
+      final lanAdapter = FakeNearbyTransferTransportAdapter(
+        onSendSelection: (adapter, selection) async {
+          adapter.emit(
+            NearbyTransferSelectionPreparationStartedEvent(
+              label: selection.label,
+              totalItemCount: selection.entries.length,
+              totalBytes: selection.entries.fold<int>(
+                0,
+                (sum, entry) => sum + entry.sizeBytes,
+              ),
+            ),
+          );
+          adapter.emit(
+            const NearbyTransferSelectionPreparationProgressEvent(
+              label: 'Trip',
+              completedItemCount: 1,
+              totalItemCount: 2,
+              preparedBytes: 2048,
+              totalBytes: 2176,
+              currentRelativePath: 'Trip/photo.png',
+            ),
+          );
+          await prepareCompletion.future;
+          adapter.emit(
+            const NearbyTransferSelectionPreparationCompletedEvent(
+              requestId: 'offer-1',
+              label: 'Trip',
+              totalItemCount: 2,
+              totalBytes: 2176,
+            ),
+          );
+        },
+      );
       final store = buildTestNearbyTransferStore(
         readModel: harness.readModel,
         lanAdapter: lanAdapter,
+        filePicker: StubNearbyTransferFilePicker(
+          fileSelection: const NearbyTransferSelection(
+            label: 'Trip',
+            entries: <NearbyTransferPickedEntry>[
+              NearbyTransferPickedEntry(
+                sourcePath: '/tmp/Trip/photo.png',
+                relativePath: 'Trip/photo.png',
+                sizeBytes: 2048,
+              ),
+              NearbyTransferPickedEntry(
+                sourcePath: '/tmp/Trip/docs/notes.txt',
+                relativePath: 'Trip/docs/notes.txt',
+                sizeBytes: 128,
+              ),
+            ],
+          ),
+          directorySelection: const NearbyTransferSelection(
+            label: 'Trip',
+            entries: <NearbyTransferPickedEntry>[
+              NearbyTransferPickedEntry(
+                sourcePath: '/tmp/Trip/photo.png',
+                relativePath: 'Trip/photo.png',
+                sizeBytes: 2048,
+              ),
+            ],
+          ),
+        ),
       );
       addTearDown(store.dispose);
       addTearDown(() async {
@@ -94,8 +156,29 @@ void main() {
 
       expect(find.text('Выбрать файлы'), findsOneWidget);
       expect(find.text('Выбрать папку'), findsOneWidget);
+      expect(find.byKey(const Key('nearby-transfer-qr-image')), findsNothing);
       expect(lanAdapter.sendHandshakeOfferCalls, 1);
-      expect(lanAdapter.lastVerificationCode, hasLength(6));
+      expect(lanAdapter.lastVerificationCode, hasLength(2));
+      expect(store.outgoingSelectionLabel, isNull);
+
+      await tester.tap(find.text('Выбрать файлы'));
+      await _pumpForUi(tester, frames: 2);
+
+      expect(find.text('Выбрано для отправки'), findsOneWidget);
+      expect(find.text('Trip'), findsWidgets);
+      expect(find.text('Подготавливаем 1 из 2 элементов...'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('photo.png'), findsNothing);
+
+      prepareCompletion.complete();
+      await _pumpForUi(tester);
+
+      expect(find.text('Trip'), findsWidgets);
+      expect(find.text('Выбрано для отправки'), findsOneWidget);
+      expect(find.byType(Chip), findsAtLeastNWidgets(1));
+      expect(store.isPreparingOutgoingSelection, isFalse);
+      expect(store.outgoingSelectionRoots, <String>['Trip']);
+      expect(store.outgoingSelectionItemCount, 2);
 
       await store.resetForEntrySelection();
       await tester.pumpWidget(const SizedBox.shrink());

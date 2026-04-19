@@ -81,18 +81,34 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   String? _qrPayloadText;
   String? _sessionId;
   List<String> _verificationCode = const <String>[];
-  NearbyTransferHandshakeChallenge? _handshakeChallenge;
+  DateTime? _handshakeExpiresAt;
+  DateTime? _handshakeCooldownUntil;
+  int _handshakeFailedAttempts = 0;
   int _transferCompletedBytes = 0;
   int _transferTotalBytes = 0;
   bool _hasCompletedOutgoingTransfer = false;
+  String? _outgoingSelectionLabel;
+  List<String> _outgoingSelectionRoots = const <String>[];
+  int _outgoingSelectionItemCount = 0;
+  int _outgoingSelectionTotalBytes = 0;
+  bool _isPreparingOutgoingSelection = false;
+  int _outgoingPreparationCompletedItemCount = 0;
+  int _outgoingPreparationTotalItemCount = 0;
+  String? _outgoingPreparationCurrentPath;
   NearbyTransferIncomingSelectionOfferedEvent? _incomingOffer;
   Set<String> _selectedIncomingFileIds = <String>{};
+  Map<String, NearbyTransferRemoteOfferNode> _incomingNodesById =
+      <String, NearbyTransferRemoteOfferNode>{};
+  Map<String, String?> _incomingParentById = <String, String?>{};
+  String? _currentIncomingDirectoryId;
   String? _previewingFileId;
   NearbyTransferRemoteFilePreview? _activeIncomingPreview;
+  bool _autoAcceptPendingHandshake = false;
   final Map<String, Completer<NearbyTransferRemoteFilePreview?>>
   _pendingPreviewRequests =
       <String, Completer<NearbyTransferRemoteFilePreview?>>{};
   bool _disposed = false;
+  Timer? _handshakeStateTimer;
 
   NearbyTransferMode? get mode => _mode;
 
@@ -116,8 +132,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   List<String> get verificationCode =>
       List<String>.unmodifiable(_verificationCode);
 
-  NearbyTransferHandshakeChallenge? get handshakeChallenge =>
-      _handshakeChallenge;
+  DateTime? get handshakeExpiresAt => _handshakeExpiresAt;
+
+  bool get isHandshakeCoolingDown =>
+      _handshakeService.isCoolingDown(_handshakeCooldownUntil);
+
+  int get handshakeCooldownRemainingSeconds =>
+      _handshakeService.remainingCooldownSeconds(_handshakeCooldownUntil);
+
+  bool get canSubmitHandshakeCode =>
+      _phase == NearbyTransferSessionPhase.awaitingHandshake &&
+      !_handshakeService.isExpired(_handshakeExpiresAt) &&
+      !isHandshakeCoolingDown;
 
   bool get liveQrScannerSupported =>
       _capabilities?.liveQrScannerSupported ?? false;
@@ -139,13 +165,68 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   bool get shouldShowSendMore =>
       _role == NearbyTransferRole.send && _hasCompletedOutgoingTransfer;
 
+  String? get outgoingSelectionLabel => _outgoingSelectionLabel;
+
+  List<String> get outgoingSelectionRoots =>
+      List<String>.unmodifiable(_outgoingSelectionRoots);
+
+  int get outgoingSelectionItemCount => _outgoingSelectionItemCount;
+
+  int get outgoingSelectionTotalBytes => _outgoingSelectionTotalBytes;
+
+  bool get hasOutgoingSelection => _outgoingSelectionLabel != null;
+
+  bool get isPreparingOutgoingSelection => _isPreparingOutgoingSelection;
+
+  String? get outgoingPreparationCurrentPath => _outgoingPreparationCurrentPath;
+
+  double? get outgoingPreparationProgress {
+    if (_outgoingPreparationTotalItemCount <= 0) {
+      return null;
+    }
+    return (_outgoingPreparationCompletedItemCount /
+            _outgoingPreparationTotalItemCount)
+        .clamp(0.0, 1.0);
+  }
+
+  int get outgoingPreparationCompletedItemCount =>
+      _outgoingPreparationCompletedItemCount;
+
+  int get outgoingPreparationTotalItemCount =>
+      _outgoingPreparationTotalItemCount;
+
   NearbyTransferIncomingSelectionOfferedEvent? get incomingOffer =>
       _incomingOffer;
+
+  List<NearbyTransferRemoteOfferNode> get incomingRoots =>
+      List<NearbyTransferRemoteOfferNode>.unmodifiable(
+        _incomingOffer?.roots ?? const <NearbyTransferRemoteOfferNode>[],
+      );
 
   List<NearbyTransferRemoteFileDescriptor> get incomingFiles =>
       List<NearbyTransferRemoteFileDescriptor>.unmodifiable(
         _incomingOffer?.files ?? const <NearbyTransferRemoteFileDescriptor>[],
       );
+
+  NearbyTransferRemoteOfferNode? get currentIncomingDirectory {
+    final nodeId = _currentIncomingDirectoryId;
+    if (nodeId == null) {
+      return null;
+    }
+    return _incomingNodesById[nodeId];
+  }
+
+  List<NearbyTransferRemoteOfferNode> get visibleIncomingNodes {
+    final currentDirectory = currentIncomingDirectory;
+    if (currentDirectory == null) {
+      return incomingRoots;
+    }
+    return List<NearbyTransferRemoteOfferNode>.unmodifiable(
+      currentDirectory.children,
+    );
+  }
+
+  bool get canNavigateIncomingUp => _currentIncomingDirectoryId != null;
 
   Set<String> get selectedIncomingFileIds =>
       Set<String>.unmodifiable(_selectedIncomingFileIds);
@@ -156,6 +237,25 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool isIncomingFileSelected(String fileId) =>
       _selectedIncomingFileIds.contains(fileId);
+
+  bool isIncomingNodeSelected(String nodeId) {
+    final fileIds = _incomingFileIdsForNode(nodeId);
+    if (fileIds.isEmpty) {
+      return false;
+    }
+    return fileIds.every(_selectedIncomingFileIds.contains);
+  }
+
+  bool isIncomingNodePartiallySelected(String nodeId) {
+    final fileIds = _incomingFileIdsForNode(nodeId);
+    if (fileIds.isEmpty) {
+      return false;
+    }
+    final selectedCount = fileIds
+        .where(_selectedIncomingFileIds.contains)
+        .length;
+    return selectedCount > 0 && selectedCount < fileIds.length;
+  }
 
   bool isPreviewLoading(String fileId) => _previewingFileId == fileId;
 
@@ -250,6 +350,12 @@ class NearbyTransferSessionStore extends ChangeNotifier {
         port == null) {
       return;
     }
+    if (_phase == NearbyTransferSessionPhase.connecting ||
+        _phase == NearbyTransferSessionPhase.awaitingHandshake ||
+        _phase == NearbyTransferSessionPhase.connected ||
+        _phase == NearbyTransferSessionPhase.transferring) {
+      return;
+    }
     _selectedCandidateId = candidate.id;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
@@ -278,6 +384,13 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (adapter == null) {
       return;
     }
+    if (_phase == NearbyTransferSessionPhase.connecting ||
+        _phase == NearbyTransferSessionPhase.awaitingHandshake ||
+        _phase == NearbyTransferSessionPhase.connected ||
+        _phase == NearbyTransferSessionPhase.transferring) {
+      return;
+    }
+    _autoAcceptPendingHandshake = true;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
     await adapter.connectToSession(
@@ -290,21 +403,58 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   Future<void> selectHandshakeChoice(List<String> choice) async {
-    final expectedCode = _verificationCode;
-    if (expectedCode.isEmpty) {
+    await submitHandshakeCode(choice.join());
+  }
+
+  Future<void> submitHandshakeCode(String rawInput) async {
+    if (_verificationCode.isEmpty ||
+        _phase != NearbyTransferSessionPhase.awaitingHandshake) {
       return;
     }
-    final isValid = _handshakeService.isValidChoice(
-      expectedCode: expectedCode,
-      selectedChoice: choice,
+    final sanitizedCode = _handshakeService.sanitizeCodeInput(rawInput);
+    if (_handshakeService.isExpired(_handshakeExpiresAt)) {
+      await _invalidateHandshakeSession(
+        'Код подтверждения истёк. Подключитесь заново.',
+      );
+      return;
+    }
+    if (isHandshakeCoolingDown) {
+      _setBanner(
+        'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+        isError: true,
+      );
+      notifyListeners();
+      return;
+    }
+    if (sanitizedCode.length != 2) {
+      _setBanner('Введите двухзначный код.', isError: true);
+      notifyListeners();
+      return;
+    }
+    final isValid = _handshakeService.isValidCode(
+      expectedCode: _verificationCode,
+      enteredCode: sanitizedCode,
     );
     if (!isValid) {
-      _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
+      _handshakeFailedAttempts += 1;
+      if (_handshakeFailedAttempts >=
+          _handshakeService.maxAttemptsBeforeCooldown) {
+        _handshakeFailedAttempts = 0;
+        _handshakeCooldownUntil = _handshakeService.createCooldownUntil();
+        _setBanner(
+          'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+          isError: true,
+        );
+      } else {
+        _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
+      }
+      notifyListeners();
       return;
     }
 
     await _activeAdapter?.sendHandshakeAccepted();
     _phase = NearbyTransferSessionPhase.connected;
+    _clearHandshakeValidationState();
     _setBanner('Соединение подтверждено.');
     notifyListeners();
   }
@@ -326,16 +476,45 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   void toggleIncomingFileSelection(String fileId, bool isSelected) {
+    toggleIncomingNodeSelection(fileId, isSelected);
+  }
+
+  void toggleIncomingNodeSelection(String nodeId, bool isSelected) {
     if (_incomingOffer == null) {
       return;
     }
+    final affectedFileIds = _incomingFileIdsForNode(nodeId);
+    if (affectedFileIds.isEmpty) {
+      return;
+    }
     if (isSelected) {
-      _selectedIncomingFileIds = <String>{..._selectedIncomingFileIds, fileId};
+      _selectedIncomingFileIds = <String>{
+        ..._selectedIncomingFileIds,
+        ...affectedFileIds,
+      };
     } else {
       final next = Set<String>.from(_selectedIncomingFileIds);
-      next.remove(fileId);
+      next.removeAll(affectedFileIds);
       _selectedIncomingFileIds = next;
     }
+    notifyListeners();
+  }
+
+  void openIncomingDirectory(String nodeId) {
+    final node = _incomingNodesById[nodeId];
+    if (node == null || !node.isDirectory) {
+      return;
+    }
+    _currentIncomingDirectoryId = nodeId;
+    notifyListeners();
+  }
+
+  void navigateIncomingUp() {
+    final currentDirectoryId = _currentIncomingDirectoryId;
+    if (currentDirectoryId == null) {
+      return;
+    }
+    _currentIncomingDirectoryId = _incomingParentById[currentDirectoryId];
     notifyListeners();
   }
 
@@ -450,10 +629,43 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   Future<void> _handleTransportEvent(NearbyTransferTransportEvent event) async {
+    if (event is NearbyTransferSelectionPreparationStartedEvent) {
+      _isPreparingOutgoingSelection = true;
+      _outgoingPreparationCompletedItemCount = 0;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = null;
+      _setBanner('Готовим список файлов для отправки...');
+      notifyListeners();
+      return;
+    }
+    if (event is NearbyTransferSelectionPreparationProgressEvent) {
+      _isPreparingOutgoingSelection = true;
+      _outgoingPreparationCompletedItemCount = event.completedItemCount;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = event.currentRelativePath;
+      _setBanner('Подготавливаем файлы для отправки...');
+      notifyListeners();
+      return;
+    }
+    if (event is NearbyTransferSelectionPreparationCompletedEvent) {
+      _isPreparingOutgoingSelection = false;
+      _outgoingPreparationCompletedItemCount = event.totalItemCount;
+      _outgoingPreparationTotalItemCount = event.totalItemCount;
+      _outgoingPreparationCurrentPath = null;
+      _setBanner(
+        'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+      );
+      notifyListeners();
+      return;
+    }
     if (event is NearbyTransferConnectedEvent) {
       _peer = event.peer;
       _sessionId = event.sessionId;
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
+      _handshakeExpiresAt = _handshakeService.createExpiryTime();
+      _handshakeCooldownUntil = null;
+      _handshakeFailedAttempts = 0;
+      _startHandshakeStateTimer();
       if (_role == NearbyTransferRole.send) {
         await _activeAdapter?.sendHandshakeOffer(_verificationCode);
         _setBanner('Подтвердите цифровой код на втором устройстве.');
@@ -463,24 +675,37 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferHandshakeOfferEvent) {
       _verificationCode = List<String>.unmodifiable(event.verificationCode);
-      _handshakeChallenge = _handshakeService.buildChallenge(
-        event.verificationCode,
-      );
+      _handshakeExpiresAt = _handshakeService.createExpiryTime();
+      _handshakeCooldownUntil = null;
+      _handshakeFailedAttempts = 0;
+      _startHandshakeStateTimer();
+      if (_autoAcceptPendingHandshake) {
+        _autoAcceptPendingHandshake = false;
+        _phase = NearbyTransferSessionPhase.connected;
+        _clearHandshakeValidationState();
+        _setBanner('Соединение подтверждено.');
+        notifyListeners();
+        await _activeAdapter?.sendHandshakeAccepted();
+        return;
+      }
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
       _setBanner('Выберите совпадающий цифровой код.');
       notifyListeners();
       return;
     }
     if (event is NearbyTransferHandshakeAcceptedEvent) {
+      _autoAcceptPendingHandshake = false;
       _phase = NearbyTransferSessionPhase.connected;
-      _handshakeChallenge = null;
+      _clearHandshakeValidationState();
       _setBanner('Соединение подтверждено.');
       notifyListeners();
       return;
     }
     if (event is NearbyTransferIncomingSelectionOfferedEvent) {
       _incomingOffer = event;
+      _rebuildIncomingOfferIndex(event.roots);
       _selectedIncomingFileIds = event.files.map((file) => file.id).toSet();
+      _currentIncomingDirectoryId = null;
       _activeIncomingPreview = null;
       _phase = NearbyTransferSessionPhase.connected;
       _setBanner('Выберите файлы для загрузки.');
@@ -519,9 +744,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferDisconnectedEvent) {
       _clearConnectionState();
-      _phase = _role == NearbyTransferRole.send
-          ? NearbyTransferSessionPhase.waitingForPeer
-          : NearbyTransferSessionPhase.idle;
+      _phase = NearbyTransferSessionPhase.idle;
       _setBanner(event.message ?? 'Соединение закрыто.');
       notifyListeners();
       return;
@@ -536,10 +759,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (!canSendFiles) {
       return;
     }
-    _phase = NearbyTransferSessionPhase.connected;
-    _setBanner(
-      'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+    _outgoingSelectionLabel = selection.label;
+    _outgoingSelectionRoots = _collectOutgoingSelectionRoots(selection);
+    _outgoingSelectionItemCount = selection.entries.length;
+    _outgoingSelectionTotalBytes = selection.entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
     );
+    _isPreparingOutgoingSelection = true;
+    _outgoingPreparationCompletedItemCount = 0;
+    _outgoingPreparationTotalItemCount = selection.entries.length;
+    _outgoingPreparationCurrentPath = null;
+    _phase = NearbyTransferSessionPhase.connected;
+    _setBanner('Готовим список файлов для отправки...');
     notifyListeners();
     await _activeAdapter?.sendSelection(selection);
   }
@@ -557,19 +789,26 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   void _resetSessionIdentity() {
     _sessionId = 'nearby-${DateTime.now().microsecondsSinceEpoch}';
     _verificationCode = _handshakeService.createVerificationCode();
-    _handshakeChallenge = null;
+    _handshakeExpiresAt = _handshakeService.createExpiryTime();
+    _handshakeCooldownUntil = null;
+    _handshakeFailedAttempts = 0;
     _qrPayloadText = null;
     _hasCompletedOutgoingTransfer = false;
+    _autoAcceptPendingHandshake = false;
   }
 
   void _clearConnectionState() {
     _availabilityStore.clear();
     _peer = null;
-    _handshakeChallenge = null;
+    _clearHandshakeValidationState();
+    _autoAcceptPendingHandshake = false;
     _transferCompletedBytes = 0;
     _transferTotalBytes = 0;
     _incomingOffer = null;
     _selectedIncomingFileIds = <String>{};
+    _incomingNodesById = <String, NearbyTransferRemoteOfferNode>{};
+    _incomingParentById = <String, String?>{};
+    _currentIncomingDirectoryId = null;
     _activeIncomingPreview = null;
     _previewingFileId = null;
     for (final completer in _pendingPreviewRequests.values) {
@@ -581,11 +820,120 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _selectedCandidateId = null;
     _candidateRefreshTimer?.cancel();
     _candidateRefreshTimer = null;
+    _isPreparingOutgoingSelection = false;
+    _outgoingPreparationCompletedItemCount = 0;
+    _outgoingPreparationTotalItemCount = 0;
+    _outgoingPreparationCurrentPath = null;
+    _outgoingSelectionLabel = null;
+    _outgoingSelectionRoots = const <String>[];
+    _outgoingSelectionItemCount = 0;
+    _outgoingSelectionTotalBytes = 0;
+  }
+
+  void _clearHandshakeValidationState() {
+    _handshakeExpiresAt = null;
+    _handshakeCooldownUntil = null;
+    _handshakeFailedAttempts = 0;
+    _handshakeStateTimer?.cancel();
+    _handshakeStateTimer = null;
+  }
+
+  void _startHandshakeStateTimer() {
+    _handshakeStateTimer?.cancel();
+    _handshakeStateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_phase != NearbyTransferSessionPhase.awaitingHandshake) {
+        _handshakeStateTimer?.cancel();
+        _handshakeStateTimer = null;
+        return;
+      }
+      if (_handshakeService.isExpired(_handshakeExpiresAt)) {
+        unawaited(
+          _invalidateHandshakeSession(
+            'Код подтверждения истёк. Подключитесь заново.',
+          ),
+        );
+        return;
+      }
+      if (_handshakeCooldownUntil != null &&
+          !_handshakeService.isCoolingDown(_handshakeCooldownUntil)) {
+        _handshakeCooldownUntil = null;
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<void> _invalidateHandshakeSession(String message) async {
+    await _activeAdapter?.disconnect();
+    _clearConnectionState();
+    _phase = NearbyTransferSessionPhase.idle;
+    _setBanner(message, isError: true);
+    notifyListeners();
   }
 
   void _setBanner(String? message, {bool isError = false}) {
     _bannerMessage = message;
     _bannerIsError = isError;
+  }
+
+  void _rebuildIncomingOfferIndex(List<NearbyTransferRemoteOfferNode> roots) {
+    final nodesById = <String, NearbyTransferRemoteOfferNode>{};
+    final parentById = <String, String?>{};
+    void visit(
+      NearbyTransferRemoteOfferNode node, {
+      required String? parentId,
+    }) {
+      nodesById[node.id] = node;
+      parentById[node.id] = parentId;
+      for (final child in node.children) {
+        visit(child, parentId: node.id);
+      }
+    }
+
+    for (final root in roots) {
+      visit(root, parentId: null);
+    }
+    _incomingNodesById = nodesById;
+    _incomingParentById = parentById;
+  }
+
+  List<String> _incomingFileIdsForNode(String nodeId) {
+    final node = _incomingNodesById[nodeId];
+    if (node == null) {
+      return const <String>[];
+    }
+    final fileIds = <String>[];
+    void collect(NearbyTransferRemoteOfferNode current) {
+      if (current.isFile) {
+        fileIds.add(current.id);
+        return;
+      }
+      for (final child in current.children) {
+        collect(child);
+      }
+    }
+
+    collect(node);
+    return fileIds;
+  }
+
+  List<String> _collectOutgoingSelectionRoots(
+    NearbyTransferSelection selection,
+  ) {
+    final roots = <String>[];
+    for (final entry in selection.entries) {
+      final segments = entry.relativePath
+          .split(RegExp(r'[\\/]'))
+          .where((segment) => segment.trim().isNotEmpty)
+          .toList(growable: false);
+      if (segments.isEmpty) {
+        continue;
+      }
+      final root = segments.first;
+      if (!roots.contains(root)) {
+        roots.add(root);
+      }
+    }
+    return List<String>.unmodifiable(roots);
   }
 
   @override
@@ -596,6 +944,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _disposed = true;
     _availabilityStore.clear();
     _candidateRefreshTimer?.cancel();
+    _handshakeStateTimer?.cancel();
     _transportSubscription?.cancel();
     _wifiDirectTransportAdapter.dispose();
     _lanNearbyTransportAdapter.dispose();

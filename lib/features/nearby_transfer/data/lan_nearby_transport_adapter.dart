@@ -129,10 +129,25 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       throw StateError('Nearby transfer is not connected.');
     }
 
+    final totalItemCount = selection.entries.length;
+    final totalBytes = selection.entries.fold<int>(
+      0,
+      (sum, entry) => sum + entry.sizeBytes,
+    );
+    _events.add(
+      NearbyTransferSelectionPreparationStartedEvent(
+        label: selection.label,
+        totalItemCount: totalItemCount,
+        totalBytes: totalBytes,
+      ),
+    );
+
     final requestId = _fileHashService.buildStableId(
       '$sessionId-${DateTime.now().microsecondsSinceEpoch}',
     );
     final entries = <_PendingOutgoingOfferEntry>[];
+    var preparedBytes = 0;
+    var completedItemCount = 0;
     for (final entry in selection.entries) {
       final sha256 = await _fileHashService.computeSha256ForPath(
         entry.sourcePath,
@@ -161,20 +176,45 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           previewKind: previewKind,
         ),
       );
+      completedItemCount += 1;
+      preparedBytes += entry.sizeBytes;
+      _events.add(
+        NearbyTransferSelectionPreparationProgressEvent(
+          label: selection.label,
+          completedItemCount: completedItemCount,
+          totalItemCount: totalItemCount,
+          preparedBytes: preparedBytes,
+          totalBytes: totalBytes,
+          currentRelativePath: entry.relativePath,
+        ),
+      );
     }
 
     _pendingOutgoingOffers[requestId] = _PendingOutgoingOffer(
       requestId: requestId,
       label: selection.label,
       entries: entries,
+      roots: _buildOfferRoots(entries),
     );
+    final offer = _pendingOutgoingOffers[requestId]!;
     await _sendControlMessage(<String, Object?>{
       'type': 'fileOffer',
       'sessionId': sessionId,
       'requestId': requestId,
       'label': selection.label,
       'files': entries.map((entry) => entry.toJson()).toList(growable: false),
+      'roots': offer.roots
+          .map((node) => _offerNodeToJson(node))
+          .toList(growable: false),
     });
+    _events.add(
+      NearbyTransferSelectionPreparationCompletedEvent(
+        requestId: requestId,
+        label: selection.label,
+        totalItemCount: totalItemCount,
+        totalBytes: totalBytes,
+      ),
+    );
   }
 
   @override
@@ -483,12 +523,14 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     final requestId = json['requestId'] as String?;
     final label = json['label'] as String?;
     final rawFiles = json['files'];
+    final rawRoots = json['roots'];
     if (_activeSocket == null ||
         _sessionId == null ||
         sessionId != _sessionId ||
         requestId == null ||
         label == null ||
-        rawFiles is! List<dynamic>) {
+        rawFiles is! List<dynamic> ||
+        rawRoots is! List<dynamic>) {
       return;
     }
 
@@ -503,17 +545,20 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     _pendingIncomingOffers[requestId] = _PendingIncomingOffer(
       requestId: requestId,
       label: label,
+      roots: rawRoots
+          .whereType<Map<String, dynamic>>()
+          .map(_offerNodeFromJson)
+          .toList(growable: false),
       entriesById: <String, _IncomingOfferEntry>{
         for (final entry in offerEntries) entry.remote.id: entry,
       },
     );
+    final offer = _pendingIncomingOffers[requestId]!;
     _events.add(
       NearbyTransferIncomingSelectionOfferedEvent(
         requestId: requestId,
         label: label,
-        files: offerEntries
-            .map((entry) => entry.remote)
-            .toList(growable: false),
+        roots: offer.roots,
       ),
     );
   }
@@ -777,11 +822,13 @@ class _PendingOutgoingOffer {
     required this.requestId,
     required this.label,
     required this.entries,
+    required this.roots,
   });
 
   final String requestId;
   final String label;
   final List<_PendingOutgoingOfferEntry> entries;
+  final List<NearbyTransferRemoteOfferNode> roots;
 
   _PendingOutgoingOfferEntry? entryById(String fileId) {
     for (final entry in entries) {
@@ -821,11 +868,13 @@ class _PendingIncomingOffer {
   const _PendingIncomingOffer({
     required this.requestId,
     required this.label,
+    required this.roots,
     required this.entriesById,
   });
 
   final String requestId;
   final String label;
+  final List<NearbyTransferRemoteOfferNode> roots;
   final Map<String, _IncomingOfferEntry> entriesById;
 }
 
@@ -843,6 +892,7 @@ class _IncomingOfferEntry {
     return _IncomingOfferEntry(
       remote: NearbyTransferRemoteFileDescriptor(
         id: json['id'] as String,
+        name: p.basename(json['fileName'] as String),
         relativePath: json['fileName'] as String,
         sizeBytes: (json['sizeBytes'] as num).toInt(),
         previewKind: previewKind,
@@ -852,6 +902,167 @@ class _IncomingOfferEntry {
         sizeBytes: (json['sizeBytes'] as num).toInt(),
         sha256: json['sha256'] as String,
       ),
+    );
+  }
+}
+
+List<NearbyTransferRemoteOfferNode> _buildOfferRoots(
+  List<_PendingOutgoingOfferEntry> entries,
+) {
+  final roots = <_MutableOfferNode>[];
+  final directoryByPath = <String, _MutableOfferNode>{};
+
+  for (final entry in entries) {
+    final relativePath = entry.manifestItem.fileName;
+    final normalizedSegments = p
+        .split(relativePath)
+        .where((segment) => segment.trim().isNotEmpty)
+        .toList(growable: false);
+    if (normalizedSegments.isEmpty) {
+      continue;
+    }
+
+    var currentChildren = roots;
+    var currentPath = '';
+    for (var index = 0; index < normalizedSegments.length - 1; index += 1) {
+      final segment = normalizedSegments[index];
+      currentPath = currentPath.isEmpty
+          ? segment
+          : p.join(currentPath, segment);
+      final existingDirectory = directoryByPath[currentPath];
+      if (existingDirectory != null) {
+        currentChildren = existingDirectory.children;
+        continue;
+      }
+      final directory = _MutableOfferNode.directory(
+        id: 'dir:$currentPath',
+        name: segment,
+        relativePath: currentPath,
+      );
+      currentChildren.add(directory);
+      directoryByPath[currentPath] = directory;
+      currentChildren = directory.children;
+    }
+
+    final fileName = normalizedSegments.last;
+    currentChildren.add(
+      _MutableOfferNode.file(
+        id: entry.fileId,
+        name: fileName,
+        relativePath: relativePath,
+        sizeBytes: entry.manifestItem.sizeBytes,
+        previewKind: entry.previewKind,
+      ),
+    );
+  }
+
+  return roots.map((node) => node.toImmutable()).toList(growable: false);
+}
+
+Map<String, Object?> _offerNodeToJson(NearbyTransferRemoteOfferNode node) {
+  return <String, Object?>{
+    'id': node.id,
+    'name': node.name,
+    'relativePath': node.relativePath,
+    'kind': node.kind.name,
+    'sizeBytes': node.sizeBytes,
+    'previewKind': node.previewKind.name,
+    'children': node.children
+        .map((child) => _offerNodeToJson(child))
+        .toList(growable: false),
+  };
+}
+
+NearbyTransferRemoteOfferNode _offerNodeFromJson(Map<String, dynamic> json) {
+  final kind = NearbyTransferRemoteOfferNodeKind.values.firstWhere(
+    (value) => value.name == (json['kind'] as String?),
+    orElse: () => NearbyTransferRemoteOfferNodeKind.file,
+  );
+  final previewKind = NearbyTransferRemotePreviewKind.values.firstWhere(
+    (value) => value.name == (json['previewKind'] as String?),
+    orElse: () => NearbyTransferRemotePreviewKind.none,
+  );
+  final children = (json['children'] as List<dynamic>? ?? const <dynamic>[])
+      .whereType<Map<String, dynamic>>()
+      .map(_offerNodeFromJson)
+      .toList(growable: false);
+  return NearbyTransferRemoteOfferNode(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    relativePath: json['relativePath'] as String,
+    kind: kind,
+    sizeBytes: (json['sizeBytes'] as num?)?.toInt() ?? 0,
+    previewKind: previewKind,
+    children: children,
+  );
+}
+
+class _MutableOfferNode {
+  _MutableOfferNode._({
+    required this.id,
+    required this.name,
+    required this.relativePath,
+    required this.kind,
+    required this.sizeBytes,
+    required this.previewKind,
+    List<_MutableOfferNode>? children,
+  }) : children = children ?? <_MutableOfferNode>[];
+
+  factory _MutableOfferNode.directory({
+    required String id,
+    required String name,
+    required String relativePath,
+  }) {
+    return _MutableOfferNode._(
+      id: id,
+      name: name,
+      relativePath: relativePath,
+      kind: NearbyTransferRemoteOfferNodeKind.directory,
+      sizeBytes: 0,
+      previewKind: NearbyTransferRemotePreviewKind.none,
+    );
+  }
+
+  factory _MutableOfferNode.file({
+    required String id,
+    required String name,
+    required String relativePath,
+    required int sizeBytes,
+    required NearbyTransferRemotePreviewKind previewKind,
+  }) {
+    return _MutableOfferNode._(
+      id: id,
+      name: name,
+      relativePath: relativePath,
+      kind: NearbyTransferRemoteOfferNodeKind.file,
+      sizeBytes: sizeBytes,
+      previewKind: previewKind,
+    );
+  }
+
+  final String id;
+  final String name;
+  final String relativePath;
+  final NearbyTransferRemoteOfferNodeKind kind;
+  final int sizeBytes;
+  final NearbyTransferRemotePreviewKind previewKind;
+  final List<_MutableOfferNode> children;
+
+  NearbyTransferRemoteOfferNode toImmutable() {
+    final immutableChildren = children
+        .map((child) => child.toImmutable())
+        .toList(growable: false);
+    final resolvedSize = kind == NearbyTransferRemoteOfferNodeKind.file
+        ? sizeBytes
+        : immutableChildren.fold<int>(0, (sum, child) => sum + child.sizeBytes);
+    return NearbyTransferRemoteOfferNode(
+      id: id,
+      name: name,
+      relativePath: relativePath,
+      kind: kind,
+      sizeBytes: resolvedSize,
+      previewKind: previewKind,
+      children: immutableChildren,
     );
   }
 }

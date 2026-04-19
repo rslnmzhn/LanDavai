@@ -9,6 +9,7 @@ import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_ad
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   test(
@@ -24,7 +25,7 @@ void main() {
       final sendCompleted = Completer<void>();
       final receivedOffer = Completer<List<String>>();
       Object? sendError;
-      const verificationCode = <String>['1', '2', '3', '4', '5', '6'];
+      const verificationCode = <String>['1', '2'];
 
       final senderSubscription = sender.events.listen((event) {
         if (event is NearbyTransferConnectedEvent &&
@@ -87,7 +88,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-1',
-        verificationCode: const <String>['1', '3', '5', '7', '8', '9'],
+        verificationCode: const <String>['1', '3'],
       );
 
       await sender.disconnect();
@@ -96,13 +97,13 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-2',
-        verificationCode: const <String>['0', '2', '4', '6', '8', '9'],
+        verificationCode: const <String>['0', '2'],
       );
     },
   );
 
   test(
-    'receiver gets incoming listing first and sender transfers only explicitly requested files',
+    'receiver gets structured folder offer first and sender transfers only explicitly requested files',
     () async {
       final receiveRoot = await Directory.systemTemp.createTemp(
         'landa_nearby_receive_root_',
@@ -126,8 +127,11 @@ void main() {
         }
       });
 
-      final firstFile = File('${tempDir.path}/photo.png');
-      final secondFile = File('${tempDir.path}/notes.txt');
+      final folder = Directory('${tempDir.path}/Trip');
+      final nested = Directory('${folder.path}/docs');
+      await nested.create(recursive: true);
+      final firstFile = File('${folder.path}/photo.png');
+      final secondFile = File('${nested.path}/notes.txt');
       await firstFile.writeAsBytes(
         Uint8List.fromList(List<int>.filled(16, 42)),
       );
@@ -163,16 +167,16 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await sender.sendSelection(
         NearbyTransferSelection(
-          label: 'Offer',
+          label: 'Trip',
           entries: <NearbyTransferPickedEntry>[
             NearbyTransferPickedEntry(
               sourcePath: firstFile.path,
-              relativePath: 'photo.png',
+              relativePath: 'Trip/photo.png',
               sizeBytes: await firstFile.length(),
             ),
             NearbyTransferPickedEntry(
               sourcePath: secondFile.path,
-              relativePath: 'notes.txt',
+              relativePath: 'Trip/docs/notes.txt',
               sizeBytes: await secondFile.length(),
             ),
           ],
@@ -180,10 +184,19 @@ void main() {
       );
 
       final offer = await offered.future.timeout(const Duration(seconds: 5));
+      expect(offer.roots, hasLength(1));
+      expect(offer.roots.single.name, 'Trip');
+      expect(offer.roots.single.isDirectory, isTrue);
+      expect(offer.roots.single.children, hasLength(2));
+      final docsFolder = offer.roots.single.children.singleWhere(
+        (node) => node.name == 'docs',
+      );
+      expect(docsFolder.isDirectory, isTrue);
+      expect(docsFolder.children.single.name, 'notes.txt');
       expect(offer.files, hasLength(2));
 
       final requestedFile = offer.files.singleWhere(
-        (file) => file.relativePath == 'notes.txt',
+        (file) => file.relativePath == 'Trip/docs/notes.txt',
       );
       await receiver.requestIncomingSelectionDownload(
         requestId: offer.requestId,
@@ -194,7 +207,10 @@ void main() {
         const Duration(seconds: 10),
       );
       expect(result.savedPaths, hasLength(1));
-      expect(result.savedPaths.single, endsWith('notes.txt'));
+      expect(
+        result.savedPaths.single,
+        endsWith(p.join('Trip', 'docs', 'notes.txt')),
+      );
     },
   );
 

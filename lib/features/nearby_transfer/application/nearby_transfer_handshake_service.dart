@@ -1,73 +1,67 @@
 import 'dart:math';
 
-class NearbyTransferHandshakeChallenge {
-  const NearbyTransferHandshakeChallenge({required this.choices});
-
-  final List<List<String>> choices;
-}
-
 class NearbyTransferHandshakeService {
-  NearbyTransferHandshakeService({Random? random})
-    : _random = random ?? Random();
+  NearbyTransferHandshakeService({
+    Random? random,
+    DateTime Function()? now,
+    this.codeLifetime = const Duration(seconds: 30),
+    this.cooldownDuration = const Duration(seconds: 10),
+    this.maxAttemptsBeforeCooldown = 3,
+  }) : _random = random ?? Random(),
+       _now = now ?? DateTime.now;
 
   final Random _random;
-
-  static const List<String> _digitPool = <String>[
-    '0',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '6',
-    '7',
-    '8',
-    '9',
-  ];
+  final DateTime Function() _now;
+  final Duration codeLifetime;
+  final Duration cooldownDuration;
+  final int maxAttemptsBeforeCooldown;
 
   List<String> createVerificationCode() {
-    final pool = List<String>.from(_digitPool);
-    pool.shuffle(_random);
-    return List<String>.unmodifiable(pool.take(6));
+    return List<String>.unmodifiable(<String>[
+      _random.nextInt(10).toString(),
+      _random.nextInt(10).toString(),
+    ]);
   }
 
-  NearbyTransferHandshakeChallenge buildChallenge(List<String> correctCode) {
-    final normalizedCorrect = List<String>.unmodifiable(correctCode);
-    final choices = <List<String>>[normalizedCorrect];
-    while (choices.length < 3) {
-      final candidate = createVerificationCode();
-      if (_sameSequence(candidate, normalizedCorrect)) {
-        continue;
-      }
-      if (choices.any((choice) => _sameSequence(choice, candidate))) {
-        continue;
-      }
-      choices.add(candidate);
-    }
-    choices.shuffle(_random);
-    return NearbyTransferHandshakeChallenge(
-      choices: List<List<String>>.unmodifiable(
-        choices.map(List<String>.unmodifiable),
-      ),
-    );
-  }
+  DateTime createExpiryTime() => _now().add(codeLifetime);
 
-  bool isValidChoice({
-    required List<String> expectedCode,
-    required List<String> selectedChoice,
-  }) {
-    return _sameSequence(expectedCode, selectedChoice);
-  }
+  DateTime createCooldownUntil() => _now().add(cooldownDuration);
 
-  bool _sameSequence(List<String> left, List<String> right) {
-    if (left.length != right.length) {
+  DateTime now() => _now();
+
+  bool isExpired(DateTime? expiresAt) {
+    if (expiresAt == null) {
       return false;
     }
-    for (var index = 0; index < left.length; index += 1) {
-      if (left[index] != right[index]) {
-        return false;
-      }
+    return !_now().isBefore(expiresAt);
+  }
+
+  bool isCoolingDown(DateTime? cooldownUntil) {
+    if (cooldownUntil == null) {
+      return false;
     }
-    return true;
+    return _now().isBefore(cooldownUntil);
+  }
+
+  int remainingCooldownSeconds(DateTime? cooldownUntil) {
+    if (!isCoolingDown(cooldownUntil)) {
+      return 0;
+    }
+    return cooldownUntil!.difference(_now()).inSeconds + 1;
+  }
+
+  bool isValidCode({
+    required List<String> expectedCode,
+    required String enteredCode,
+  }) {
+    return expectedCode.join() == sanitizeCodeInput(enteredCode);
+  }
+
+  String sanitizeCodeInput(String rawInput) {
+    final digitsOnly = rawInput.replaceAll(RegExp(r'\D'), '');
+    if (digitsOnly.length <= 2) {
+      return digitsOnly;
+    }
+    return digitsOnly.substring(0, 2);
   }
 }

@@ -19,6 +19,7 @@ class FakeNearbyTransferTransportAdapter
     this.hostingPort = 45321,
     this.supportsVisibleCandidatePairing = true,
     this.emitDisconnectedOnDisconnect = false,
+    this.onSendSelection,
   });
 
   final bool supported;
@@ -26,6 +27,11 @@ class FakeNearbyTransferTransportAdapter
   final int hostingPort;
   final bool supportsVisibleCandidatePairing;
   final bool emitDisconnectedOnDisconnect;
+  final Future<void> Function(
+    FakeNearbyTransferTransportAdapter adapter,
+    NearbyTransferSelection selection,
+  )?
+  onSendSelection;
 
   final StreamController<NearbyTransferTransportEvent> _events =
       StreamController<NearbyTransferTransportEvent>.broadcast();
@@ -105,6 +111,7 @@ class FakeNearbyTransferTransportAdapter
   Future<void> sendSelection(NearbyTransferSelection selection) async {
     sendSelectionCalls += 1;
     lastSelection = selection;
+    await onSendSelection?.call(this, selection);
   }
 
   @override
@@ -169,6 +176,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
   FakeNearbyTransferTransportAdapter? wifiAdapter,
   FakeNearbyTransferTransportAdapter? lanAdapter,
   NearbyTransferFilePicker? filePicker,
+  NearbyTransferHandshakeService? handshakeService,
   bool wifiDirectSupported = false,
   Duration candidateRefreshInterval = const Duration(seconds: 2),
   String localDeviceId = 'aa:bb:cc:dd:ee:ff',
@@ -181,7 +189,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
       wifiDirectSupported: wifiDirectSupported,
     ),
     modeResolver: const NearbyTransferModeResolver(),
-    handshakeService: NearbyTransferHandshakeService(),
+    handshakeService: handshakeService ?? NearbyTransferHandshakeService(),
     candidateProjection: NearbyTransferCandidateProjection(
       readModel: readModel,
     ),
