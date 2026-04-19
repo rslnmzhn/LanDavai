@@ -136,7 +136,23 @@ void main() {
       expect(find.text('photo.png'), findsOneWidget);
       expect(find.text('report.pdf'), findsOneWidget);
       expect(find.text('Скачать выбранные'), findsOneWidget);
-      expect(find.text('Предпросмотр'), findsOneWidget);
+      expect(find.text('Предпросмотр'), findsNothing);
+      expect(
+        find.byKey(
+          const ValueKey<String>('nearby-transfer-preview-button-image-1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('nearby-transfer-checkbox-image-1')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey<String>('nearby-transfer-preview-badge-image-1'),
+        ),
+        findsOneWidget,
+      );
 
       await store.resetForEntrySelection();
       await tester.pumpWidget(const SizedBox.shrink());

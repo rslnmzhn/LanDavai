@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -73,7 +74,7 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
           border: Border.all(color: AppColors.mutedBorder),
         ),
         child: Text(
-          'Сканирование QR на этом устройстве недоступно. Используйте список устройств ниже.',
+          'nearby_transfer.scanner_unavailable'.tr(),
           style: Theme.of(context).textTheme.bodySmall,
         ),
       );

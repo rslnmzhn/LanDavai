@@ -74,7 +74,7 @@ void main() {
       await _pumpForUi(tester, frames: 12);
 
       expect(find.text('Peer A'), findsOneWidget);
-      expect(find.text('Nearby transfer'), findsOneWidget);
+      expect(find.text('Передача рядом'), findsOneWidget);
 
       await store.resetForEntrySelection();
     },

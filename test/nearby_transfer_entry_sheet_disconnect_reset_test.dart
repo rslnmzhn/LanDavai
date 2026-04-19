@@ -57,7 +57,7 @@ void main() {
       );
       await _pumpForUi(tester);
 
-      expect(find.text('Nearby transfer'), findsOneWidget);
+      expect(find.text('Передача рядом'), findsOneWidget);
       expect(find.text('Принять файлы'), findsOneWidget);
       expect(find.text('Отдать файлы'), findsOneWidget);
 
@@ -99,7 +99,7 @@ void main() {
       );
       await _pumpForUi(tester);
 
-      expect(find.text('Nearby transfer'), findsOneWidget);
+      expect(find.text('Передача рядом'), findsOneWidget);
       expect(find.text('Соединение подтверждено.'), findsNothing);
 
       await tester.tap(find.text('Принять файлы'));

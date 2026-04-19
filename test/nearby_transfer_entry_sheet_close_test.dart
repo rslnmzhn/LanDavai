@@ -55,7 +55,7 @@ void main() {
     await _pumpForUi(tester);
 
     expect(find.text('Разорвать соединение?'), findsNothing);
-    expect(find.text('Nearby transfer'), findsNothing);
+    expect(find.text('Передача рядом'), findsNothing);
 
     await store.resetForEntrySelection();
   });

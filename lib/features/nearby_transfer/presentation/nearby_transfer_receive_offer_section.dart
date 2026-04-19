@@ -80,6 +80,7 @@ class _IncomingFileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final canPreview = file.previewKind != NearbyTransferRemotePreviewKind.none;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppColors.surfaceSoft,
@@ -88,22 +89,42 @@ class _IncomingFileTile extends StatelessWidget {
           color: AppColors.brandAccent.withValues(alpha: 0.35),
         ),
       ),
-      child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.xs,
-        ),
-        leading: Checkbox(
-          value: store.isIncomingFileSelected(file.id),
-          onChanged: (value) {
-            store.toggleIncomingFileSelection(file.id, value ?? false);
-          },
-        ),
-        title: Text(file.relativePath),
-        subtitle: Text(_formatBytes(context, file.sizeBytes)),
-        trailing: file.previewKind == NearbyTransferRemotePreviewKind.none
-            ? null
-            : TextButton.icon(
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.md,
+              60,
+              AppSpacing.md,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _IncomingFilePreviewBadge(file: file),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(file.relativePath),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(_formatBytes(context, file.sizeBytes)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (canPreview)
+            Positioned(
+              top: AppSpacing.xs,
+              right: AppSpacing.xs,
+              child: IconButton(
+                key: ValueKey<String>(
+                  'nearby-transfer-preview-button-${file.id}',
+                ),
+                tooltip: 'common.preview'.tr(),
                 onPressed: store.isPreviewLoading(file.id)
                     ? null
                     : () async {
@@ -123,21 +144,63 @@ class _IncomingFileTile extends StatelessWidget {
                       },
                 icon: store.isPreviewLoading(file.id)
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
+                        width: 18,
+                        height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.visibility_rounded),
-                label: Text('common.preview'.tr()),
               ),
+            ),
+          Positioned(
+            right: AppSpacing.xs,
+            bottom: AppSpacing.xs,
+            child: Checkbox(
+              key: ValueKey<String>('nearby-transfer-checkbox-${file.id}'),
+              value: store.isIncomingFileSelected(file.id),
+              onChanged: (value) {
+                store.toggleIncomingFileSelection(file.id, value ?? false);
+              },
+            ),
+          ),
+        ],
       ),
+    );
+  }
+}
+
+class _IncomingFilePreviewBadge extends StatelessWidget {
+  const _IncomingFilePreviewBadge({required this.file});
+
+  final NearbyTransferRemoteFileDescriptor file;
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = switch (file.previewKind) {
+      NearbyTransferRemotePreviewKind.image => Icons.image_outlined,
+      NearbyTransferRemotePreviewKind.text => Icons.description_outlined,
+      NearbyTransferRemotePreviewKind.none => Icons.insert_drive_file_outlined,
+    };
+    return Container(
+      key: ValueKey<String>('nearby-transfer-preview-badge-${file.id}'),
+      width: 52,
+      height: 52,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(
+          color: AppColors.brandAccent.withValues(alpha: 0.35),
+        ),
+      ),
+      child: Icon(icon, color: AppColors.brandPrimary),
     );
   }
 }
 
 String _formatBytes(BuildContext context, int bytes) {
   if (bytes < 1024) {
-    return 'common.format_size_b'.tr(namedArgs: <String, String>{'value': '$bytes'});
+    return 'common.format_size_b'.tr(
+      namedArgs: <String, String>{'value': '$bytes'},
+    );
   }
   if (bytes < 1024 * 1024) {
     return 'common.format_size_kb'.tr(
