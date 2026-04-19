@@ -24,7 +24,7 @@ void main() {
       final sendCompleted = Completer<void>();
       final receivedOffer = Completer<List<String>>();
       Object? sendError;
-      const verificationCode = <String>['1', '2', '3', '4', '5', '6'];
+      const verificationCode = <String>['1', '2'];
 
       final senderSubscription = sender.events.listen((event) {
         if (event is NearbyTransferConnectedEvent &&
@@ -87,7 +87,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-1',
-        verificationCode: const <String>['1', '3', '5', '7', '8', '9'],
+        verificationCode: const <String>['1', '3'],
       );
 
       await sender.disconnect();
@@ -96,7 +96,7 @@ void main() {
         sender: sender,
         receiver: _buildAdapter(),
         sessionId: 'session-2',
-        verificationCode: const <String>['0', '2', '4', '6', '8', '9'],
+        verificationCode: const <String>['0', '2'],
       );
     },
   );

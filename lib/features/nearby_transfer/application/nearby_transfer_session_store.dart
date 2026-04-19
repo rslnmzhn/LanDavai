@@ -81,7 +81,9 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   String? _qrPayloadText;
   String? _sessionId;
   List<String> _verificationCode = const <String>[];
-  NearbyTransferHandshakeChallenge? _handshakeChallenge;
+  DateTime? _handshakeExpiresAt;
+  DateTime? _handshakeCooldownUntil;
+  int _handshakeFailedAttempts = 0;
   int _transferCompletedBytes = 0;
   int _transferTotalBytes = 0;
   bool _hasCompletedOutgoingTransfer = false;
@@ -94,6 +96,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   _pendingPreviewRequests =
       <String, Completer<NearbyTransferRemoteFilePreview?>>{};
   bool _disposed = false;
+  Timer? _handshakeStateTimer;
 
   NearbyTransferMode? get mode => _mode;
 
@@ -117,8 +120,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   List<String> get verificationCode =>
       List<String>.unmodifiable(_verificationCode);
 
-  NearbyTransferHandshakeChallenge? get handshakeChallenge =>
-      _handshakeChallenge;
+  DateTime? get handshakeExpiresAt => _handshakeExpiresAt;
+
+  bool get isHandshakeCoolingDown =>
+      _handshakeService.isCoolingDown(_handshakeCooldownUntil);
+
+  int get handshakeCooldownRemainingSeconds =>
+      _handshakeService.remainingCooldownSeconds(_handshakeCooldownUntil);
+
+  bool get canSubmitHandshakeCode =>
+      _phase == NearbyTransferSessionPhase.awaitingHandshake &&
+      !_handshakeService.isExpired(_handshakeExpiresAt) &&
+      !isHandshakeCoolingDown;
 
   bool get liveQrScannerSupported =>
       _capabilities?.liveQrScannerSupported ?? false;
@@ -304,21 +317,58 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   Future<void> selectHandshakeChoice(List<String> choice) async {
-    final expectedCode = _verificationCode;
-    if (expectedCode.isEmpty) {
+    await submitHandshakeCode(choice.join());
+  }
+
+  Future<void> submitHandshakeCode(String rawInput) async {
+    if (_verificationCode.isEmpty ||
+        _phase != NearbyTransferSessionPhase.awaitingHandshake) {
       return;
     }
-    final isValid = _handshakeService.isValidChoice(
-      expectedCode: expectedCode,
-      selectedChoice: choice,
+    final sanitizedCode = _handshakeService.sanitizeCodeInput(rawInput);
+    if (_handshakeService.isExpired(_handshakeExpiresAt)) {
+      await _invalidateHandshakeSession(
+        'Код подтверждения истёк. Подключитесь заново.',
+      );
+      return;
+    }
+    if (isHandshakeCoolingDown) {
+      _setBanner(
+        'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+        isError: true,
+      );
+      notifyListeners();
+      return;
+    }
+    if (sanitizedCode.length != 2) {
+      _setBanner('Введите двухзначный код.', isError: true);
+      notifyListeners();
+      return;
+    }
+    final isValid = _handshakeService.isValidCode(
+      expectedCode: _verificationCode,
+      enteredCode: sanitizedCode,
     );
     if (!isValid) {
-      _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
+      _handshakeFailedAttempts += 1;
+      if (_handshakeFailedAttempts >=
+          _handshakeService.maxAttemptsBeforeCooldown) {
+        _handshakeFailedAttempts = 0;
+        _handshakeCooldownUntil = _handshakeService.createCooldownUntil();
+        _setBanner(
+          'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+          isError: true,
+        );
+      } else {
+        _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
+      }
+      notifyListeners();
       return;
     }
 
     await _activeAdapter?.sendHandshakeAccepted();
     _phase = NearbyTransferSessionPhase.connected;
+    _clearHandshakeValidationState();
     _setBanner('Соединение подтверждено.');
     notifyListeners();
   }
@@ -468,6 +518,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _peer = event.peer;
       _sessionId = event.sessionId;
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
+      _handshakeExpiresAt = _handshakeService.createExpiryTime();
+      _handshakeCooldownUntil = null;
+      _handshakeFailedAttempts = 0;
+      _startHandshakeStateTimer();
       if (_role == NearbyTransferRole.send) {
         await _activeAdapter?.sendHandshakeOffer(_verificationCode);
         _setBanner('Подтвердите цифровой код на втором устройстве.');
@@ -477,13 +531,14 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferHandshakeOfferEvent) {
       _verificationCode = List<String>.unmodifiable(event.verificationCode);
-      _handshakeChallenge = _handshakeService.buildChallenge(
-        event.verificationCode,
-      );
+      _handshakeExpiresAt = _handshakeService.createExpiryTime();
+      _handshakeCooldownUntil = null;
+      _handshakeFailedAttempts = 0;
+      _startHandshakeStateTimer();
       if (_autoAcceptPendingHandshake) {
-        _handshakeChallenge = null;
         _autoAcceptPendingHandshake = false;
         _phase = NearbyTransferSessionPhase.connected;
+        _clearHandshakeValidationState();
         _setBanner('Соединение подтверждено.');
         notifyListeners();
         await _activeAdapter?.sendHandshakeAccepted();
@@ -497,7 +552,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (event is NearbyTransferHandshakeAcceptedEvent) {
       _autoAcceptPendingHandshake = false;
       _phase = NearbyTransferSessionPhase.connected;
-      _handshakeChallenge = null;
+      _clearHandshakeValidationState();
       _setBanner('Соединение подтверждено.');
       notifyListeners();
       return;
@@ -579,7 +634,9 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   void _resetSessionIdentity() {
     _sessionId = 'nearby-${DateTime.now().microsecondsSinceEpoch}';
     _verificationCode = _handshakeService.createVerificationCode();
-    _handshakeChallenge = null;
+    _handshakeExpiresAt = _handshakeService.createExpiryTime();
+    _handshakeCooldownUntil = null;
+    _handshakeFailedAttempts = 0;
     _qrPayloadText = null;
     _hasCompletedOutgoingTransfer = false;
     _autoAcceptPendingHandshake = false;
@@ -588,7 +645,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   void _clearConnectionState() {
     _availabilityStore.clear();
     _peer = null;
-    _handshakeChallenge = null;
+    _clearHandshakeValidationState();
     _autoAcceptPendingHandshake = false;
     _transferCompletedBytes = 0;
     _transferTotalBytes = 0;
@@ -607,6 +664,46 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _candidateRefreshTimer = null;
   }
 
+  void _clearHandshakeValidationState() {
+    _handshakeExpiresAt = null;
+    _handshakeCooldownUntil = null;
+    _handshakeFailedAttempts = 0;
+    _handshakeStateTimer?.cancel();
+    _handshakeStateTimer = null;
+  }
+
+  void _startHandshakeStateTimer() {
+    _handshakeStateTimer?.cancel();
+    _handshakeStateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_phase != NearbyTransferSessionPhase.awaitingHandshake) {
+        _handshakeStateTimer?.cancel();
+        _handshakeStateTimer = null;
+        return;
+      }
+      if (_handshakeService.isExpired(_handshakeExpiresAt)) {
+        unawaited(
+          _invalidateHandshakeSession(
+            'Код подтверждения истёк. Подключитесь заново.',
+          ),
+        );
+        return;
+      }
+      if (_handshakeCooldownUntil != null &&
+          !_handshakeService.isCoolingDown(_handshakeCooldownUntil)) {
+        _handshakeCooldownUntil = null;
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<void> _invalidateHandshakeSession(String message) async {
+    await _activeAdapter?.disconnect();
+    _clearConnectionState();
+    _phase = NearbyTransferSessionPhase.idle;
+    _setBanner(message, isError: true);
+    notifyListeners();
+  }
+
   void _setBanner(String? message, {bool isError = false}) {
     _bannerMessage = message;
     _bannerIsError = isError;
@@ -620,6 +717,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _disposed = true;
     _availabilityStore.clear();
     _candidateRefreshTimer?.cancel();
+    _handshakeStateTimer?.cancel();
     _transportSubscription?.cancel();
     _wifiDirectTransportAdapter.dispose();
     _lanNearbyTransportAdapter.dispose();

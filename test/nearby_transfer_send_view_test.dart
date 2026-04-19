@@ -96,7 +96,7 @@ void main() {
       expect(find.text('Выбрать папку'), findsOneWidget);
       expect(find.byKey(const Key('nearby-transfer-qr-image')), findsNothing);
       expect(lanAdapter.sendHandshakeOfferCalls, 1);
-      expect(lanAdapter.lastVerificationCode, hasLength(6));
+      expect(lanAdapter.lastVerificationCode, hasLength(2));
 
       await store.resetForEntrySelection();
       await tester.pumpWidget(const SizedBox.shrink());

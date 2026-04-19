@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_availability_store.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_handshake_service.dart';
 import 'package:landa/features/nearby_transfer/application/nearby_transfer_session_store.dart';
 import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_adapter.dart';
 import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
@@ -254,15 +255,183 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       receiverLanAdapter.emit(
         const NearbyTransferHandshakeOfferEvent(
-          verificationCode: <String>['1', '2', '3', '4', '5', '6'],
+          verificationCode: <String>['1', '2'],
         ),
       );
       await Future<void>.delayed(Duration.zero);
 
       expect(receiverLanAdapter.sendHandshakeAcceptedCalls, 1);
       expect(receiverStore.phase, NearbyTransferSessionPhase.connected);
-      expect(receiverStore.handshakeChallenge, isNull);
       expect(receiverStore.bannerMessage, 'Соединение подтверждено.');
+    },
+  );
+
+  test('valid 2-digit handshake input confirms the session', () async {
+    final lanAdapter = FakeNearbyTransferTransportAdapter();
+    final store = buildTestNearbyTransferStore(
+      readModel: harness.readModel,
+      lanAdapter: lanAdapter,
+    );
+    addTearDown(store.dispose);
+
+    await store.prepareReceiveFlow();
+    lanAdapter.emit(
+      const NearbyTransferConnectedEvent(
+        peer: NearbyTransferPeerDevice(
+          deviceId: 'peer-1',
+          displayName: 'Peer',
+          host: '192.168.0.10',
+        ),
+        sessionId: 'session-1',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    lanAdapter.emit(
+      const NearbyTransferHandshakeOfferEvent(
+        verificationCode: <String>['4', '2'],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    await store.submitHandshakeCode('42');
+
+    expect(lanAdapter.sendHandshakeAcceptedCalls, 1);
+    expect(store.phase, NearbyTransferSessionPhase.connected);
+    expect(store.bannerMessage, 'Соединение подтверждено.');
+  });
+
+  test(
+    'invalid 2-digit handshake input does not confirm the session',
+    () async {
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(
+        const NearbyTransferHandshakeOfferEvent(
+          verificationCode: <String>['4', '2'],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      await store.submitHandshakeCode('00');
+
+      expect(lanAdapter.sendHandshakeAcceptedCalls, 0);
+      expect(store.phase, NearbyTransferSessionPhase.awaitingHandshake);
+      expect(store.bannerMessage, 'Код не совпал. Попробуйте ещё раз.');
+    },
+  );
+
+  test('expired handshake code invalidates the session', () async {
+    var now = DateTime(2026, 1, 1, 10, 0, 0);
+    final lanAdapter = FakeNearbyTransferTransportAdapter();
+    final store = buildTestNearbyTransferStore(
+      readModel: harness.readModel,
+      lanAdapter: lanAdapter,
+      handshakeService: NearbyTransferHandshakeService(
+        now: () => now,
+        codeLifetime: const Duration(seconds: 1),
+      ),
+    );
+    addTearDown(store.dispose);
+
+    await store.prepareReceiveFlow();
+    lanAdapter.emit(
+      const NearbyTransferConnectedEvent(
+        peer: NearbyTransferPeerDevice(
+          deviceId: 'peer-1',
+          displayName: 'Peer',
+          host: '192.168.0.10',
+        ),
+        sessionId: 'session-1',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    lanAdapter.emit(
+      const NearbyTransferHandshakeOfferEvent(
+        verificationCode: <String>['4', '2'],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    now = now.add(const Duration(seconds: 2));
+    await store.submitHandshakeCode('42');
+
+    expect(store.phase, NearbyTransferSessionPhase.idle);
+    expect(store.hasActiveConnection, isFalse);
+    expect(
+      store.bannerMessage,
+      'Код подтверждения истёк. Подключитесь заново.',
+    );
+  });
+
+  test(
+    'repeated invalid entries trigger a cooldown before more attempts',
+    () async {
+      var now = DateTime(2026, 1, 1, 10, 0, 0);
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+        handshakeService: NearbyTransferHandshakeService(
+          now: () => now,
+          maxAttemptsBeforeCooldown: 2,
+          cooldownDuration: const Duration(seconds: 5),
+        ),
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(
+        const NearbyTransferHandshakeOfferEvent(
+          verificationCode: <String>['4', '2'],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      await store.submitHandshakeCode('00');
+      await store.submitHandshakeCode('11');
+
+      expect(store.isHandshakeCoolingDown, isTrue);
+      expect(
+        store.bannerMessage,
+        startsWith('Слишком много попыток. Подождите'),
+      );
+
+      await store.submitHandshakeCode('42');
+      expect(lanAdapter.sendHandshakeAcceptedCalls, 0);
+
+      now = now.add(const Duration(seconds: 6));
+      await store.submitHandshakeCode('42');
+
+      expect(lanAdapter.sendHandshakeAcceptedCalls, 1);
+      expect(store.phase, NearbyTransferSessionPhase.connected);
     },
   );
 

@@ -169,6 +169,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
   FakeNearbyTransferTransportAdapter? wifiAdapter,
   FakeNearbyTransferTransportAdapter? lanAdapter,
   NearbyTransferFilePicker? filePicker,
+  NearbyTransferHandshakeService? handshakeService,
   bool wifiDirectSupported = false,
   Duration candidateRefreshInterval = const Duration(seconds: 2),
   String localDeviceId = 'aa:bb:cc:dd:ee:ff',
@@ -181,7 +182,7 @@ NearbyTransferSessionStore buildTestNearbyTransferStore({
       wifiDirectSupported: wifiDirectSupported,
     ),
     modeResolver: const NearbyTransferModeResolver(),
-    handshakeService: NearbyTransferHandshakeService(),
+    handshakeService: handshakeService ?? NearbyTransferHandshakeService(),
     candidateProjection: NearbyTransferCandidateProjection(
       readModel: readModel,
     ),

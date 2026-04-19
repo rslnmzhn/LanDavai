@@ -96,20 +96,33 @@ void main() {
       await _pumpForUi(tester);
       lanAdapter.emit(
         const NearbyTransferHandshakeOfferEvent(
-          verificationCode: <String>['1', '2', '3', '4', '5', '6'],
+          verificationCode: <String>['1', '2'],
         ),
       );
       await _pumpForUi(tester);
 
-      expect(find.text('Выберите совпадающий цифровой код'), findsOneWidget);
-      expect(find.byType(OutlinedButton), findsAtLeastNWidgets(3));
+      expect(
+        find.text('Введите двузначный код с устройства отправителя'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('nearby-transfer-code-input')),
+        findsOneWidget,
+      );
+      expect(find.text('Подтвердить код'), findsOneWidget);
       expect(
         find.byKey(const Key('nearby-transfer-scanner-stage')),
         findsNothing,
       );
 
-      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
+      await tester.enterText(
+        find.byKey(const Key('nearby-transfer-code-input')),
+        '12',
+      );
+      await tester.tap(find.text('Подтвердить код'));
       await _pumpForUi(tester);
+
+      expect(lanAdapter.sendHandshakeAcceptedCalls, 1);
       lanAdapter.emit(
         const NearbyTransferIncomingSelectionOfferedEvent(
           requestId: 'offer-1',
