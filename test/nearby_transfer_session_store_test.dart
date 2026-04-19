@@ -498,16 +498,20 @@ void main() {
         const NearbyTransferIncomingSelectionOfferedEvent(
           requestId: 'offer-1',
           label: 'Фото и заметки',
-          files: <NearbyTransferRemoteFileDescriptor>[
-            NearbyTransferRemoteFileDescriptor(
+          roots: <NearbyTransferRemoteOfferNode>[
+            NearbyTransferRemoteOfferNode(
               id: 'image-1',
+              name: 'photo.png',
               relativePath: 'photo.png',
+              kind: NearbyTransferRemoteOfferNodeKind.file,
               sizeBytes: 2048,
               previewKind: NearbyTransferRemotePreviewKind.image,
             ),
-            NearbyTransferRemoteFileDescriptor(
+            NearbyTransferRemoteOfferNode(
               id: 'text-1',
+              name: 'notes.txt',
               relativePath: 'notes.txt',
+              kind: NearbyTransferRemoteOfferNodeKind.file,
               sizeBytes: 128,
               previewKind: NearbyTransferRemotePreviewKind.text,
             ),
@@ -526,6 +530,104 @@ void main() {
       expect(lanAdapter.requestIncomingSelectionDownloadCalls, 1);
       expect(lanAdapter.lastDownloadRequestId, 'offer-1');
       expect(lanAdapter.lastDownloadFileIds, <String>['text-1']);
+    },
+  );
+
+  test(
+    'incoming structured folder offer preserves navigation and subtree exclusion',
+    () async {
+      final lanAdapter = FakeNearbyTransferTransportAdapter();
+      final store = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: lanAdapter,
+      );
+      addTearDown(store.dispose);
+
+      await store.prepareReceiveFlow();
+      lanAdapter.emit(
+        const NearbyTransferConnectedEvent(
+          peer: NearbyTransferPeerDevice(
+            deviceId: 'peer-1',
+            displayName: 'Peer',
+            host: '192.168.0.10',
+          ),
+          sessionId: 'session-1',
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(
+        const NearbyTransferIncomingSelectionOfferedEvent(
+          requestId: 'offer-1',
+          label: 'Trip',
+          roots: <NearbyTransferRemoteOfferNode>[
+            NearbyTransferRemoteOfferNode(
+              id: 'dir:Trip',
+              name: 'Trip',
+              relativePath: 'Trip',
+              kind: NearbyTransferRemoteOfferNodeKind.directory,
+              sizeBytes: 2176,
+              previewKind: NearbyTransferRemotePreviewKind.none,
+              children: <NearbyTransferRemoteOfferNode>[
+                NearbyTransferRemoteOfferNode(
+                  id: 'image-1',
+                  name: 'photo.png',
+                  relativePath: 'Trip/photo.png',
+                  kind: NearbyTransferRemoteOfferNodeKind.file,
+                  sizeBytes: 2048,
+                  previewKind: NearbyTransferRemotePreviewKind.image,
+                ),
+                NearbyTransferRemoteOfferNode(
+                  id: 'dir:Trip/docs',
+                  name: 'docs',
+                  relativePath: 'Trip/docs',
+                  kind: NearbyTransferRemoteOfferNodeKind.directory,
+                  sizeBytes: 128,
+                  previewKind: NearbyTransferRemotePreviewKind.none,
+                  children: <NearbyTransferRemoteOfferNode>[
+                    NearbyTransferRemoteOfferNode(
+                      id: 'text-1',
+                      name: 'notes.txt',
+                      relativePath: 'Trip/docs/notes.txt',
+                      kind: NearbyTransferRemoteOfferNodeKind.file,
+                      sizeBytes: 128,
+                      previewKind: NearbyTransferRemotePreviewKind.text,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.incomingRoots, hasLength(1));
+      expect(store.visibleIncomingNodes.single.name, 'Trip');
+      expect(store.canNavigateIncomingUp, isFalse);
+      expect(store.isIncomingNodeSelected('dir:Trip'), isTrue);
+
+      store.toggleIncomingNodeSelection('dir:Trip/docs', false);
+
+      expect(store.isIncomingNodePartiallySelected('dir:Trip'), isTrue);
+      expect(store.selectedIncomingFileIds, <String>{'image-1'});
+
+      store.openIncomingDirectory('dir:Trip');
+      expect(store.canNavigateIncomingUp, isTrue);
+      expect(
+        store.visibleIncomingNodes.map((node) => node.name).toList(),
+        <String>['photo.png', 'docs'],
+      );
+
+      store.openIncomingDirectory('dir:Trip/docs');
+      expect(
+        store.visibleIncomingNodes.map((node) => node.name).toList(),
+        <String>['notes.txt'],
+      );
+
+      await store.downloadSelectedIncomingFiles();
+
+      expect(lanAdapter.requestIncomingSelectionDownloadCalls, 1);
+      expect(lanAdapter.lastDownloadFileIds, <String>['image-1']);
     },
   );
 
@@ -555,10 +657,12 @@ void main() {
         const NearbyTransferIncomingSelectionOfferedEvent(
           requestId: 'offer-1',
           label: 'Текст',
-          files: <NearbyTransferRemoteFileDescriptor>[
-            NearbyTransferRemoteFileDescriptor(
+          roots: <NearbyTransferRemoteOfferNode>[
+            NearbyTransferRemoteOfferNode(
               id: 'text-1',
+              name: 'notes.txt',
               relativePath: 'notes.txt',
+              kind: NearbyTransferRemoteOfferNodeKind.file,
               sizeBytes: 128,
               previewKind: NearbyTransferRemotePreviewKind.text,
             ),

@@ -41,6 +41,27 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
           incomingOffer.label,
           style: Theme.of(context).textTheme.titleSmall,
         ),
+        if (store.currentIncomingDirectory != null) ...[
+          const SizedBox(height: AppSpacing.xs),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: store.navigateIncomingUp,
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: Text('nearby_transfer.offer_back'.tr()),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Text(
+                  store.currentIncomingDirectory!.relativePath,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: AppSpacing.xs),
         Text(
           'nearby_transfer.offer_description'.tr(),
@@ -49,10 +70,10 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
           ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(height: AppSpacing.md),
-        ...incomingOffer.files.map((file) {
+        ...store.visibleIncomingNodes.map((node) {
           return Padding(
             padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: _IncomingFileTile(store: store, file: file),
+            child: _IncomingOfferTile(store: store, node: node),
           );
         }),
         if (store.transferProgress != null) ...[
@@ -72,15 +93,21 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
   }
 }
 
-class _IncomingFileTile extends StatelessWidget {
-  const _IncomingFileTile({required this.store, required this.file});
+class _IncomingOfferTile extends StatelessWidget {
+  const _IncomingOfferTile({required this.store, required this.node});
 
   final NearbyTransferSessionStore store;
-  final NearbyTransferRemoteFileDescriptor file;
+  final NearbyTransferRemoteOfferNode node;
 
   @override
   Widget build(BuildContext context) {
-    final canPreview = file.previewKind != NearbyTransferRemotePreviewKind.none;
+    final file = node.asFileDescriptor;
+    final canPreview =
+        file != null &&
+        file.previewKind != NearbyTransferRemotePreviewKind.none;
+    final checkboxValue = store.isIncomingNodePartiallySelected(node.id)
+        ? null
+        : store.isIncomingNodeSelected(node.id);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: AppColors.surfaceSoft,
@@ -101,15 +128,15 @@ class _IncomingFileTile extends StatelessWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _IncomingFilePreviewBadge(file: file),
+                _IncomingOfferPreviewBadge(node: node),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(file.relativePath),
+                      Text(node.name),
                       const SizedBox(height: AppSpacing.xs),
-                      Text(_formatBytes(context, file.sizeBytes)),
+                      Text(_buildSecondaryLabel(context, node)),
                     ],
                   ),
                 ),
@@ -122,7 +149,7 @@ class _IncomingFileTile extends StatelessWidget {
               right: AppSpacing.xs,
               child: IconButton(
                 key: ValueKey<String>(
-                  'nearby-transfer-preview-button-${file.id}',
+                  'nearby-transfer-preview-button-${node.id}',
                 ),
                 tooltip: 'common.preview'.tr(),
                 onPressed: store.isPreviewLoading(file.id)
@@ -151,14 +178,28 @@ class _IncomingFileTile extends StatelessWidget {
                     : const Icon(Icons.visibility_rounded),
               ),
             ),
+          if (node.isDirectory)
+            Positioned(
+              top: AppSpacing.xs,
+              right: canPreview ? 44 : AppSpacing.xs,
+              child: IconButton(
+                key: ValueKey<String>(
+                  'nearby-transfer-open-folder-button-${node.id}',
+                ),
+                tooltip: 'common.open_folder'.tr(),
+                onPressed: () => store.openIncomingDirectory(node.id),
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+            ),
           Positioned(
             right: AppSpacing.xs,
             bottom: AppSpacing.xs,
             child: Checkbox(
-              key: ValueKey<String>('nearby-transfer-checkbox-${file.id}'),
-              value: store.isIncomingFileSelected(file.id),
+              key: ValueKey<String>('nearby-transfer-checkbox-${node.id}'),
+              tristate: true,
+              value: checkboxValue,
               onChanged: (value) {
-                store.toggleIncomingFileSelection(file.id, value ?? false);
+                store.toggleIncomingNodeSelection(node.id, value ?? false);
               },
             ),
           ),
@@ -168,20 +209,24 @@ class _IncomingFileTile extends StatelessWidget {
   }
 }
 
-class _IncomingFilePreviewBadge extends StatelessWidget {
-  const _IncomingFilePreviewBadge({required this.file});
+class _IncomingOfferPreviewBadge extends StatelessWidget {
+  const _IncomingOfferPreviewBadge({required this.node});
 
-  final NearbyTransferRemoteFileDescriptor file;
+  final NearbyTransferRemoteOfferNode node;
 
   @override
   Widget build(BuildContext context) {
-    final icon = switch (file.previewKind) {
-      NearbyTransferRemotePreviewKind.image => Icons.image_outlined,
-      NearbyTransferRemotePreviewKind.text => Icons.description_outlined,
-      NearbyTransferRemotePreviewKind.none => Icons.insert_drive_file_outlined,
+    final icon = switch (node.kind) {
+      NearbyTransferRemoteOfferNodeKind.directory => Icons.folder_outlined,
+      NearbyTransferRemoteOfferNodeKind.file => switch (node.previewKind) {
+        NearbyTransferRemotePreviewKind.image => Icons.image_outlined,
+        NearbyTransferRemotePreviewKind.text => Icons.description_outlined,
+        NearbyTransferRemotePreviewKind.none =>
+          Icons.insert_drive_file_outlined,
+      },
     };
     return Container(
-      key: ValueKey<String>('nearby-transfer-preview-badge-${file.id}'),
+      key: ValueKey<String>('nearby-transfer-preview-badge-${node.id}'),
       width: 52,
       height: 52,
       decoration: BoxDecoration(
@@ -194,6 +239,22 @@ class _IncomingFilePreviewBadge extends StatelessWidget {
       child: Icon(icon, color: AppColors.brandPrimary),
     );
   }
+}
+
+String _buildSecondaryLabel(
+  BuildContext context,
+  NearbyTransferRemoteOfferNode node,
+) {
+  final sizeLabel = _formatBytes(context, node.sizeBytes);
+  if (node.isFile) {
+    return sizeLabel;
+  }
+  return 'nearby_transfer.offer_folder_summary'.tr(
+    namedArgs: <String, String>{
+      'count': '${node.fileCount}',
+      'size': sizeLabel,
+    },
+  );
 }
 
 String _formatBytes(BuildContext context, int bytes) {

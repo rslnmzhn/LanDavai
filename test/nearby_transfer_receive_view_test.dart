@@ -20,7 +20,7 @@ void main() {
   });
 
   testWidgets(
-    'receive view shows incoming file list and explicit download action after handshake',
+    'receive view shows structured folder offer and allows navigation after handshake',
     (tester) async {
       harness.controller.setTestDevices(<DiscoveredDevice>[
         DiscoveredDevice(
@@ -126,36 +126,60 @@ void main() {
       lanAdapter.emit(
         const NearbyTransferIncomingSelectionOfferedEvent(
           requestId: 'offer-1',
-          label: 'Пакет файлов',
-          files: <NearbyTransferRemoteFileDescriptor>[
-            NearbyTransferRemoteFileDescriptor(
-              id: 'image-1',
-              relativePath: 'photo.png',
-              sizeBytes: 2048,
-              previewKind: NearbyTransferRemotePreviewKind.image,
-            ),
-            NearbyTransferRemoteFileDescriptor(
-              id: 'doc-1',
-              relativePath: 'report.pdf',
-              sizeBytes: 4096,
+          label: 'Trip',
+          roots: <NearbyTransferRemoteOfferNode>[
+            NearbyTransferRemoteOfferNode(
+              id: 'dir:Trip',
+              name: 'Trip',
+              relativePath: 'Trip',
+              kind: NearbyTransferRemoteOfferNodeKind.directory,
+              sizeBytes: 6144,
               previewKind: NearbyTransferRemotePreviewKind.none,
+              children: <NearbyTransferRemoteOfferNode>[
+                NearbyTransferRemoteOfferNode(
+                  id: 'image-1',
+                  name: 'photo.png',
+                  relativePath: 'Trip/photo.png',
+                  kind: NearbyTransferRemoteOfferNodeKind.file,
+                  sizeBytes: 2048,
+                  previewKind: NearbyTransferRemotePreviewKind.image,
+                ),
+                NearbyTransferRemoteOfferNode(
+                  id: 'doc-1',
+                  name: 'report.pdf',
+                  relativePath: 'Trip/report.pdf',
+                  kind: NearbyTransferRemoteOfferNodeKind.file,
+                  sizeBytes: 4096,
+                  previewKind: NearbyTransferRemotePreviewKind.none,
+                ),
+              ],
             ),
           ],
         ),
       );
       await _pumpForUi(tester);
 
-      expect(find.text('Пакет файлов'), findsOneWidget);
-      expect(find.text('photo.png'), findsOneWidget);
-      expect(find.text('report.pdf'), findsOneWidget);
+      expect(find.text('Trip'), findsWidgets);
+      expect(find.text('photo.png'), findsNothing);
+      expect(find.text('report.pdf'), findsNothing);
       expect(find.text('Скачать выбранные'), findsOneWidget);
       expect(find.text('Предпросмотр'), findsNothing);
       expect(
         find.byKey(
-          const ValueKey<String>('nearby-transfer-preview-button-image-1'),
+          const ValueKey<String>('nearby-transfer-open-folder-button-dir:Trip'),
         ),
         findsOneWidget,
       );
+      expect(
+        find.byKey(const ValueKey<String>('nearby-transfer-checkbox-dir:Trip')),
+        findsOneWidget,
+      );
+
+      store.openIncomingDirectory('dir:Trip');
+      await _pumpForUi(tester);
+
+      expect(find.text('photo.png'), findsOneWidget);
+      expect(find.text('report.pdf'), findsOneWidget);
       expect(
         find.byKey(const ValueKey<String>('nearby-transfer-checkbox-image-1')),
         findsOneWidget,
@@ -163,6 +187,12 @@ void main() {
       expect(
         find.byKey(
           const ValueKey<String>('nearby-transfer-preview-badge-image-1'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(
+          const ValueKey<String>('nearby-transfer-preview-button-image-1'),
         ),
         findsOneWidget,
       );

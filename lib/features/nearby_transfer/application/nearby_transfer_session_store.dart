@@ -89,6 +89,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   bool _hasCompletedOutgoingTransfer = false;
   NearbyTransferIncomingSelectionOfferedEvent? _incomingOffer;
   Set<String> _selectedIncomingFileIds = <String>{};
+  Map<String, NearbyTransferRemoteOfferNode> _incomingNodesById =
+      <String, NearbyTransferRemoteOfferNode>{};
+  Map<String, String?> _incomingParentById = <String, String?>{};
+  String? _currentIncomingDirectoryId;
   String? _previewingFileId;
   NearbyTransferRemoteFilePreview? _activeIncomingPreview;
   bool _autoAcceptPendingHandshake = false;
@@ -156,10 +160,35 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   NearbyTransferIncomingSelectionOfferedEvent? get incomingOffer =>
       _incomingOffer;
 
+  List<NearbyTransferRemoteOfferNode> get incomingRoots =>
+      List<NearbyTransferRemoteOfferNode>.unmodifiable(
+        _incomingOffer?.roots ?? const <NearbyTransferRemoteOfferNode>[],
+      );
+
   List<NearbyTransferRemoteFileDescriptor> get incomingFiles =>
       List<NearbyTransferRemoteFileDescriptor>.unmodifiable(
         _incomingOffer?.files ?? const <NearbyTransferRemoteFileDescriptor>[],
       );
+
+  NearbyTransferRemoteOfferNode? get currentIncomingDirectory {
+    final nodeId = _currentIncomingDirectoryId;
+    if (nodeId == null) {
+      return null;
+    }
+    return _incomingNodesById[nodeId];
+  }
+
+  List<NearbyTransferRemoteOfferNode> get visibleIncomingNodes {
+    final currentDirectory = currentIncomingDirectory;
+    if (currentDirectory == null) {
+      return incomingRoots;
+    }
+    return List<NearbyTransferRemoteOfferNode>.unmodifiable(
+      currentDirectory.children,
+    );
+  }
+
+  bool get canNavigateIncomingUp => _currentIncomingDirectoryId != null;
 
   Set<String> get selectedIncomingFileIds =>
       Set<String>.unmodifiable(_selectedIncomingFileIds);
@@ -170,6 +199,25 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool isIncomingFileSelected(String fileId) =>
       _selectedIncomingFileIds.contains(fileId);
+
+  bool isIncomingNodeSelected(String nodeId) {
+    final fileIds = _incomingFileIdsForNode(nodeId);
+    if (fileIds.isEmpty) {
+      return false;
+    }
+    return fileIds.every(_selectedIncomingFileIds.contains);
+  }
+
+  bool isIncomingNodePartiallySelected(String nodeId) {
+    final fileIds = _incomingFileIdsForNode(nodeId);
+    if (fileIds.isEmpty) {
+      return false;
+    }
+    final selectedCount = fileIds
+        .where(_selectedIncomingFileIds.contains)
+        .length;
+    return selectedCount > 0 && selectedCount < fileIds.length;
+  }
 
   bool isPreviewLoading(String fileId) => _previewingFileId == fileId;
 
@@ -390,16 +438,45 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   }
 
   void toggleIncomingFileSelection(String fileId, bool isSelected) {
+    toggleIncomingNodeSelection(fileId, isSelected);
+  }
+
+  void toggleIncomingNodeSelection(String nodeId, bool isSelected) {
     if (_incomingOffer == null) {
       return;
     }
+    final affectedFileIds = _incomingFileIdsForNode(nodeId);
+    if (affectedFileIds.isEmpty) {
+      return;
+    }
     if (isSelected) {
-      _selectedIncomingFileIds = <String>{..._selectedIncomingFileIds, fileId};
+      _selectedIncomingFileIds = <String>{
+        ..._selectedIncomingFileIds,
+        ...affectedFileIds,
+      };
     } else {
       final next = Set<String>.from(_selectedIncomingFileIds);
-      next.remove(fileId);
+      next.removeAll(affectedFileIds);
       _selectedIncomingFileIds = next;
     }
+    notifyListeners();
+  }
+
+  void openIncomingDirectory(String nodeId) {
+    final node = _incomingNodesById[nodeId];
+    if (node == null || !node.isDirectory) {
+      return;
+    }
+    _currentIncomingDirectoryId = nodeId;
+    notifyListeners();
+  }
+
+  void navigateIncomingUp() {
+    final currentDirectoryId = _currentIncomingDirectoryId;
+    if (currentDirectoryId == null) {
+      return;
+    }
+    _currentIncomingDirectoryId = _incomingParentById[currentDirectoryId];
     notifyListeners();
   }
 
@@ -559,7 +636,9 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferIncomingSelectionOfferedEvent) {
       _incomingOffer = event;
+      _rebuildIncomingOfferIndex(event.roots);
       _selectedIncomingFileIds = event.files.map((file) => file.id).toSet();
+      _currentIncomingDirectoryId = null;
       _activeIncomingPreview = null;
       _phase = NearbyTransferSessionPhase.connected;
       _setBanner('Выберите файлы для загрузки.');
@@ -651,6 +730,9 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _transferTotalBytes = 0;
     _incomingOffer = null;
     _selectedIncomingFileIds = <String>{};
+    _incomingNodesById = <String, NearbyTransferRemoteOfferNode>{};
+    _incomingParentById = <String, String?>{};
+    _currentIncomingDirectoryId = null;
     _activeIncomingPreview = null;
     _previewingFileId = null;
     for (final completer in _pendingPreviewRequests.values) {
@@ -707,6 +789,47 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   void _setBanner(String? message, {bool isError = false}) {
     _bannerMessage = message;
     _bannerIsError = isError;
+  }
+
+  void _rebuildIncomingOfferIndex(List<NearbyTransferRemoteOfferNode> roots) {
+    final nodesById = <String, NearbyTransferRemoteOfferNode>{};
+    final parentById = <String, String?>{};
+    void visit(
+      NearbyTransferRemoteOfferNode node, {
+      required String? parentId,
+    }) {
+      nodesById[node.id] = node;
+      parentById[node.id] = parentId;
+      for (final child in node.children) {
+        visit(child, parentId: node.id);
+      }
+    }
+
+    for (final root in roots) {
+      visit(root, parentId: null);
+    }
+    _incomingNodesById = nodesById;
+    _incomingParentById = parentById;
+  }
+
+  List<String> _incomingFileIdsForNode(String nodeId) {
+    final node = _incomingNodesById[nodeId];
+    if (node == null) {
+      return const <String>[];
+    }
+    final fileIds = <String>[];
+    void collect(NearbyTransferRemoteOfferNode current) {
+      if (current.isFile) {
+        fileIds.add(current.id);
+        return;
+      }
+      for (final child in current.children) {
+        collect(child);
+      }
+    }
+
+    collect(node);
+    return fileIds;
   }
 
   @override

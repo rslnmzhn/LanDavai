@@ -70,15 +70,83 @@ class NearbyTransferSelection {
 class NearbyTransferRemoteFileDescriptor {
   const NearbyTransferRemoteFileDescriptor({
     required this.id,
+    required this.name,
     required this.relativePath,
     required this.sizeBytes,
     required this.previewKind,
   });
 
   final String id;
+  final String name;
   final String relativePath;
   final int sizeBytes;
   final NearbyTransferRemotePreviewKind previewKind;
+}
+
+enum NearbyTransferRemoteOfferNodeKind { file, directory }
+
+class NearbyTransferRemoteOfferNode {
+  const NearbyTransferRemoteOfferNode({
+    required this.id,
+    required this.name,
+    required this.relativePath,
+    required this.kind,
+    required this.sizeBytes,
+    required this.previewKind,
+    this.children = const <NearbyTransferRemoteOfferNode>[],
+  });
+
+  final String id;
+  final String name;
+  final String relativePath;
+  final NearbyTransferRemoteOfferNodeKind kind;
+  final int sizeBytes;
+  final NearbyTransferRemotePreviewKind previewKind;
+  final List<NearbyTransferRemoteOfferNode> children;
+
+  bool get isDirectory => kind == NearbyTransferRemoteOfferNodeKind.directory;
+
+  bool get isFile => kind == NearbyTransferRemoteOfferNodeKind.file;
+
+  int get fileCount {
+    if (isFile) {
+      return 1;
+    }
+    return children.fold<int>(0, (sum, child) => sum + child.fileCount);
+  }
+
+  NearbyTransferRemoteFileDescriptor? get asFileDescriptor {
+    if (!isFile) {
+      return null;
+    }
+    return NearbyTransferRemoteFileDescriptor(
+      id: id,
+      name: name,
+      relativePath: relativePath,
+      sizeBytes: sizeBytes,
+      previewKind: previewKind,
+    );
+  }
+
+  List<NearbyTransferRemoteFileDescriptor> flattenFiles() {
+    final files = <NearbyTransferRemoteFileDescriptor>[];
+    _collectFiles(this, files);
+    return List<NearbyTransferRemoteFileDescriptor>.unmodifiable(files);
+  }
+
+  static void _collectFiles(
+    NearbyTransferRemoteOfferNode node,
+    List<NearbyTransferRemoteFileDescriptor> files,
+  ) {
+    final descriptor = node.asFileDescriptor;
+    if (descriptor != null) {
+      files.add(descriptor);
+      return;
+    }
+    for (final child in node.children) {
+      _collectFiles(child, files);
+    }
+  }
 }
 
 class NearbyTransferRemoteFilePreview {
@@ -159,12 +227,20 @@ class NearbyTransferIncomingSelectionOfferedEvent
   const NearbyTransferIncomingSelectionOfferedEvent({
     required this.requestId,
     required this.label,
-    required this.files,
+    required this.roots,
   });
 
   final String requestId;
   final String label;
-  final List<NearbyTransferRemoteFileDescriptor> files;
+  final List<NearbyTransferRemoteOfferNode> roots;
+
+  List<NearbyTransferRemoteFileDescriptor> get files {
+    final collected = <NearbyTransferRemoteFileDescriptor>[];
+    for (final root in roots) {
+      collected.addAll(root.flattenFiles());
+    }
+    return List<NearbyTransferRemoteFileDescriptor>.unmodifiable(collected);
+  }
 }
 
 class NearbyTransferRemotePreviewReadyEvent
