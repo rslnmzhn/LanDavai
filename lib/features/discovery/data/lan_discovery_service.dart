@@ -30,6 +30,7 @@ class InternetPeerEndpoint {
 
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
+  static const Duration defaultPresenceHeartbeatInterval = Duration(seconds: 4);
 
   LanDiscoveryService({
     DiscoveryTransportAdapter? transportAdapter,
@@ -40,6 +41,7 @@ class LanDiscoveryService {
     LanShareProtocolHandler? shareProtocolHandler,
     LanClipboardProtocolHandler? clipboardProtocolHandler,
     int? Function()? nearbyTransferPortProvider,
+    Duration presenceHeartbeatInterval = defaultPresenceHeartbeatInterval,
   }) : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter(),
        _packetCodec = packetCodec ?? LanPacketCodec(),
        _presenceProtocolHandler =
@@ -52,7 +54,8 @@ class LanDiscoveryService {
            shareProtocolHandler ?? const LanShareProtocolHandler(),
        _clipboardProtocolHandler =
            clipboardProtocolHandler ?? const LanClipboardProtocolHandler(),
-       _nearbyTransferPortProvider = nearbyTransferPortProvider;
+       _nearbyTransferPortProvider = nearbyTransferPortProvider,
+       _presenceHeartbeatInterval = presenceHeartbeatInterval;
 
   final DiscoveryTransportAdapter _transportAdapter;
   final LanPacketCodec _packetCodec;
@@ -62,6 +65,7 @@ class LanDiscoveryService {
   final LanShareProtocolHandler _shareProtocolHandler;
   final LanClipboardProtocolHandler _clipboardProtocolHandler;
   final int? Function()? _nearbyTransferPortProvider;
+  final Duration _presenceHeartbeatInterval;
   static const Duration _presenceAllowedSenderTtl = Duration(seconds: 20);
   static const Duration _shareCatalogChunkTtl = Duration(seconds: 15);
   Timer? _beaconTimer;
@@ -139,7 +143,7 @@ class LanDiscoveryService {
 
     await _sendDiscoveryPing(deviceName);
     _beaconTimer = Timer.periodic(
-      const Duration(seconds: 4),
+      _presenceHeartbeatInterval,
       (_) => _sendDiscoveryPing(deviceName),
     );
   }

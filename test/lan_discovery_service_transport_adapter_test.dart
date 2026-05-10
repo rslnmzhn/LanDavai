@@ -68,6 +68,31 @@ void main() {
     );
   });
 
+  test('re-announces presence on the configured heartbeat interval', () async {
+    service = LanDiscoveryService(
+      transportAdapter: transportAdapter,
+      presenceHeartbeatInterval: const Duration(milliseconds: 30),
+    );
+
+    await service.start(
+      deviceName: 'Local workstation',
+      localPeerId: 'local-peer',
+      localSourceIps: const <String>{'192.168.1.10'},
+      onAppDetected: (_) {},
+    );
+    final initialBroadcasts = transportAdapter.sentPackets
+        .where((packet) => packet.context == 'discover-broadcast')
+        .length;
+
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+
+    final broadcastsAfterHeartbeat = transportAdapter.sentPackets
+        .where((packet) => packet.context == 'discover-broadcast')
+        .length;
+    expect(initialBroadcasts, 1);
+    expect(broadcastsAfterHeartbeat, greaterThan(initialBroadcasts));
+  });
+
   test(
     'keeps discovery response routing unchanged after transport extraction',
     () async {
