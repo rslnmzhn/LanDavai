@@ -48,6 +48,7 @@ import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/share_target/application/share_receive_boundary.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
+import 'package:landa/features/transfer/application/shared_download_boundary.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -73,6 +74,7 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
+    required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -94,6 +96,7 @@ class TestDiscoveryControllerHarness {
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -118,6 +121,7 @@ class TestDiscoveryControllerHarness {
         sharedCacheIndexStore: sharedCacheIndexStore,
         previewCacheOwner: previewCacheOwner,
         transferSessionCoordinator: transferSessionCoordinator,
+        sharedDownloadBoundary: sharedDownloadBoundary,
         downloadHistoryBoundary: downloadHistoryBoundary,
         clipboardHistoryStore: clipboardHistoryStore,
         remoteClipboardProjectionStore: remoteClipboardProjectionStore,
@@ -364,6 +368,7 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
+      sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,

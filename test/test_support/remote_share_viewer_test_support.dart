@@ -29,6 +29,7 @@ Future<void> pumpRemoteBrowser(
         remoteShareBrowser: browser,
         previewCacheOwner: harness.previewCacheOwner,
         transferSessionCoordinator: coordinator,
+        sharedDownloadBoundary: coordinator.sharedDownloadBoundary,
         useStandardAppDownloadFolder: true,
       ),
     ),
@@ -249,22 +250,6 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
     required String relativePath,
   }) async {
     return _previewPathProvider();
-  }
-
-  @override
-  Future<void> requestDownloadFromRemoteFiles({
-    required String ownerIp,
-    required String ownerName,
-    required Map<String, Set<String>> selectedRelativePathsByCache,
-    Map<String, Set<String>> selectedFolderPrefixesByCache =
-        const <String, Set<String>>{},
-    Map<String, String> sharedLabelsByCache = const <String, String>{},
-    bool preferDirectStart = false,
-    required bool useStandardAppDownloadFolder,
-  }) async {
-    downloadCalls += 1;
-    lastSelectedByCache = selectedRelativePathsByCache;
-    lastSelectedFolderPrefixesByCache = selectedFolderPrefixesByCache;
   }
 
   @override

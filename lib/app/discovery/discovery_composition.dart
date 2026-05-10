@@ -58,6 +58,7 @@ import '../../features/settings/data/app_settings_repository.dart';
 import '../../features/share_target/application/share_receive_boundary.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
+import '../../features/transfer/application/shared_download_boundary.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
 import '../../features/transfer/data/file_hash_service.dart';
 import '../../features/transfer/data/file_transfer_service.dart';
@@ -79,6 +80,7 @@ class DiscoveryPageDependencies {
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -99,6 +101,7 @@ class DiscoveryPageDependencies {
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -402,6 +405,7 @@ class DiscoveryCompositionFactory {
       sharedCacheIndexStore: sharedCacheIndexStore,
       previewCacheOwner: previewCacheOwner,
       transferSessionCoordinator: transferSessionCoordinator,
+      sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,

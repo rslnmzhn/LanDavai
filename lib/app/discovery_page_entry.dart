@@ -64,6 +64,7 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       sharedCacheIndexStore: pageDependencies.sharedCacheIndexStore,
       previewCacheOwner: pageDependencies.previewCacheOwner,
       transferSessionCoordinator: pageDependencies.transferSessionCoordinator,
+      sharedDownloadBoundary: pageDependencies.sharedDownloadBoundary,
       downloadHistoryBoundary: pageDependencies.downloadHistoryBoundary,
       clipboardHistoryStore: pageDependencies.clipboardHistoryStore,
       remoteClipboardProjectionStore:
@@ -111,7 +112,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
         arguments: ShareTargetRouteArguments(
           shareReceiveBoundary: pageDependencies.shareReceiveBoundary,
           readModel: pageDependencies.readModel,
-          transferSessionCoordinator: pageDependencies.transferSessionCoordinator,
+          transferSessionCoordinator:
+              pageDependencies.transferSessionCoordinator,
         ),
       );
       if (mounted) {

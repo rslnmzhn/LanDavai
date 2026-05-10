@@ -2027,11 +2027,13 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onDownloadRequest(DownloadRequestEvent event) {
-    _transferSessionCoordinator.handleDownloadRequestEvent(event);
+    _transferSessionCoordinator.sharedDownloadBoundary
+        .handleDownloadRequestEvent(event);
   }
 
   void _onDownloadResponse(DownloadResponseEvent event) {
-    _transferSessionCoordinator.handleDownloadResponseEvent(event);
+    _transferSessionCoordinator.sharedDownloadBoundary
+        .handleDownloadResponseEvent(event);
   }
 
   void _handleNetworkScopeChanged() {

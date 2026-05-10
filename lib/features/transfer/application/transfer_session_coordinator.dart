@@ -25,6 +25,7 @@ import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
+import 'shared_download_boundary.dart';
 import 'transfer_speed_tracker.dart';
 
 class TransferSessionNotice {
@@ -41,78 +42,12 @@ class TransferSessionNotice {
   final bool clearError;
 }
 
-enum SharedDownloadPreparationStage {
-  preparingRequest,
-  checkingExistingLocalFiles,
-  startingReceiver,
-  waitingForRemote,
-}
-
-enum SharedUploadPreparationStage {
-  resolvingSelection,
-  preparingTransfer,
-  waitingForRequester,
-}
-
-enum SharedDownloadReceiveLayout {
-  preserveRelativeStructure,
-  preserveSharedRoot,
-}
-
 enum RemoteShareAccessStage {
   sendingRequest,
   waitingForApproval,
   syncingCatalog,
   rejected,
   failed,
-}
-
-class SharedDownloadPreparationState {
-  const SharedDownloadPreparationState({
-    required this.requestId,
-    required this.ownerName,
-    required this.stage,
-  });
-
-  final String requestId;
-  final String ownerName;
-  final SharedDownloadPreparationStage stage;
-
-  String get message {
-    switch (stage) {
-      case SharedDownloadPreparationStage.preparingRequest:
-        return 'Подготавливаем запрос для $ownerName...';
-      case SharedDownloadPreparationStage.checkingExistingLocalFiles:
-        return 'Проверяем, какие файлы уже есть локально...';
-      case SharedDownloadPreparationStage.startingReceiver:
-        return 'Запускаем приём для $ownerName...';
-      case SharedDownloadPreparationStage.waitingForRemote:
-        return 'Ждём, пока $ownerName начнёт передачу...';
-    }
-  }
-}
-
-class SharedUploadPreparationState {
-  const SharedUploadPreparationState({
-    required this.requestId,
-    required this.requesterName,
-    required this.stage,
-  });
-
-  final String requestId;
-  final String requesterName;
-  final SharedUploadPreparationStage stage;
-
-  String get message {
-    switch (stage) {
-      case SharedUploadPreparationStage.resolvingSelection:
-        return 'Определяем, что нужно отправить для $requesterName...';
-      case SharedUploadPreparationStage.preparingTransfer:
-        return 'Подготавливаем отправку для $requesterName...';
-      case SharedUploadPreparationStage.waitingForRequester:
-        return 'Ждём, пока $requesterName подтвердит приём...';
-    }
-  }
 }
 
 class RemoteShareAccessState {
@@ -206,7 +141,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     })?
     applyRemoteShareAccessSnapshot,
     SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
-    this.pendingRemoteDownloadTtl = const Duration(minutes: 3),
     this.pendingRemotePreviewTtl = const Duration(minutes: 1),
     this.previewRequestTimeout = const Duration(seconds: 45),
     this.progressResetDelay = const Duration(seconds: 1),
@@ -218,7 +152,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
        _transferStorageService = transferStorageService,
        _downloadHistoryBoundary = downloadHistoryBoundary,
        _previewCacheOwner = previewCacheOwner,
-       _appNotificationService = appNotificationService,
        _settingsProvider = settingsProvider,
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
@@ -229,7 +162,45 @@ class TransferSessionCoordinator extends ChangeNotifier {
            _noopApplyRemoteShareAccessSnapshot,
        _sharedDownloadDiagnosticLogStore =
            sharedDownloadDiagnosticLogStore ??
-           SharedDownloadDiagnosticLogStore.disabled();
+           SharedDownloadDiagnosticLogStore.disabled() {
+    _sharedDownloadBoundary = SharedDownloadBoundary(
+      lanDiscoveryService: lanDiscoveryService,
+      sharedCacheCatalog: sharedCacheCatalog,
+      fileHashService: fileHashService,
+      fileTransferService: fileTransferService,
+      transferStorageService: transferStorageService,
+      appNotificationService: appNotificationService,
+      settingsProvider: settingsProvider,
+      localNameProvider: localNameProvider,
+      localDeviceMacProvider: localDeviceMacProvider,
+      isTrustedSender: isTrustedSender,
+      resolveRemoteOwnerMac: resolveRemoteOwnerMac,
+      publishNotice: _publishNotice,
+      updateDownloadProgress: _updateDownloadProgress,
+      resetDownloadProgress: _resetDownloadProgress,
+      fileTransferDiagnosticLogger: _fileTransferDiagnosticLogger,
+      waitForIncomingTransferResult: _waitForIncomingTransferResult,
+      registerActiveReceiveSession: _registerActiveReceiveSession,
+      removeActiveReceiveSession: _removeActiveReceiveSession,
+      activeReceiveSessionForRequest: _activeReceiveSessionForRequest,
+      registerOutgoingTransfer: _registerOutgoingTransfer,
+      removeOutgoingTransfer: _removeOutgoingTransfer,
+      cleanupTemporaryOutgoingFiles: _cleanupTemporaryOutgoingFiles,
+      hydrateTransferSourceFilesWithHashes:
+          _hydrateTransferSourceFilesWithHashes,
+      sendDirectSharedDownload: _sendDirectSharedDownloadForBoundary,
+      persistWholeShareTransferHashBackfill:
+          _persistWholeShareTransferHashBackfillForBoundary,
+      buildCompressedPreviewFilesForCache:
+          _buildCompressedPreviewFilesForCacheForBoundary,
+      buildTransferFilesForCache: _buildTransferFilesForCacheForBoundary,
+      buildWholeShareDirectStartSendPlan:
+          _buildWholeShareDirectStartSendPlanForBoundary,
+      diagnosticLogStore: _sharedDownloadDiagnosticLogStore,
+      progressResetDelay: progressResetDelay,
+    );
+    _sharedDownloadBoundary.addListener(_notify);
+  }
 
   final LanDiscoveryService _lanDiscoveryService;
   final SharedCacheCatalog _sharedCacheCatalog;
@@ -239,11 +210,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final TransferStorageService _transferStorageService;
   final DownloadHistoryBoundary _downloadHistoryBoundary;
   final PreviewCacheOwner _previewCacheOwner;
-  final AppNotificationService _appNotificationService;
   final AppSettings Function() _settingsProvider;
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
   final bool Function(String? normalizedMac) _isTrustedSender;
+  late final SharedDownloadBoundary _sharedDownloadBoundary;
   final String? Function({required String ownerIp, required String cacheId})
   _resolveRemoteOwnerMac;
   final Future<RemoteShareAccessProjectionLoadResult> Function({
@@ -257,16 +228,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
   final List<IncomingTransferRequest> _incomingRequests =
       <IncomingTransferRequest>[];
-  final List<IncomingSharedDownloadRequest> _incomingSharedDownloadRequests =
-      <IncomingSharedDownloadRequest>[];
   final List<IncomingRemoteShareAccessRequest>
   _incomingRemoteShareAccessRequests = <IncomingRemoteShareAccessRequest>[];
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
-  final Map<String, _PendingRemoteDownloadIntent> _pendingRemoteDownloads =
-      <String, _PendingRemoteDownloadIntent>{};
-  final Map<String, _PendingRemoteDownloadIntent>
-  _pendingRemoteDownloadsByRequestId = <String, _PendingRemoteDownloadIntent>{};
   final Map<String, _PendingRemotePreviewIntent> _pendingRemotePreviewsByKey =
       <String, _PendingRemotePreviewIntent>{};
   final Map<String, Completer<String?>> _previewResultCompletersByRequestId =
@@ -281,7 +246,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final Map<String, List<_PreparedTransferFile>>
   _preparedTransferFilesByScopeKey = <String, List<_PreparedTransferFile>>{};
 
-  final Duration pendingRemoteDownloadTtl;
   final Duration pendingRemotePreviewTtl;
   final Duration previewRequestTimeout;
   final Duration progressResetDelay;
@@ -293,8 +257,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   int _downloadReceivedBytes = 0;
   int _downloadTotalBytes = 0;
   TransferSessionNotice? _pendingNotice;
-  SharedDownloadPreparationState? _sharedDownloadPreparationState;
-  SharedUploadPreparationState? _sharedUploadPreparationState;
   RemoteShareAccessState? _remoteShareAccessState;
   bool _disposed = false;
   int _preparedTransferScopeCacheHits = 0;
@@ -331,37 +293,18 @@ class TransferSessionCoordinator extends ChangeNotifier {
   );
   List<IncomingTransferRequest> get incomingRequests =>
       List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
-  List<IncomingSharedDownloadRequest> get incomingSharedDownloadRequests =>
-      List<IncomingSharedDownloadRequest>.unmodifiable(
-        _incomingSharedDownloadRequests,
-      );
   List<IncomingRemoteShareAccessRequest>
   get incomingRemoteShareAccessRequests =>
       List<IncomingRemoteShareAccessRequest>.unmodifiable(
         _incomingRemoteShareAccessRequests,
       );
-  SharedDownloadPreparationState? get sharedDownloadPreparationState =>
-      _sharedDownloadPreparationState;
-  bool get isPreparingSharedDownload => _sharedDownloadPreparationState != null;
-  SharedUploadPreparationState? get sharedUploadPreparationState =>
-      _sharedUploadPreparationState;
-  bool get isPreparingSharedUpload => _sharedUploadPreparationState != null;
+  SharedDownloadBoundary get sharedDownloadBoundary => _sharedDownloadBoundary;
   RemoteShareAccessState? get remoteShareAccessState => _remoteShareAccessState;
   @visibleForTesting
   int get preparedTransferScopeCacheEntryCount =>
       _preparedTransferFilesByScopeKey.length;
   @visibleForTesting
   int get preparedTransferScopeCacheHits => _preparedTransferScopeCacheHits;
-  @visibleForTesting
-  void debugReplaceIncomingSharedDownloadRequests(
-    List<IncomingSharedDownloadRequest> requests,
-  ) {
-    _incomingSharedDownloadRequests
-      ..clear()
-      ..addAll(requests);
-    _notify();
-  }
-
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;
     _pendingNotice = null;
@@ -406,51 +349,54 @@ class TransferSessionCoordinator extends ChangeNotifier {
     };
   }
 
-  void logSharedDownloadDebug({
-    required String stage,
-    String? requestId,
-    Map<String, Object?> details = const <String, Object?>{},
-    Object? error,
-    StackTrace? stackTrace,
-  }) {
-    _writeSharedDownloadDiagnostic(
-      stage: stage,
-      requestId: requestId,
-      details: details,
-      error: error,
-      stackTrace: stackTrace,
-    );
-  }
-
-  void _setSharedDownloadPreparation({
+  void _updateDownloadProgress({
     required String requestId,
-    required String ownerName,
-    required SharedDownloadPreparationStage stage,
+    required int receivedBytes,
+    required int totalBytes,
   }) {
-    final next = SharedDownloadPreparationState(
-      requestId: requestId,
-      ownerName: ownerName,
-      stage: stage,
-    );
-    if (_sharedDownloadPreparationState?.requestId == next.requestId &&
-        _sharedDownloadPreparationState?.stage == next.stage &&
-        _sharedDownloadPreparationState?.ownerName == next.ownerName) {
-      return;
-    }
-    _sharedDownloadPreparationState = next;
+    _downloadReceivedBytes = receivedBytes;
+    _downloadTotalBytes = totalBytes;
+    _speedTracker.updateDownload(currentBytes: receivedBytes);
     _notify();
   }
 
-  void _clearSharedDownloadPreparation({String? requestId}) {
-    final current = _sharedDownloadPreparationState;
-    if (current == null) {
-      return;
-    }
-    if (requestId != null && current.requestId != requestId) {
-      return;
-    }
-    _sharedDownloadPreparationState = null;
+  void _resetDownloadProgress({int? totalBytes}) {
+    _downloadReceivedBytes = 0;
+    _downloadTotalBytes = totalBytes ?? 0;
+    _speedTracker.resetDownload(currentBytes: 0);
     _notify();
+  }
+
+  void _registerActiveReceiveSession(
+    String requestId,
+    TransferReceiveSession session,
+  ) {
+    _activeReceiveSessions[requestId] = session;
+  }
+
+  TransferReceiveSession? _removeActiveReceiveSession(String requestId) {
+    return _activeReceiveSessions.remove(requestId);
+  }
+
+  TransferReceiveSession? _activeReceiveSessionForRequest(String requestId) {
+    return _activeReceiveSessions[requestId];
+  }
+
+  void _registerOutgoingTransfer({
+    required String requestId,
+    required String receiverName,
+    required List<TransferSourceFile> files,
+    Future<List<TransferSourceFile>>? finalizedFilesFuture,
+  }) {
+    _pendingOutgoingTransfers[requestId] = _OutgoingTransferSession(
+      receiverName: receiverName,
+      files: files,
+      finalizedFilesFuture: finalizedFilesFuture,
+    );
+  }
+
+  void _removeOutgoingTransfer(String requestId) {
+    _pendingOutgoingTransfers.remove(requestId);
   }
 
   void _setSharedUploadPreparation({
@@ -458,30 +404,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String requesterName,
     required SharedUploadPreparationStage stage,
   }) {
-    final next = SharedUploadPreparationState(
+    _sharedDownloadBoundary.setUploadPreparation(
       requestId: requestId,
       requesterName: requesterName,
       stage: stage,
     );
-    if (_sharedUploadPreparationState?.requestId == next.requestId &&
-        _sharedUploadPreparationState?.stage == next.stage &&
-        _sharedUploadPreparationState?.requesterName == next.requesterName) {
-      return;
-    }
-    _sharedUploadPreparationState = next;
-    _notify();
   }
 
   void _clearSharedUploadPreparation({String? requestId}) {
-    final current = _sharedUploadPreparationState;
-    if (current == null) {
-      return;
-    }
-    if (requestId != null && current.requestId != requestId) {
-      return;
-    }
-    _sharedUploadPreparationState = null;
-    _notify();
+    _sharedDownloadBoundary.clearUploadPreparation(requestId: requestId);
   }
 
   void _setRemoteShareAccessState({
@@ -620,355 +551,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     } finally {
       _isSendingTransfer = false;
       _notify();
-    }
-  }
-
-  Future<void> requestDownloadFromRemoteFiles({
-    required String ownerIp,
-    required String ownerName,
-    required Map<String, Set<String>> selectedRelativePathsByCache,
-    Map<String, Set<String>> selectedFolderPrefixesByCache =
-        const <String, Set<String>>{},
-    Map<String, String> sharedLabelsByCache = const <String, String>{},
-    bool preferDirectStart = false,
-    required bool useStandardAppDownloadFolder,
-  }) async {
-    if (selectedRelativePathsByCache.isEmpty &&
-        selectedFolderPrefixesByCache.isEmpty) {
-      _publishNotice(
-        const TransferSessionNotice(
-          errorMessage: 'Select at least one file before requesting download.',
-        ),
-      );
-      return;
-    }
-
-    final normalizedSelection = <String, List<String>>{};
-    final normalizedFolderPrefixes = <String, List<String>>{};
-    var selectedFilesCount = 0;
-    var selectedFolderCount = 0;
-    for (final entry in selectedRelativePathsByCache.entries) {
-      final cacheId = entry.key.trim();
-      if (cacheId.isEmpty) {
-        continue;
-      }
-      final paths =
-          entry.value
-              .map((path) => path.trim())
-              .where((path) => path.isNotEmpty)
-              .toSet()
-              .toList(growable: false)
-            ..sort();
-      normalizedSelection[cacheId] = paths;
-      selectedFilesCount += paths.length;
-    }
-    for (final entry in selectedFolderPrefixesByCache.entries) {
-      final cacheId = entry.key.trim();
-      if (cacheId.isEmpty) {
-        continue;
-      }
-      final prefixes =
-          entry.value
-              .map((path) => path.trim())
-              .where((path) => path.isNotEmpty)
-              .toSet()
-              .toList(growable: false)
-            ..sort();
-      if (prefixes.isEmpty) {
-        continue;
-      }
-      normalizedFolderPrefixes[cacheId] = prefixes;
-      selectedFolderCount += prefixes.length;
-    }
-
-    if (normalizedSelection.isEmpty && normalizedFolderPrefixes.isEmpty) {
-      _publishNotice(
-        const TransferSessionNotice(
-          errorMessage: 'Selected file list is empty.',
-        ),
-      );
-      return;
-    }
-
-    Directory? destinationDirectory;
-    try {
-      destinationDirectory = await _resolveRemoteDownloadDestinationDirectory(
-        useStandardAppDownloadFolder: useStandardAppDownloadFolder,
-      );
-    } catch (error) {
-      _log('Failed to resolve remote download destination: $error');
-      _publishNotice(
-        TransferSessionNotice(
-          errorMessage: 'Failed to choose download destination: $error',
-        ),
-      );
-      return;
-    }
-
-    if (destinationDirectory == null) {
-      return;
-    }
-
-    try {
-      _purgeExpiredPendingRemoteDownloads();
-      final stamp = DateTime.now().microsecondsSinceEpoch;
-      final cacheIds = <String>{
-        ...normalizedSelection.keys,
-        ...normalizedFolderPrefixes.keys,
-      };
-      for (final cacheId in cacheIds) {
-        final selectedPaths = normalizedSelection[cacheId] ?? const <String>[];
-        final folderPrefixes =
-            normalizedFolderPrefixes[cacheId] ?? const <String>[];
-        final sharedLabel = sharedLabelsByCache[cacheId]?.trim() ?? '';
-        final requestsWholeShare =
-            selectedPaths.isEmpty && folderPrefixes.isEmpty;
-        final requestId = _fileHashService.buildStableId(
-          'download|$ownerIp|$cacheId|$stamp|'
-          '${selectedPaths.join(",")}|${folderPrefixes.join(",")}|$_localDeviceMac',
-        );
-        _setSharedDownloadPreparation(
-          requestId: requestId,
-          ownerName: ownerName,
-          stage: SharedDownloadPreparationStage.preparingRequest,
-        );
-        final canUseDirectStart =
-            preferDirectStart &&
-            (selectedPaths.isNotEmpty ||
-                folderPrefixes.isNotEmpty ||
-                (requestsWholeShare && sharedLabel.isNotEmpty));
-        final receiveLayout = _resolveSharedDownloadReceiveLayout(
-          selectedRelativePaths: selectedPaths,
-          selectedFolderPrefixes: folderPrefixes,
-        );
-        final destinationRelativeRootPrefix =
-            receiveLayout == SharedDownloadReceiveLayout.preserveSharedRoot
-            ? _resolveReceiveRootPrefix(sharedLabel)
-            : null;
-        _writeSharedDownloadDiagnostic(
-          stage: 'download_request_preparing',
-          requestId: requestId,
-          details: <String, Object?>{
-            'ownerIp': ownerIp,
-            'ownerName': ownerName,
-            'cacheId': cacheId,
-            'sharedLabel': sharedLabel,
-            'selectedFileCount': selectedPaths.length,
-            'selectedFolderPrefixCount': folderPrefixes.length,
-            'requestsWholeShare': requestsWholeShare,
-            'pathKind': canUseDirectStart ? 'direct_start' : 'legacy',
-          },
-        );
-        if (canUseDirectStart) {
-          final deferReceiverTimeoutUntilSenderReady = requestsWholeShare;
-          _setSharedDownloadPreparation(
-            requestId: requestId,
-            ownerName: ownerName,
-            stage: SharedDownloadPreparationStage.startingReceiver,
-          );
-          _downloadReceivedBytes = 0;
-          _downloadTotalBytes = 0;
-          _speedTracker.resetDownload(currentBytes: 0);
-          _notify();
-          final receiveSession = await _fileTransferService.startReceiver(
-            requestId: requestId,
-            expectedItems: null,
-            destinationDirectory: destinationDirectory,
-            armTimeoutImmediately: !deferReceiverTimeoutUntilSenderReady,
-            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-            onProgress: (received, total) {
-              if (received > 0) {
-                _clearSharedDownloadPreparation(requestId: requestId);
-              }
-              _downloadReceivedBytes = received;
-              _downloadTotalBytes = total;
-              _speedTracker.updateDownload(currentBytes: received);
-              _notify();
-              unawaited(
-                _transferStorageService.showAndroidDownloadProgressNotification(
-                  requestId: requestId,
-                  senderName: ownerName,
-                  receivedBytes: received,
-                  totalBytes: total,
-                ),
-              );
-            },
-            onDiagnosticEvent: _fileTransferDiagnosticLogger(
-              requestId: requestId,
-              baseDetails: <String, Object?>{
-                'pathKind': 'direct_start',
-                'ownerIp': ownerIp,
-                'ownerName': ownerName,
-                'cacheId': cacheId,
-                'sharedLabel': sharedLabel,
-              },
-            ),
-          );
-          _activeReceiveSessions[requestId] = receiveSession;
-          _writeSharedDownloadDiagnostic(
-            stage: deferReceiverTimeoutUntilSenderReady
-                ? 'requester_receiver_wait_deferred_until_sender_ready'
-                : 'requester_receiver_wait_started_immediately',
-            requestId: requestId,
-            details: <String, Object?>{
-              'pathKind': 'direct_start',
-              'ownerIp': ownerIp,
-              'cacheId': cacheId,
-              'requestsWholeShare': requestsWholeShare,
-              'transferPort': receiveSession.port,
-            },
-          );
-          unawaited(
-            _waitForIncomingTransferResult(
-              request: IncomingTransferRequest(
-                requestId: requestId,
-                senderIp: ownerIp,
-                senderName: ownerName,
-                senderMacAddress:
-                    _resolveRemoteOwnerMac(
-                      ownerIp: ownerIp,
-                      cacheId: cacheId,
-                    ) ??
-                    '',
-                sharedCacheId: cacheId,
-                sharedLabel: sharedLabel.isEmpty ? 'Shared files' : sharedLabel,
-                items: const <TransferFileManifestItem>[],
-                createdAt: DateTime.now(),
-              ),
-              session: receiveSession,
-              acceptedItems: const <TransferFileManifestItem>[],
-              persistToUserDownloads: true,
-              recordHistory: true,
-              sendCompletionNotification: true,
-              destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-            ),
-          );
-          try {
-            await _lanDiscoveryService.sendDownloadRequest(
-              targetIp: ownerIp,
-              requestId: requestId,
-              requesterName: _localName,
-              requesterMacAddress: _localDeviceMac,
-              cacheId: cacheId,
-              selectedRelativePaths: selectedPaths,
-              selectedFolderPrefixes: folderPrefixes,
-              transferPort: receiveSession.port,
-            );
-            _writeSharedDownloadDiagnostic(
-              stage: 'download_request_sent',
-              requestId: requestId,
-              details: <String, Object?>{
-                'pathKind': 'direct_start',
-                'ownerIp': ownerIp,
-                'cacheId': cacheId,
-                'transferPort': receiveSession.port,
-                'requestsWholeShare': requestsWholeShare,
-              },
-            );
-            _setSharedDownloadPreparation(
-              requestId: requestId,
-              ownerName: ownerName,
-              stage: SharedDownloadPreparationStage.waitingForRemote,
-            );
-          } catch (error, stackTrace) {
-            _activeReceiveSessions.remove(requestId);
-            await receiveSession.close();
-            _clearSharedDownloadPreparation(requestId: requestId);
-            _writeSharedDownloadDiagnostic(
-              stage: 'download_request_send_failure',
-              requestId: requestId,
-              details: <String, Object?>{
-                'pathKind': 'direct_start',
-                'ownerIp': ownerIp,
-                'cacheId': cacheId,
-              },
-              error: error,
-              stackTrace: stackTrace,
-            );
-            rethrow;
-          }
-        } else {
-          if (requestsWholeShare && sharedLabel.isEmpty && preferDirectStart) {
-            _writeSharedDownloadDiagnostic(
-              stage: 'download_request_direct_start_skipped',
-              requestId: requestId,
-              details: <String, Object?>{
-                'reason': 'missing_shared_label_for_root_preservation',
-                'cacheId': cacheId,
-                'ownerIp': ownerIp,
-              },
-            );
-          }
-          await _lanDiscoveryService.sendDownloadRequest(
-            targetIp: ownerIp,
-            requestId: requestId,
-            requesterName: _localName,
-            requesterMacAddress: _localDeviceMac,
-            cacheId: cacheId,
-            selectedRelativePaths: selectedPaths,
-            selectedFolderPrefixes: folderPrefixes,
-          );
-
-          final pendingKey = _pendingRemoteDownloadKey(
-            ownerIp: ownerIp,
-            cacheId: cacheId,
-          );
-          final pendingIntent = _PendingRemoteDownloadIntent(
-            requestId: requestId,
-            ownerIp: ownerIp,
-            ownerMacAddress: _resolveRemoteOwnerMac(
-              ownerIp: ownerIp,
-              cacheId: cacheId,
-            ),
-            cacheId: cacheId,
-            destinationDirectoryPath: destinationDirectory.path,
-            receiveLayout: receiveLayout,
-            createdAt: DateTime.now(),
-          );
-          _pendingRemoteDownloads[pendingKey] = pendingIntent;
-          _pendingRemoteDownloadsByRequestId[requestId] = pendingIntent;
-          _writeSharedDownloadDiagnostic(
-            stage: 'download_request_sent',
-            requestId: requestId,
-            details: <String, Object?>{
-              'pathKind': 'legacy',
-              'ownerIp': ownerIp,
-              'cacheId': cacheId,
-              'requestsWholeShare': requestsWholeShare,
-            },
-          );
-          _setSharedDownloadPreparation(
-            requestId: requestId,
-            ownerName: ownerName,
-            stage: SharedDownloadPreparationStage.waitingForRemote,
-          );
-        }
-      }
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage: selectedFilesCount > 0
-              ? 'Requested $selectedFilesCount file(s) from $ownerName.'
-              : selectedFolderCount > 0
-              ? 'Requested $selectedFolderCount folder(s) from $ownerName.'
-              : 'Download request sent to $ownerName.',
-          clearError: true,
-        ),
-      );
-    } catch (error, stackTrace) {
-      _clearSharedDownloadPreparation();
-      _log('Failed to request remote download: $error');
-      _writeSharedDownloadDiagnostic(
-        stage: 'download_request_failed',
-        requestId: 'request-batch',
-        details: <String, Object?>{'ownerIp': ownerIp, 'ownerName': ownerName},
-        error: error,
-        stackTrace: stackTrace,
-      );
-      _publishNotice(
-        TransferSessionNotice(
-          errorMessage: 'Failed to request remote download: $error',
-        ),
-      );
     }
   }
 
@@ -1224,7 +806,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             itemsToReceive = <TransferFileManifestItem>[request.items.first];
           }
         } else {
-          _setSharedDownloadPreparation(
+          _sharedDownloadBoundary.setPreparation(
             requestId: request.requestId,
             ownerName: request.senderName,
             stage: SharedDownloadPreparationStage.checkingExistingLocalFiles,
@@ -1243,7 +825,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
 
         if (itemsToReceive.isNotEmpty) {
-          _setSharedDownloadPreparation(
+          _sharedDownloadBoundary.setPreparation(
             requestId: request.requestId,
             ownerName: request.senderName,
             stage: SharedDownloadPreparationStage.startingReceiver,
@@ -1284,7 +866,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
                   ),
             onProgress: (received, total) {
               if (received > 0) {
-                _clearSharedDownloadPreparation(requestId: request.requestId);
+                _sharedDownloadBoundary.clearPreparation(
+                  requestId: request.requestId,
+                );
               }
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
@@ -1339,7 +923,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
             ),
           );
         } else {
-          _clearSharedDownloadPreparation(requestId: request.requestId);
+          _sharedDownloadBoundary.clearPreparation(
+            requestId: request.requestId,
+          );
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
           _speedTracker.clearDownload();
@@ -1367,7 +953,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
       _incomingRequests.removeAt(index);
       if (!decisionApproved) {
-        _clearSharedDownloadPreparation(requestId: request.requestId);
+        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
         _publishNotice(
           TransferSessionNotice(
             infoMessage: isPreview
@@ -1377,7 +963,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (isPreview) {
-        _clearSharedDownloadPreparation(requestId: request.requestId);
+        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
         _publishNotice(
           const TransferSessionNotice(
             infoMessage: 'Preview accepted. Waiting for file stream...',
@@ -1385,7 +971,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (itemsToReceive.isEmpty) {
-        _clearSharedDownloadPreparation(requestId: request.requestId);
+        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
         _publishNotice(
           const TransferSessionNotice(
             infoMessage:
@@ -1394,7 +980,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else if (skippedExistingCount > 0) {
-        _setSharedDownloadPreparation(
+        _sharedDownloadBoundary.setPreparation(
           requestId: request.requestId,
           ownerName: request.senderName,
           stage: SharedDownloadPreparationStage.waitingForRemote,
@@ -1407,7 +993,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           ),
         );
       } else {
-        _setSharedDownloadPreparation(
+        _sharedDownloadBoundary.setPreparation(
           requestId: request.requestId,
           ownerName: request.senderName,
           stage: SharedDownloadPreparationStage.waitingForRemote,
@@ -1420,7 +1006,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
       }
     } catch (error) {
-      _clearSharedDownloadPreparation(requestId: request.requestId);
+      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
       if (receiveSession != null) {
         await receiveSession.close();
         _activeReceiveSessions.remove(request.requestId);
@@ -1466,7 +1052,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
       event.senderMacAddress,
     );
-    final pendingRemoteDownload = _consumePendingRemoteDownload(event);
+    final pendingRemoteDownload = _sharedDownloadBoundary
+        .consumePendingRemoteDownload(event);
     if (pendingRemoteDownload != null) {
       _publishNotice(
         TransferSessionNotice(
@@ -1607,10 +1194,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
   }
 
-  void handleDownloadRequestEvent(DownloadRequestEvent event) {
-    unawaited(_handleDownloadRequest(event));
-  }
-
   void handleShareAccessRequestEvent(ShareAccessRequestEvent event) {
     final normalizedRequesterMac = DeviceAliasRepository.normalizeMac(
       event.requesterMacAddress,
@@ -1737,58 +1320,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
   }
 
-  void handleDownloadResponseEvent(DownloadResponseEvent event) {
-    final pendingDownload = _pendingRemoteDownloadsByRequestId.remove(
-      event.requestId,
-    );
-    if (pendingDownload != null) {
-      final pendingKey = _pendingRemoteDownloadKey(
-        ownerIp: pendingDownload.ownerIp,
-        cacheId: pendingDownload.cacheId,
-      );
-      _pendingRemoteDownloads.remove(pendingKey);
-    }
-
-    if (!event.approved) {
-      final activeReceiveSession = _activeReceiveSessions.remove(
-        event.requestId,
-      );
-      if (activeReceiveSession != null) {
-        unawaited(activeReceiveSession.close());
-      }
-      _clearSharedDownloadPreparation(requestId: event.requestId);
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage: '${event.responderName} отклонил запрос на скачивание.',
-          clearError: true,
-        ),
-      );
-    }
-    _writeSharedDownloadDiagnostic(
-      stage: 'download_response_received',
-      requestId: event.requestId,
-      details: <String, Object?>{
-        'responderIp': event.responderIp,
-        'responderName': event.responderName,
-        'approved': event.approved,
-        'phase': event.phase,
-        'message': event.message,
-      },
-    );
-    if (event.approved && event.phase == 'ready_to_connect') {
-      final activeReceiveSession = _activeReceiveSessions[event.requestId];
-      activeReceiveSession?.armTimeout();
-      _writeSharedDownloadDiagnostic(
-        stage: 'requester_receiver_timeout_armed_from_sender_ready',
-        requestId: event.requestId,
-        details: <String, Object?>{
-          'responderIp': event.responderIp,
-          'responderName': event.responderName,
-        },
-      );
-    }
-  }
-
   Future<void> respondToIncomingRemoteShareAccessRequest({
     required String requestId,
     required bool approved,
@@ -1828,59 +1359,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
 
     await _approveIncomingRemoteShareAccessRequest(request);
-  }
-
-  Future<void> respondToIncomingSharedDownloadRequest({
-    required String requestId,
-    required bool approved,
-  }) async {
-    final index = _incomingSharedDownloadRequests.indexWhere(
-      (request) => request.requestId == requestId,
-    );
-    if (index == -1) {
-      return;
-    }
-    final request = _incomingSharedDownloadRequests.removeAt(index);
-    _notify();
-
-    if (!approved) {
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_download_request_rejected',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'requesterIp': request.requesterIp,
-          'requesterName': request.requesterName,
-          'sharedCacheId': request.sharedCacheId,
-          'sharedLabel': request.sharedLabel,
-        },
-      );
-      await _lanDiscoveryService.sendDownloadResponse(
-        targetIp: request.requesterIp,
-        requestId: request.requestId,
-        responderName: _localName,
-        approved: false,
-        message: 'Отправитель отклонил запрос на скачивание.',
-      );
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage: 'Запрос ${request.requesterName} отклонён.',
-          clearError: true,
-        ),
-      );
-      return;
-    }
-
-    _writeSharedDownloadDiagnostic(
-      stage: 'sender_download_request_approved',
-      requestId: request.requestId,
-      details: <String, Object?>{
-        'requesterIp': request.requesterIp,
-        'requesterName': request.requesterName,
-        'sharedCacheId': request.sharedCacheId,
-        'sharedLabel': request.sharedLabel,
-      },
-    );
-    await _approveIncomingSharedDownloadRequest(request);
   }
 
   Future<void> _approveIncomingRemoteShareAccessRequest(
@@ -2211,6 +1689,47 @@ class TransferSessionCoordinator extends ChangeNotifier {
         _notify();
       });
     }
+  }
+
+  Future<void> _sendDirectSharedDownloadForBoundary({
+    required String requestId,
+    required String targetIp,
+    required String receiverName,
+    required int transferPort,
+    required List<TransferSourceFile> files,
+    List<TransferFileManifestItem>? manifestItems,
+    Future<TransferSourceBatch> Function(int startIndex)? resolveBatch,
+    Future<void> Function(List<TransferStreamedFileHash> hashes)?
+    onSuccessfulStreamedHashes,
+    Map<String, Object?> diagnosticDetails = const <String, Object?>{},
+    bool logWholeShareConnectAttempt = false,
+    Map<String, Object?> wholeShareConnectAttemptDetails =
+        const <String, Object?>{},
+  }) {
+    return _sendDirectSharedDownload(
+      requestId: requestId,
+      targetIp: targetIp,
+      receiverName: receiverName,
+      transferPort: transferPort,
+      files: files,
+      manifestItems: manifestItems,
+      resolveBatch: resolveBatch,
+      onSuccessfulStreamedHashes: onSuccessfulStreamedHashes == null
+          ? null
+          : (hashes) => onSuccessfulStreamedHashes(
+              hashes
+                  .map(
+                    (hash) => TransferStreamedFileHash(
+                      file: hash.file,
+                      computedSha256: hash.computedSha256,
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+      diagnosticDetails: diagnosticDetails,
+      logWholeShareConnectAttempt: logWholeShareConnectAttempt,
+      wholeShareConnectAttemptDetails: wholeShareConnectAttemptDetails,
+    );
   }
 
   void Function(int sentBytes, int totalBytes) _buildUploadProgressEmitter({
@@ -2559,7 +2078,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }) async {
     try {
       final result = await session.result;
-      _clearSharedDownloadPreparation(requestId: request.requestId);
+      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
       _writeSharedDownloadDiagnostic(
         stage: 'receiver_result',
         requestId: request.requestId,
@@ -2751,7 +2270,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         );
       }
     } finally {
-      _clearSharedDownloadPreparation(requestId: request.requestId);
+      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
       _activeReceiveSessions.remove(request.requestId);
       Future<void>.delayed(progressResetDelay, () {
         if (_disposed) {
@@ -2789,725 +2308,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return List<String>.unmodifiable(verified);
   }
 
-  Future<void> _handleDownloadRequest(DownloadRequestEvent event) async {
-    final normalizedRequesterMac = DeviceAliasRepository.normalizeMac(
-      event.requesterMacAddress,
-    );
-    _writeSharedDownloadDiagnostic(
-      stage: 'sender_download_request_received',
-      requestId: event.requestId,
-      details: <String, Object?>{
-        'requesterIp': event.requesterIp,
-        'requesterName': event.requesterName,
-        'requesterMacAddress':
-            normalizedRequesterMac ?? event.requesterMacAddress,
-        'cacheId': event.cacheId,
-        'selectedFileCount': event.selectedRelativePaths.length,
-        'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
-        'previewMode': event.previewMode,
-        'transferPort': event.transferPort,
-        'requestsWholeShare':
-            event.selectedRelativePaths.isEmpty &&
-            event.selectedFolderPrefixes.isEmpty,
-      },
-    );
-    var cache = _findOwnerCacheById(event.cacheId);
-    if (cache == null) {
-      await _sharedCacheCatalog.loadOwnerCaches(
-        ownerMacAddress: _localDeviceMac,
-      );
-      cache = _findOwnerCacheById(event.cacheId);
-    }
-    if (cache == null) {
-      _log(
-        'Download request from ${event.requesterIp} ignored. '
-        'Unknown cacheId=${event.cacheId}',
-      );
-      return;
-    }
-
-    final isPreviewRequest = event.previewMode;
-    final isTrustedFriendRequester =
-        !isPreviewRequest && _isTrustedSender(normalizedRequesterMac);
-    if (!isPreviewRequest &&
-        !isTrustedFriendRequester &&
-        _settingsProvider().downloadAttemptNotificationsEnabled) {
-      unawaited(
-        _appNotificationService.showDownloadAttemptNotification(
-          requesterName: event.requesterName,
-          shareLabel: cache.displayName,
-          requestedFilesCount: event.selectedRelativePaths.length,
-        ),
-      );
-    }
-    if (!isPreviewRequest) {
-      if (!isTrustedFriendRequester) {
-        unawaited(SystemSound.play(SystemSoundType.alert));
-      }
-    }
-
-    _publishNotice(
-      TransferSessionNotice(
-        infoMessage: isPreviewRequest
-            ? 'Preview request from ${event.requesterName}.'
-            : isTrustedFriendRequester
-            ? 'Trusted friend ${event.requesterName} requested "${cache.displayName}". Auto-approving.'
-            : 'Download request from ${event.requesterName} for "${cache.displayName}".',
-        clearError: true,
-      ),
-    );
-
-    if (!isPreviewRequest) {
-      final request = IncomingSharedDownloadRequest(
-        requestId: event.requestId,
-        requesterIp: event.requesterIp,
-        requesterName: event.requesterName,
-        requesterMacAddress: event.requesterMacAddress,
-        sharedCacheId: cache.cacheId,
-        sharedLabel: cache.displayName,
-        selectedRelativePaths: List<String>.from(event.selectedRelativePaths),
-        selectedFolderPrefixes: List<String>.from(event.selectedFolderPrefixes),
-        transferPort: event.transferPort,
-        createdAt: event.observedAt,
-      );
-      if (isTrustedFriendRequester) {
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_download_request_auto_approved_for_friend',
-          requestId: event.requestId,
-          details: <String, Object?>{
-            'requesterIp': event.requesterIp,
-            'requesterName': event.requesterName,
-            'requesterMacAddress':
-                normalizedRequesterMac ?? event.requesterMacAddress,
-            'cacheId': cache.cacheId,
-            'selectedFileCount': event.selectedRelativePaths.length,
-            'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
-            'requestsWholeShare':
-                event.selectedRelativePaths.isEmpty &&
-                event.selectedFolderPrefixes.isEmpty,
-          },
-        );
-        await _approveIncomingSharedDownloadRequest(request);
-        return;
-      }
-      _incomingSharedDownloadRequests.removeWhere(
-        (existing) => existing.requestId == event.requestId,
-      );
-      _incomingSharedDownloadRequests.insert(0, request);
-      _notify();
-      return;
-    }
-
-    final relativePathFilter = event.selectedRelativePaths.isEmpty
-        ? null
-        : event.selectedRelativePaths.toSet();
-    final folderPrefixFilter = event.selectedFolderPrefixes.isEmpty
-        ? null
-        : event.selectedFolderPrefixes.toSet();
-    final deferHashesUntilAccept =
-        !isPreviewRequest &&
-        folderPrefixFilter == null &&
-        event.selectedRelativePaths.length == 1;
-    final hashPreparationMode = deferHashesUntilAccept
-        ? _TransferHashPreparationMode.none
-        : _TransferHashPreparationMode.full;
-    final preparedFiles = isPreviewRequest
-        ? await _buildCompressedPreviewFilesForCache(
-            cache,
-            relativePathFilter: relativePathFilter,
-          )
-        : await _buildTransferFilesForCache(
-            cache,
-            relativePathFilter: relativePathFilter,
-            folderPrefixFilter: folderPrefixFilter,
-            hashPreparationMode: hashPreparationMode,
-          );
-
-    if (preparedFiles.isEmpty) {
-      _log(
-        '${isPreviewRequest ? 'Preview' : 'Download'} request from ${event.requesterIp} ignored. '
-        'No readable files in cacheId=${event.cacheId}',
-      );
-      return;
-    }
-
-    final items = preparedFiles
-        .map((prepared) => prepared.announcement)
-        .toList(growable: false);
-
-    final directTransferPort = isPreviewRequest ? null : event.transferPort;
-    final canUseDirectStart = directTransferPort != null && !isPreviewRequest;
-    if (canUseDirectStart) {
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_direct_start_selected',
-        requestId: event.requestId,
-        details: <String, Object?>{
-          'requesterIp': event.requesterIp,
-          'cacheId': cache.cacheId,
-          'transferPort': directTransferPort,
-          'preparedItemCount': items.length,
-        },
-      );
-      unawaited(
-        _sendDirectSharedDownload(
-          requestId: event.requestId,
-          targetIp: event.requesterIp,
-          receiverName: event.requesterName,
-          transferPort: directTransferPort,
-          files: preparedFiles
-              .map(
-                (prepared) => TransferSourceFile(
-                  sourcePath: prepared.sourcePath,
-                  fileName: prepared.announcement.fileName,
-                  sizeBytes: prepared.announcement.sizeBytes,
-                  sha256: prepared.announcement.sha256,
-                  deleteAfterTransfer: prepared.deleteAfterTransfer,
-                ),
-              )
-              .toList(growable: false),
-          diagnosticDetails: <String, Object?>{
-            'cacheId': cache.cacheId,
-            'sharedLabel': cache.displayName,
-          },
-        ),
-      );
-      _log(
-        'Direct download transfer started for cache ${cache.cacheId} to ${event.requesterIp}. '
-        'items=${items.length}',
-      );
-      return;
-    }
-
-    final requestId = isPreviewRequest
-        ? event.requestId
-        : _fileHashService.buildStableId(
-            'download-share|${event.requestId}|${event.requesterIp}|${cache.cacheId}',
-          );
-
-    try {
-      _pendingOutgoingTransfers[requestId] = _OutgoingTransferSession(
-        receiverName: event.requesterName,
-        files: preparedFiles
-            .map(
-              (prepared) => TransferSourceFile(
-                sourcePath: prepared.sourcePath,
-                fileName: prepared.announcement.fileName,
-                sizeBytes: prepared.announcement.sizeBytes,
-                sha256: prepared.announcement.sha256,
-                deleteAfterTransfer: prepared.deleteAfterTransfer,
-              ),
-            )
-            .toList(growable: false),
-        finalizedFilesFuture: deferHashesUntilAccept
-            ? _hydrateTransferSourceFilesWithHashes(
-                preparedFiles
-                    .map(
-                      (prepared) => TransferSourceFile(
-                        sourcePath: prepared.sourcePath,
-                        fileName: prepared.announcement.fileName,
-                        sizeBytes: prepared.announcement.sizeBytes,
-                        sha256: prepared.announcement.sha256,
-                        deleteAfterTransfer: prepared.deleteAfterTransfer,
-                      ),
-                    )
-                    .toList(growable: false),
-              )
-            : null,
-      );
-
-      await _lanDiscoveryService.sendTransferRequest(
-        targetIp: event.requesterIp,
-        requestId: requestId,
-        senderName: _localName,
-        senderMacAddress: _localDeviceMac,
-        sharedCacheId: cache.cacheId,
-        sharedLabel: isPreviewRequest
-            ? 'Preview: ${cache.displayName}'
-            : cache.displayName,
-        items: items,
-      );
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_legacy_transfer_request_sent',
-        requestId: requestId,
-        details: <String, Object?>{
-          'sourceDownloadRequestId': event.requestId,
-          'requesterIp': event.requesterIp,
-          'cacheId': cache.cacheId,
-          'preparedItemCount': items.length,
-        },
-      );
-    } catch (error) {
-      final pending = _pendingOutgoingTransfers.remove(requestId);
-      if (pending != null) {
-        unawaited(_cleanupTemporaryOutgoingFiles(pending.files));
-      }
-      _log(
-        'Failed to prepare ${isPreviewRequest ? 'preview' : 'download-share'} transfer: $error',
-      );
-      return;
-    }
-
-    _log(
-      'Transfer request sent for cache ${cache.cacheId} to ${event.requesterIp}. '
-      'items=${items.length} preview=$isPreviewRequest',
-    );
-  }
-
-  Future<void> _approveIncomingSharedDownloadRequest(
-    IncomingSharedDownloadRequest request,
-  ) async {
-    final emitWholeShareDirectStartDiagnostics =
-        request.requestsWholeShare && request.transferPort != null;
-    final wholeShareDiagnosticDetails = <String, Object?>{
-      'requesterIp': request.requesterIp,
-      'requesterName': request.requesterName,
-      'sharedCacheId': request.sharedCacheId,
-      'sharedLabel': request.sharedLabel,
-      'pathKind': 'direct_start',
-      'requestsWholeShare': true,
-    };
-    final TransferRuntimeDiagnosticCallback? wholeShareDiagnosticLogger =
-        emitWholeShareDirectStartDiagnostics
-        ? ({
-            required String stage,
-            Map<String, Object?> details = const <String, Object?>{},
-            Object? error,
-            StackTrace? stackTrace,
-          }) {
-            _writeSharedDownloadDiagnostic(
-              stage: stage,
-              requestId: request.requestId,
-              details: <String, Object?>{
-                ...wholeShareDiagnosticDetails,
-                ...details,
-              },
-              error: error,
-              stackTrace: stackTrace,
-            );
-          }
-        : null;
-    _writeSharedDownloadDiagnostic(
-      stage: 'sender_prepare_start',
-      requestId: request.requestId,
-      details: <String, Object?>{
-        'requesterIp': request.requesterIp,
-        'requesterName': request.requesterName,
-        'sharedCacheId': request.sharedCacheId,
-        'sharedLabel': request.sharedLabel,
-        'selectedFileCount': request.selectedRelativePaths.length,
-        'selectedFolderPrefixCount': request.selectedFolderPrefixes.length,
-        'requestsWholeShare': request.requestsWholeShare,
-      },
-    );
-    wholeShareDiagnosticLogger?.call(
-      stage: 'sender_whole_share_prepare_start',
-      details: <String, Object?>{
-        'selectedFileCount': request.selectedRelativePaths.length,
-        'selectedFolderPrefixCount': request.selectedFolderPrefixes.length,
-      },
-    );
-    final cache = _findOwnerCacheById(request.sharedCacheId);
-    if (cache == null) {
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_prepare_failure',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'sharedCacheId': request.sharedCacheId,
-          'reason': 'cache_not_found',
-        },
-      );
-      wholeShareDiagnosticLogger?.call(
-        stage: 'sender_whole_share_prepare_failure',
-        details: const <String, Object?>{'reason': 'cache_not_found'},
-      );
-      _publishNotice(
-        const TransferSessionNotice(
-          errorMessage: 'Не удалось найти запрошенную общую папку.',
-        ),
-      );
-      return;
-    }
-
-    final relativePathFilter = request.selectedRelativePaths.isEmpty
-        ? null
-        : request.selectedRelativePaths.toSet();
-    final folderPrefixFilter = request.selectedFolderPrefixes.isEmpty
-        ? null
-        : request.selectedFolderPrefixes.toSet();
-    final deferHashesUntilAccept =
-        folderPrefixFilter == null && request.selectedRelativePaths.length == 1;
-    final hashPreparationMode = emitWholeShareDirectStartDiagnostics
-        ? _TransferHashPreparationMode.cachedOnly
-        : deferHashesUntilAccept
-        ? _TransferHashPreparationMode.none
-        : _TransferHashPreparationMode.full;
-
-    _setSharedUploadPreparation(
-      requestId: request.requestId,
-      requesterName: request.requesterName,
-      stage: SharedUploadPreparationStage.resolvingSelection,
-    );
-
-    try {
-      final directTransferPort = request.transferPort;
-      final useWholeShareFirstBatchDirectStart =
-          request.requestsWholeShare && directTransferPort != null;
-      if (useWholeShareFirstBatchDirectStart) {
-        final sendPlan = await _buildWholeShareDirectStartSendPlan(
-          cache,
-          onDiagnosticEvent: wholeShareDiagnosticLogger,
-        );
-        if (sendPlan.manifestItems.isEmpty ||
-            sendPlan.firstBatchFiles.isEmpty) {
-          _clearSharedUploadPreparation(requestId: request.requestId);
-          _writeSharedDownloadDiagnostic(
-            stage: 'sender_prepare_failure',
-            requestId: request.requestId,
-            details: <String, Object?>{
-              'sharedCacheId': request.sharedCacheId,
-              'reason': 'no_prepared_files',
-            },
-          );
-          wholeShareDiagnosticLogger?.call(
-            stage: 'sender_whole_share_prepare_failure',
-            details: const <String, Object?>{'reason': 'no_prepared_files'},
-          );
-          await _lanDiscoveryService.sendDownloadResponse(
-            targetIp: request.requesterIp,
-            requestId: request.requestId,
-            responderName: _localName,
-            approved: false,
-            message: 'Не найдено доступных файлов для отправки.',
-          );
-          _publishNotice(
-            const TransferSessionNotice(
-              errorMessage: 'Не удалось подготовить файлы к отправке.',
-            ),
-          );
-          return;
-        }
-
-        _setSharedUploadPreparation(
-          requestId: request.requestId,
-          requesterName: request.requesterName,
-          stage: SharedUploadPreparationStage.preparingTransfer,
-        );
-        final firstBatchKnownHashCount = sendPlan.firstBatchFiles
-            .where((file) => file.sha256.trim().isNotEmpty)
-            .length;
-        final firstBatchMissingHashCount =
-            sendPlan.firstBatchFiles.length - firstBatchKnownHashCount;
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_prepare_complete',
-          requestId: request.requestId,
-          details: <String, Object?>{
-            'sharedCacheId': request.sharedCacheId,
-            'preparedFileCount': sendPlan.firstBatchFiles.length,
-            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
-              0,
-              (sum, file) => sum + file.sizeBytes,
-            ),
-            'preparedKnownHashCount': firstBatchKnownHashCount,
-            'preparedMissingHashCount': firstBatchMissingHashCount,
-            'manifestFileCount': sendPlan.manifestItems.length,
-            'preparationMode': 'whole_share_first_batch',
-            'hashPreparationMode': hashPreparationMode.name,
-          },
-        );
-        wholeShareDiagnosticLogger?.call(
-          stage: 'sender_whole_share_prepare_complete',
-          details: <String, Object?>{
-            'preparedFileCount': sendPlan.firstBatchFiles.length,
-            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
-              0,
-              (sum, file) => sum + file.sizeBytes,
-            ),
-            'preparedKnownHashCount': firstBatchKnownHashCount,
-            'preparedMissingHashCount': firstBatchMissingHashCount,
-            'manifestFileCount': sendPlan.manifestItems.length,
-            'preparationMode': 'whole_share_first_batch',
-            'hashPreparationMode': hashPreparationMode.name,
-          },
-        );
-
-        _clearSharedUploadPreparation(requestId: request.requestId);
-        await _lanDiscoveryService.sendDownloadResponse(
-          targetIp: request.requesterIp,
-          requestId: request.requestId,
-          responderName: _localName,
-          approved: true,
-          phase: 'ready_to_connect',
-          message: 'Отправитель подготовил первую партию отправки.',
-        );
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_ready_to_connect_sent',
-          requestId: request.requestId,
-          details: <String, Object?>{
-            'sharedCacheId': request.sharedCacheId,
-            'transferPort': directTransferPort,
-            'preparedFileCount': sendPlan.firstBatchFiles.length,
-            'manifestFileCount': sendPlan.manifestItems.length,
-          },
-        );
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_direct_start_selected',
-          requestId: request.requestId,
-          details: <String, Object?>{
-            'sharedCacheId': request.sharedCacheId,
-            'transferPort': directTransferPort,
-            'preparedFileCount': sendPlan.firstBatchFiles.length,
-            'manifestFileCount': sendPlan.manifestItems.length,
-            'preparedTotalBytes': sendPlan.firstBatchFiles.fold<int>(
-              0,
-              (sum, file) => sum + file.sizeBytes,
-            ),
-            'preparedKnownHashCount': firstBatchKnownHashCount,
-            'preparedMissingHashCount': firstBatchMissingHashCount,
-            'hashPreparationMode': hashPreparationMode.name,
-            'preparationMode': 'whole_share_first_batch',
-          },
-        );
-        unawaited(
-          _sendDirectSharedDownload(
-            requestId: request.requestId,
-            targetIp: request.requesterIp,
-            receiverName: request.requesterName,
-            transferPort: directTransferPort,
-            files: sendPlan.firstBatchFiles,
-            manifestItems: sendPlan.manifestItems,
-            resolveBatch: sendPlan.resolveBatch,
-            onSuccessfulStreamedHashes: (hashes) =>
-                _persistWholeShareTransferHashBackfill(
-                  requestId: request.requestId,
-                  cache: cache,
-                  streamedHashes: hashes,
-                ),
-            diagnosticDetails: <String, Object?>{
-              'cacheId': request.sharedCacheId,
-              'sharedLabel': request.sharedLabel,
-              'requestsWholeShare': request.requestsWholeShare,
-              'preparationMode': 'whole_share_first_batch',
-            },
-            logWholeShareConnectAttempt: emitWholeShareDirectStartDiagnostics,
-            wholeShareConnectAttemptDetails: wholeShareDiagnosticDetails,
-          ),
-        );
-        return;
-      }
-
-      final preparedFiles = await _buildTransferFilesForCache(
-        cache,
-        relativePathFilter: relativePathFilter,
-        folderPrefixFilter: folderPrefixFilter,
-        hashPreparationMode: hashPreparationMode,
-        onDiagnosticEvent: wholeShareDiagnosticLogger,
-      );
-      if (preparedFiles.isEmpty) {
-        _clearSharedUploadPreparation(requestId: request.requestId);
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_prepare_failure',
-          requestId: request.requestId,
-          details: <String, Object?>{
-            'sharedCacheId': request.sharedCacheId,
-            'reason': 'no_prepared_files',
-          },
-        );
-        wholeShareDiagnosticLogger?.call(
-          stage: 'sender_whole_share_prepare_failure',
-          details: const <String, Object?>{'reason': 'no_prepared_files'},
-        );
-        await _lanDiscoveryService.sendDownloadResponse(
-          targetIp: request.requesterIp,
-          requestId: request.requestId,
-          responderName: _localName,
-          approved: false,
-          message: 'Не найдено доступных файлов для отправки.',
-        );
-        _publishNotice(
-          const TransferSessionNotice(
-            errorMessage: 'Не удалось подготовить файлы к отправке.',
-          ),
-        );
-        return;
-      }
-
-      final transferFiles = preparedFiles
-          .map(
-            (prepared) => TransferSourceFile(
-              sourcePath: prepared.sourcePath,
-              fileName: prepared.announcement.fileName,
-              sizeBytes: prepared.announcement.sizeBytes,
-              sha256: prepared.announcement.sha256,
-              deleteAfterTransfer: prepared.deleteAfterTransfer,
-            ),
-          )
-          .toList(growable: false);
-      _setSharedUploadPreparation(
-        requestId: request.requestId,
-        requesterName: request.requesterName,
-        stage: SharedUploadPreparationStage.preparingTransfer,
-      );
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_prepare_complete',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'sharedCacheId': request.sharedCacheId,
-          'preparedFileCount': transferFiles.length,
-          'preparedTotalBytes': transferFiles.fold<int>(
-            0,
-            (sum, file) => sum + file.sizeBytes,
-          ),
-          'preparedKnownHashCount': transferFiles
-              .where((file) => file.sha256.trim().isNotEmpty)
-              .length,
-          'preparedMissingHashCount': transferFiles
-              .where((file) => file.sha256.trim().isEmpty)
-              .length,
-          'hashPreparationMode': hashPreparationMode.name,
-        },
-      );
-      wholeShareDiagnosticLogger?.call(
-        stage: 'sender_whole_share_prepare_complete',
-        details: <String, Object?>{
-          'preparedFileCount': transferFiles.length,
-          'preparedTotalBytes': transferFiles.fold<int>(
-            0,
-            (sum, file) => sum + file.sizeBytes,
-          ),
-          'preparedKnownHashCount': transferFiles
-              .where((file) => file.sha256.trim().isNotEmpty)
-              .length,
-          'preparedMissingHashCount': transferFiles
-              .where((file) => file.sha256.trim().isEmpty)
-              .length,
-          'hashPreparationMode': hashPreparationMode.name,
-        },
-      );
-
-      final canUseDirectStart = directTransferPort != null;
-      if (canUseDirectStart) {
-        _clearSharedUploadPreparation(requestId: request.requestId);
-        if (request.requestsWholeShare) {
-          await _lanDiscoveryService.sendDownloadResponse(
-            targetIp: request.requesterIp,
-            requestId: request.requestId,
-            responderName: _localName,
-            approved: true,
-            phase: 'ready_to_connect',
-            message: 'Отправитель подготовил отправку. Начинаем соединение.',
-          );
-          _writeSharedDownloadDiagnostic(
-            stage: 'sender_ready_to_connect_sent',
-            requestId: request.requestId,
-            details: <String, Object?>{
-              'sharedCacheId': request.sharedCacheId,
-              'transferPort': directTransferPort,
-              'preparedFileCount': transferFiles.length,
-            },
-          );
-        }
-        _writeSharedDownloadDiagnostic(
-          stage: 'sender_direct_start_selected',
-          requestId: request.requestId,
-          details: <String, Object?>{
-            'sharedCacheId': request.sharedCacheId,
-            'transferPort': directTransferPort,
-            'preparedFileCount': transferFiles.length,
-            'preparedTotalBytes': transferFiles.fold<int>(
-              0,
-              (sum, file) => sum + file.sizeBytes,
-            ),
-            'preparedKnownHashCount': transferFiles
-                .where((file) => file.sha256.trim().isNotEmpty)
-                .length,
-            'preparedMissingHashCount': transferFiles
-                .where((file) => file.sha256.trim().isEmpty)
-                .length,
-            'hashPreparationMode': hashPreparationMode.name,
-          },
-        );
-        unawaited(
-          _sendDirectSharedDownload(
-            requestId: request.requestId,
-            targetIp: request.requesterIp,
-            receiverName: request.requesterName,
-            transferPort: directTransferPort,
-            files: transferFiles,
-            diagnosticDetails: <String, Object?>{
-              'cacheId': request.sharedCacheId,
-              'sharedLabel': request.sharedLabel,
-              'requestsWholeShare': request.requestsWholeShare,
-            },
-            logWholeShareConnectAttempt: emitWholeShareDirectStartDiagnostics,
-            wholeShareConnectAttemptDetails: wholeShareDiagnosticDetails,
-          ),
-        );
-        return;
-      }
-
-      final items = preparedFiles
-          .map((prepared) => prepared.announcement)
-          .toList(growable: false);
-      final transferRequestId = _fileHashService.buildStableId(
-        'download-share|${request.requestId}|${request.requesterIp}|${cache.cacheId}',
-      );
-
-      _pendingOutgoingTransfers[transferRequestId] = _OutgoingTransferSession(
-        receiverName: request.requesterName,
-        files: transferFiles,
-        finalizedFilesFuture: deferHashesUntilAccept
-            ? _hydrateTransferSourceFilesWithHashes(transferFiles)
-            : null,
-      );
-      _setSharedUploadPreparation(
-        requestId: transferRequestId,
-        requesterName: request.requesterName,
-        stage: SharedUploadPreparationStage.waitingForRequester,
-      );
-      await _lanDiscoveryService.sendTransferRequest(
-        targetIp: request.requesterIp,
-        requestId: transferRequestId,
-        senderName: _localName,
-        senderMacAddress: _localDeviceMac,
-        sharedCacheId: cache.cacheId,
-        sharedLabel: cache.displayName,
-        items: items,
-      );
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_legacy_transfer_request_sent',
-        requestId: transferRequestId,
-        details: <String, Object?>{
-          'sourceDownloadRequestId': request.requestId,
-          'sharedCacheId': request.sharedCacheId,
-          'preparedFileCount': transferFiles.length,
-        },
-      );
-    } catch (error, stackTrace) {
-      _clearSharedUploadPreparation(requestId: request.requestId);
-      _writeSharedDownloadDiagnostic(
-        stage: 'sender_prepare_failure',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'sharedCacheId': request.sharedCacheId,
-          'requesterIp': request.requesterIp,
-        },
-        error: error,
-        stackTrace: stackTrace,
-      );
-      wholeShareDiagnosticLogger?.call(
-        stage: 'sender_whole_share_prepare_failure',
-        details: const <String, Object?>{},
-        error: error,
-        stackTrace: stackTrace,
-      );
-      _publishNotice(
-        TransferSessionNotice(
-          errorMessage: 'Не удалось подготовить отправку: $error',
-        ),
-      );
-    }
-  }
-
   Future<void> _cleanupPreviewCacheBySettings() async {
     try {
       final settings = _settingsProvider();
@@ -3538,6 +2338,26 @@ class TransferSessionCoordinator extends ChangeNotifier {
               sizeBytes: file.sizeBytes,
               sha256: file.sha256,
             ),
+            deleteAfterTransfer: file.deleteAfterTransfer,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<List<SharedDownloadPreparedFile>>
+  _buildCompressedPreviewFilesForCacheForBoundary(
+    SharedFolderCacheRecord cache, {
+    Set<String>? relativePathFilter,
+  }) async {
+    final files = await _buildCompressedPreviewFilesForCache(
+      cache,
+      relativePathFilter: relativePathFilter,
+    );
+    return files
+        .map(
+          (file) => SharedDownloadPreparedFile(
+            sourcePath: file.sourcePath,
+            announcement: file.announcement,
             deleteAfterTransfer: file.deleteAfterTransfer,
           ),
         )
@@ -3738,6 +2558,35 @@ class TransferSessionCoordinator extends ChangeNotifier {
       files: preparedItems,
     );
     return preparedItems;
+  }
+
+  Future<List<SharedDownloadPreparedFile>>
+  _buildTransferFilesForCacheForBoundary(
+    SharedFolderCacheRecord cache, {
+    Set<String>? relativePathFilter,
+    Set<String>? folderPrefixFilter,
+    SharedDownloadHashPreparationMode hashPreparationMode =
+        SharedDownloadHashPreparationMode.full,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+  }) async {
+    final files = await _buildTransferFilesForCache(
+      cache,
+      relativePathFilter: relativePathFilter,
+      folderPrefixFilter: folderPrefixFilter,
+      hashPreparationMode: _hashPreparationModeFromBoundary(
+        hashPreparationMode,
+      ),
+      onDiagnosticEvent: onDiagnosticEvent,
+    );
+    return files
+        .map(
+          (file) => SharedDownloadPreparedFile(
+            sourcePath: file.sourcePath,
+            announcement: file.announcement,
+            deleteAfterTransfer: file.deleteAfterTransfer,
+          ),
+        )
+        .toList(growable: false);
   }
 
   Future<_WholeShareDirectStartSendPlan> _buildWholeShareDirectStartSendPlan(
@@ -3949,6 +2798,22 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
   }
 
+  Future<SharedDownloadWholeShareSendPlan>
+  _buildWholeShareDirectStartSendPlanForBoundary(
+    SharedFolderCacheRecord cache, {
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+  }) async {
+    final plan = await _buildWholeShareDirectStartSendPlan(
+      cache,
+      onDiagnosticEvent: onDiagnosticEvent,
+    );
+    return SharedDownloadWholeShareSendPlan(
+      manifestItems: plan.manifestItems,
+      firstBatchFiles: plan.firstBatchFiles,
+      resolveBatch: plan.resolveBatch,
+    );
+  }
+
   Future<TransferSourceBatch> _prepareWholeShareDirectStartContinuationBatch({
     required SharedFolderCacheRecord cache,
     required List<SharedFolderIndexEntry> entries,
@@ -4089,6 +2954,38 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
   }
 
+  Future<void> _persistWholeShareTransferHashBackfillForBoundary({
+    required String requestId,
+    required SharedFolderCacheRecord cache,
+    required List<TransferStreamedFileHash> streamedHashes,
+  }) {
+    return _persistWholeShareTransferHashBackfill(
+      requestId: requestId,
+      cache: cache,
+      streamedHashes: streamedHashes
+          .map(
+            (hash) => _StreamedTransferFileHash(
+              file: hash.file,
+              computedSha256: hash.computedSha256,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
+  _TransferHashPreparationMode _hashPreparationModeFromBoundary(
+    SharedDownloadHashPreparationMode mode,
+  ) {
+    switch (mode) {
+      case SharedDownloadHashPreparationMode.full:
+        return _TransferHashPreparationMode.full;
+      case SharedDownloadHashPreparationMode.cachedOnly:
+        return _TransferHashPreparationMode.cachedOnly;
+      case SharedDownloadHashPreparationMode.none:
+        return _TransferHashPreparationMode.none;
+    }
+  }
+
   String _preparedTransferScopeCacheKey({
     required String cacheId,
     required String selectionFingerprint,
@@ -4123,15 +3020,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     for (final key in keysToRemove) {
       _preparedTransferFilesByScopeKey.remove(key);
     }
-  }
-
-  SharedFolderCacheRecord? _findOwnerCacheById(String cacheId) {
-    for (final cache in _sharedCacheCatalog.ownerCaches) {
-      if (cache.cacheId == cacheId) {
-        return cache;
-      }
-    }
-    return null;
   }
 
   String? _resolveCacheFilePath({
@@ -4331,18 +3219,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return p.joinAll(common);
   }
 
-  SharedDownloadReceiveLayout _resolveSharedDownloadReceiveLayout({
-    required List<String> selectedRelativePaths,
-    required List<String> selectedFolderPrefixes,
-  }) {
-    // File-only and nested-folder selections keep their relative paths.
-    // Only whole-share downloads recreate the shared root as a top-level folder.
-    if (selectedRelativePaths.isEmpty && selectedFolderPrefixes.isEmpty) {
-      return SharedDownloadReceiveLayout.preserveSharedRoot;
-    }
-    return SharedDownloadReceiveLayout.preserveRelativeStructure;
-  }
-
   Duration? _estimateEta({
     required int totalBytes,
     required int transferredBytes,
@@ -4363,13 +3239,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return Duration(seconds: seconds);
   }
 
-  String _pendingRemoteDownloadKey({
-    required String ownerIp,
-    required String cacheId,
-  }) {
-    return '$ownerIp|$cacheId';
-  }
-
   String _pendingRemotePreviewKey({
     required String ownerIp,
     required String cacheId,
@@ -4380,61 +3249,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
   String _normalizeTransferPathForMatch(String value) {
     return value.replaceAll('\\', '/').trim().toLowerCase();
-  }
-
-  _PendingRemoteDownloadIntent? _consumePendingRemoteDownload(
-    TransferRequestEvent event,
-  ) {
-    _purgeExpiredPendingRemoteDownloads();
-    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
-      event.senderMacAddress,
-    );
-
-    String? matchedKey;
-    for (final entry in _pendingRemoteDownloads.entries) {
-      final pending = entry.value;
-      if (pending.cacheId != event.sharedCacheId) {
-        continue;
-      }
-
-      final ipMatches = pending.ownerIp == event.senderIp;
-      final macMatches =
-          pending.ownerMacAddress != null &&
-          normalizedSenderMac != null &&
-          pending.ownerMacAddress == normalizedSenderMac;
-      if (!ipMatches && !macMatches) {
-        continue;
-      }
-
-      matchedKey = entry.key;
-      break;
-    }
-
-    if (matchedKey == null) {
-      return null;
-    }
-    final pending = _pendingRemoteDownloads.remove(matchedKey);
-    if (pending != null) {
-      _pendingRemoteDownloadsByRequestId.remove(pending.requestId);
-    }
-    return pending;
-  }
-
-  Future<Directory?> _resolveRemoteDownloadDestinationDirectory({
-    required bool useStandardAppDownloadFolder,
-  }) async {
-    if (_transferStorageService.supportsDesktopDownloadPicker) {
-      if (useStandardAppDownloadFolder) {
-        return _transferStorageService.resolveReceiveDirectory(
-          appFolderName: 'Landa',
-        );
-      }
-      return _transferStorageService.pickDesktopDownloadDirectory();
-    }
-
-    return _transferStorageService.resolveReceiveDirectory(
-      appFolderName: 'Landa',
-    );
   }
 
   _PendingRemotePreviewIntent? _consumePendingRemotePreview(
@@ -4522,22 +3336,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     });
   }
 
-  void _purgeExpiredPendingRemoteDownloads() {
-    final now = DateTime.now();
-    final expired = <String>[];
-    _pendingRemoteDownloads.removeWhere((_, pending) {
-      final isExpired =
-          now.difference(pending.createdAt) > pendingRemoteDownloadTtl;
-      if (isExpired) {
-        expired.add(pending.requestId);
-      }
-      return isExpired;
-    });
-    for (final requestId in expired) {
-      _pendingRemoteDownloadsByRequestId.remove(requestId);
-    }
-  }
-
   void _publishNotice(TransferSessionNotice notice) {
     _pendingNotice = notice;
     _notify();
@@ -4557,6 +3355,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _sharedDownloadBoundary.removeListener(_notify);
+    _sharedDownloadBoundary.dispose();
     for (final session in _activeReceiveSessions.values) {
       unawaited(session.close());
     }
@@ -4633,26 +3433,6 @@ class _WholeShareDirectStartSendPlan {
   final List<TransferFileManifestItem> manifestItems;
   final List<TransferSourceFile> firstBatchFiles;
   final Future<TransferSourceBatch> Function(int startIndex) resolveBatch;
-}
-
-class _PendingRemoteDownloadIntent {
-  _PendingRemoteDownloadIntent({
-    required this.requestId,
-    required this.ownerIp,
-    required this.ownerMacAddress,
-    required this.cacheId,
-    required this.destinationDirectoryPath,
-    required this.receiveLayout,
-    required this.createdAt,
-  });
-
-  final String requestId;
-  final String ownerIp;
-  final String? ownerMacAddress;
-  final String cacheId;
-  final String destinationDirectoryPath;
-  final SharedDownloadReceiveLayout receiveLayout;
-  final DateTime createdAt;
 }
 
 class _PendingRemotePreviewIntent {

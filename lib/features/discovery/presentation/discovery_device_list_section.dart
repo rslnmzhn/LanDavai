@@ -5,6 +5,7 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
+import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../application/discovery_read_model.dart';
@@ -17,18 +18,23 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.errorMessage,
     required this.isManualRefreshInProgress,
     required this.transferSessionCoordinator,
+    SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
     required this.onOpenDeviceActionsMenu,
     this.padding = const EdgeInsets.all(AppSpacing.md),
     super.key,
-  });
+  }) : _sharedDownloadBoundary = sharedDownloadBoundary;
 
   final DiscoveryReadModel readModel;
   final List<DiscoveredDevice> devices;
   final String? errorMessage;
   final bool isManualRefreshInProgress;
   final TransferSessionCoordinator transferSessionCoordinator;
+  SharedDownloadBoundary get sharedDownloadBoundary =>
+      _sharedDownloadBoundary ??
+      transferSessionCoordinator.sharedDownloadBoundary;
+  final SharedDownloadBoundary? _sharedDownloadBoundary;
   final Future<void> Function() onRefresh;
   final void Function(String ip) onSelectDeviceByIp;
   final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
@@ -47,14 +53,13 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             _ErrorBanner(message: errorMessage!),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator
+          if (sharedDownloadBoundary
               .incomingSharedDownloadRequests
               .isNotEmpty) ...[
             _IncomingSharedDownloadRequestsCard(
-              requests:
-                  transferSessionCoordinator.incomingSharedDownloadRequests,
+              requests: sharedDownloadBoundary.incomingSharedDownloadRequests,
               onRespond: ({required requestId, required approved}) {
-                return transferSessionCoordinator
+                return sharedDownloadBoundary
                     .respondToIncomingSharedDownloadRequest(
                       requestId: requestId,
                       approved: approved,
@@ -81,10 +86,11 @@ class DiscoveryDeviceListSection extends StatelessWidget {
           ],
           if (transferSessionCoordinator.isUploading ||
               transferSessionCoordinator.isDownloading ||
-              transferSessionCoordinator.isPreparingSharedDownload ||
-              transferSessionCoordinator.isPreparingSharedUpload) ...[
+              sharedDownloadBoundary.isPreparingSharedDownload ||
+              sharedDownloadBoundary.isPreparingSharedUpload) ...[
             _TransferProgressCard(
               transferSessionCoordinator: transferSessionCoordinator,
+              sharedDownloadBoundary: sharedDownloadBoundary,
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
@@ -238,9 +244,13 @@ class _ErrorBanner extends StatelessWidget {
 }
 
 class _TransferProgressCard extends StatelessWidget {
-  const _TransferProgressCard({required this.transferSessionCoordinator});
+  const _TransferProgressCard({
+    required this.transferSessionCoordinator,
+    required this.sharedDownloadBoundary,
+  });
 
   final TransferSessionCoordinator transferSessionCoordinator;
+  final SharedDownloadBoundary sharedDownloadBoundary;
 
   @override
   Widget build(BuildContext context) {
@@ -285,7 +295,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
             ],
             if (!transferSessionCoordinator.isUploading &&
-                transferSessionCoordinator.isPreparingSharedUpload) ...[
+                sharedDownloadBoundary.isPreparingSharedUpload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.preparing_upload'.tr(),
@@ -293,9 +303,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
-                transferSessionCoordinator
-                        .sharedUploadPreparationState
-                        ?.message ??
+                sharedDownloadBoundary.sharedUploadPreparationState?.message ??
                     'discovery.transfer.preparing_upload_default'.tr(),
                 style: Theme.of(
                   context,
@@ -340,7 +348,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
             ],
             if (!transferSessionCoordinator.isDownloading &&
-                transferSessionCoordinator.isPreparingSharedDownload) ...[
+                sharedDownloadBoundary.isPreparingSharedDownload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.preparing_download'.tr(),
@@ -348,7 +356,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
-                transferSessionCoordinator
+                sharedDownloadBoundary
                         .sharedDownloadPreparationState
                         ?.message ??
                     'discovery.transfer.preparing_download_default'.tr(),

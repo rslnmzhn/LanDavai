@@ -19,6 +19,7 @@ import '../../nearby_transfer/application/nearby_transfer_session_store.dart';
 import '../../nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
+import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/debug_log_access_service.dart';
 import '../../transfer/data/shared_download_diagnostic_log_store.dart';
@@ -51,6 +52,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.sharedCacheIndexStore,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -73,6 +75,7 @@ class DiscoveryPage extends StatefulWidget {
   final SharedCacheIndexStore sharedCacheIndexStore;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -106,6 +109,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
   PreviewCacheOwner get _previewCacheOwner => widget.previewCacheOwner;
   TransferSessionCoordinator get _transferSessionCoordinator =>
       widget.transferSessionCoordinator;
+  SharedDownloadBoundary get _sharedDownloadBoundary =>
+      widget.sharedDownloadBoundary;
   DownloadHistoryBoundary get _downloadHistoryBoundary =>
       widget.downloadHistoryBoundary;
   ClipboardHistoryStore get _clipboardHistoryStore =>
@@ -216,6 +221,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           errorMessage: _controller.errorMessage,
           isManualRefreshInProgress: _controller.isManualRefreshInProgress,
           transferSessionCoordinator: _transferSessionCoordinator,
+          sharedDownloadBoundary: _sharedDownloadBoundary,
           onRefresh: _controller.refresh,
           onSelectDeviceByIp: _controller.selectDeviceByIp,
           onOpenDeviceActionsMenu: _openDeviceActionsMenu,
@@ -419,6 +425,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           remoteShareBrowser: _remoteShareBrowser,
           previewCacheOwner: _previewCacheOwner,
           transferSessionCoordinator: _transferSessionCoordinator,
+          sharedDownloadBoundary: _sharedDownloadBoundary,
           useStandardAppDownloadFolder:
               _readModel.settings.useStandardAppDownloadFolder,
         ),
