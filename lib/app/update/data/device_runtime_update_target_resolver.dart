@@ -13,10 +13,7 @@ class DeviceRuntimeUpdateTargetResolver {
   Future<AppUpdateTarget> resolve() async {
     if (Platform.isAndroid) {
       final androidInfo = await _deviceInfoPlugin.androidInfo;
-      final preferredAbis = androidInfo.supportedAbis
-          .map((value) => value.trim())
-          .where((value) => value.isNotEmpty)
-          .toList(growable: false);
+      final preferredAbis = _androidAbiPreferences(androidInfo);
       return AppUpdateTarget(
         platform: AppUpdateRuntimePlatform.android,
         archPreferences: preferredAbis.isEmpty
@@ -46,5 +43,62 @@ class DeviceRuntimeUpdateTargetResolver {
       platform: AppUpdateRuntimePlatform.unsupported,
       archPreferences: <String>[],
     );
+  }
+
+  List<String> _androidAbiPreferences(AndroidDeviceInfo androidInfo) {
+    final productAbis = <String>{
+      ...androidInfo.supported64BitAbis
+          .map(_normalizeAndroidAbi)
+          .whereType<String>(),
+      ...androidInfo.supported32BitAbis
+          .map(_normalizeAndroidAbi)
+          .whereType<String>(),
+      ...androidInfo.supportedAbis
+          .map(_normalizeAndroidAbi)
+          .whereType<String>(),
+    };
+    final normalizedRuntimeAbis = _runtimeAbiCandidates()
+        .where(productAbis.contains)
+        .toList(growable: false);
+    if (normalizedRuntimeAbis.isNotEmpty) {
+      return normalizedRuntimeAbis;
+    }
+    return androidInfo.supportedAbis
+        .map(_normalizeAndroidAbi)
+        .where((value) => value != null)
+        .cast<String>()
+        .toList(growable: false);
+  }
+
+  List<String> _runtimeAbiCandidates() {
+    final environmentValues = <String>[
+      Platform.environment['ANDROID_ABI'] ?? '',
+      Platform.environment['ANDROID_CPU_ABI'] ?? '',
+      Platform.environment['ANDROID_CPU_ABI2'] ?? '',
+      Platform.environment['PROCESSOR_ARCHITECTURE'] ?? '',
+    ];
+    return environmentValues
+        .map(_normalizeAndroidAbi)
+        .where((value) => value != null)
+        .cast<String>()
+        .toSet()
+        .toList(growable: false);
+  }
+
+  String? _normalizeAndroidAbi(String raw) {
+    final value = raw.trim().toLowerCase().replaceAll('-', '_');
+    if (value.isEmpty) {
+      return null;
+    }
+    if (value == 'armeabi_v7a' || value == 'armv7l' || value == 'arm') {
+      return 'armeabi-v7a';
+    }
+    if (value == 'arm64_v8a' || value == 'aarch64' || value == 'arm64') {
+      return 'arm64-v8a';
+    }
+    if (value == 'x86_64' || value == 'amd64') {
+      return 'x86_64';
+    }
+    return null;
   }
 }

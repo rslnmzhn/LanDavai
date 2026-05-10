@@ -29,7 +29,7 @@ void main() {
         assetSelector: ({required release, required target}) =>
             throw UnimplementedError(),
         assetDownloader: (asset) async => throw UnimplementedError(),
-        downloadedAssetOpener: ({required asset, required file}) async {},
+        downloadedAssetInstaller: ({required asset, required file}) async {},
       );
 
       final widget = AppSettingsNetworkTab(

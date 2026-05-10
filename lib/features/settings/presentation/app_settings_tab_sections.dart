@@ -261,12 +261,22 @@ class AppSettingsNetworkTab extends StatelessWidget {
                         : 'settings.updates_check'.tr(),
                   ),
                 ),
-                if (appUpdateBoundary.isUpdateAvailable)
+                if (appUpdateBoundary.isUpdateAvailable &&
+                    !appUpdateBoundary.canInstallDownloadedUpdate)
                   OutlinedButton(
                     onPressed: appUpdateBoundary.isApplying
                         ? null
                         : () => unawaited(appUpdateBoundary.applyUpdate()),
                     child: Text(_applyActionLabel(appUpdateBoundary).tr()),
+                  ),
+                if (appUpdateBoundary.canInstallDownloadedUpdate)
+                  OutlinedButton(
+                    onPressed: appUpdateBoundary.isApplying
+                        ? null
+                        : () => unawaited(
+                            appUpdateBoundary.installDownloadedUpdate(),
+                          ),
+                    child: Text('settings.updates_install'.tr()),
                   ),
               ],
             ),
@@ -627,6 +637,9 @@ String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
   }
   if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.readyToInstall) {
     return 'settings.updates_apply_status_ready';
+  }
+  if (appUpdateBoundary.applyMessage == AppUpdateBoundary.fileNotFoundMessage) {
+    return 'settings.updates_apply_status_missing';
   }
   if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.failed) {
     return 'settings.updates_apply_status_failed';
