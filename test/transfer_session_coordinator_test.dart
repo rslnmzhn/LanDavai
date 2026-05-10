@@ -2125,6 +2125,142 @@ void main() {
     );
 
     test(
+      'completed incoming transfer records history only for files present on disk',
+      () async {
+        final fileTransferService = SuccessfulReceiveFileTransferService(
+          resultBuilder: (destinationDirectory) => FileTransferResult(
+            success: true,
+            message: 'ok',
+            savedPaths: <String>[
+              '${destinationDirectory.path}${Platform.pathSeparator}report.txt',
+            ],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
+            totalBytes: 12,
+            destinationDirectory: destinationDirectory.path,
+            hashVerified: true,
+          ),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleTransferRequestEvent(
+          TransferRequestEvent(
+            requestId: 'transfer-history-real-file',
+            senderIp: '192.168.1.40',
+            senderName: 'Remote peer',
+            senderMacAddress: '11:22:33:44:55:66',
+            sharedCacheId: 'remote-cache',
+            sharedLabel: 'Docs',
+            observedAt: DateTime(2026),
+            items: <TransferAnnouncementItem>[
+              TransferAnnouncementItem(
+                fileName: 'report.txt',
+                sizeBytes: 12,
+                sha256: 'abc123',
+              ),
+            ],
+          ),
+        );
+
+        await coordinator.respondToTransferRequest(
+          requestId: 'transfer-history-real-file',
+          approved: true,
+        );
+        await _waitForDownloadHistoryRecords(
+          boundary: downloadHistoryBoundary,
+          expectedCount: 1,
+        );
+
+        final history = downloadHistoryBoundary.records.single;
+        expect(File(history.savedPaths.single).existsSync(), isTrue);
+        expect(File(history.savedPaths.single).lengthSync(), 12);
+      },
+    );
+
+    test(
+      'missing received file fails transfer result handling without history record',
+      () async {
+        final missingPath = p.join(
+          harness.rootDirectory.path,
+          'incoming',
+          'ghost.txt',
+        );
+        final fileTransferService = MissingSavedFileReceiveTransferService(
+          result: FileTransferResult(
+            success: true,
+            message: 'ok',
+            savedPaths: <String>[missingPath],
+            receivedItems: const <TransferFileManifestItem>[
+              TransferFileManifestItem(
+                fileName: 'ghost.txt',
+                sizeBytes: 5,
+                sha256: 'abc123',
+              ),
+            ],
+            totalBytes: 5,
+            destinationDirectory: p.dirname(missingPath),
+            hashVerified: true,
+          ),
+        );
+        final coordinator = _buildCoordinator(
+          lanDiscoveryService: lanDiscoveryService,
+          sharedCacheCatalog: sharedCacheCatalog,
+          sharedCacheIndexStore: sharedCacheIndexStore,
+          fileHashService: fileHashService,
+          fileTransferService: fileTransferService,
+          previewCacheOwner: previewCacheOwner,
+          downloadHistoryBoundary: downloadHistoryBoundary,
+          rootDirectory: harness.rootDirectory,
+        );
+        addTearDown(coordinator.dispose);
+
+        coordinator.handleTransferRequestEvent(
+          TransferRequestEvent(
+            requestId: 'transfer-ghost-file',
+            senderIp: '192.168.1.40',
+            senderName: 'Remote peer',
+            senderMacAddress: '11:22:33:44:55:66',
+            sharedCacheId: 'remote-cache',
+            sharedLabel: 'Docs',
+            observedAt: DateTime(2026),
+            items: <TransferAnnouncementItem>[
+              TransferAnnouncementItem(
+                fileName: 'ghost.txt',
+                sizeBytes: 5,
+                sha256: 'abc123',
+              ),
+            ],
+          ),
+        );
+
+        await coordinator.respondToTransferRequest(
+          requestId: 'transfer-ghost-file',
+          approved: true,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+
+        final notice = coordinator.takePendingNotice();
+        expect(downloadHistoryBoundary.records, isEmpty);
+        expect(notice?.errorMessage, contains('Received file is missing'));
+      },
+    );
+
+    test(
       'remote-share download uses standard desktop root when standard folder setting is enabled',
       () async {
         final fileTransferService = SuccessfulReceiveFileTransferService(
@@ -4674,6 +4810,49 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     lastDestinationDirectoryPath = destinationDirectory.path;
     lastDestinationRelativeRootPrefix = destinationRelativeRootPrefix;
     final result = resultBuilder(destinationDirectory);
+    if (result.success) {
+      for (var index = 0; index < result.savedPaths.length; index += 1) {
+        final file = File(result.savedPaths[index]);
+        await file.parent.create(recursive: true);
+        final sizeBytes = index < result.receivedItems.length
+            ? result.receivedItems[index].sizeBytes
+            : 0;
+        if (!await file.exists()) {
+          await file.writeAsBytes(List<int>.filled(sizeBytes, 0), flush: true);
+        }
+      }
+    }
+    onProgress?.call(result.totalBytes, result.totalBytes);
+    return TransferReceiveSession(
+      port: 40404,
+      result: Future<FileTransferResult>.value(result),
+      armTimeout: () {},
+      close: () async {},
+    );
+  }
+}
+
+class MissingSavedFileReceiveTransferService extends FileTransferService {
+  MissingSavedFileReceiveTransferService({required this.result});
+
+  final FileTransferResult result;
+
+  @override
+  Future<TransferReceiveSession> startReceiver({
+    required String requestId,
+    required List<TransferFileManifestItem>? expectedItems,
+    required Directory destinationDirectory,
+    Duration timeout = const Duration(minutes: 3),
+    bool armTimeoutImmediately = true,
+    void Function(int receivedBytes, int totalBytes)? onProgress,
+    String? destinationRelativeRootPrefix,
+    Future<String> Function({
+      required Directory destinationDirectory,
+      required String relativePath,
+    })?
+    destinationPathAllocator,
+    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+  }) async {
     onProgress?.call(result.totalBytes, result.totalBytes);
     return TransferReceiveSession(
       port: 40404,
@@ -5017,6 +5196,14 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
               relativePath: item.fileName,
             );
       savedPaths.add(destinationPath);
+      final file = File(destinationPath);
+      await file.parent.create(recursive: true);
+      if (!await file.exists()) {
+        await file.writeAsBytes(
+          List<int>.filled(item.sizeBytes, 0),
+          flush: true,
+        );
+      }
     }
     final totalBytes = manifestItems.fold<int>(
       0,
@@ -5180,6 +5367,22 @@ class RecordingTransferStorageService extends TransferStorageService {
     String appFolderName = 'Landa',
   }) async {
     publishToUserDownloadsCalls += 1;
+    if (publishedDownloadPaths != null) {
+      for (var index = 0; index < publishedDownloadPaths!.length; index += 1) {
+        final target = File(publishedDownloadPaths![index]);
+        await target.parent.create(recursive: true);
+        if (!await target.exists()) {
+          final source = index < sourcePaths.length
+              ? File(sourcePaths[index])
+              : null;
+          if (source != null && await source.exists()) {
+            await source.copy(target.path);
+          } else {
+            await target.writeAsBytes(const <int>[], flush: true);
+          }
+        }
+      }
+    }
     return publishedDownloadPaths ?? sourcePaths;
   }
 

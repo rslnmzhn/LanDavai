@@ -66,6 +66,102 @@ void main() {
     );
 
     test(
+      'receiver commits only flushed files and removes temp artifacts',
+      () async {
+        final sourceFile = File(p.join(rootDirectory.path, 'source', 'c.bin'));
+        await sourceFile.parent.create(recursive: true);
+        final bytes = List<int>.generate(1024 * 1024, (index) => index % 251);
+        await sourceFile.writeAsBytes(bytes, flush: true);
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-flushed-file',
+          expectedItems: null,
+          destinationDirectory: destinationDirectory,
+        );
+
+        await service.sendFiles(
+          host: InternetAddress.loopbackIPv4.address,
+          port: receiveSession.port,
+          requestId: 'request-flushed-file',
+          files: <TransferSourceFile>[
+            TransferSourceFile(
+              sourcePath: sourceFile.path,
+              fileName: 'nested/c.bin',
+              sizeBytes: await sourceFile.length(),
+              sha256: '',
+            ),
+          ],
+        );
+        final result = await receiveSession.result;
+        final savedFile = File(result.savedPaths.single);
+        final leftoverTempFiles = await destinationDirectory
+            .list(recursive: true)
+            .where((entity) => p.basename(entity.path).contains('.landa-part'))
+            .toList();
+
+        expect(result.success, isTrue);
+        expect(await savedFile.exists(), isTrue);
+        expect(await savedFile.length(), bytes.length);
+        expect(await savedFile.readAsBytes(), bytes);
+        expect(leftoverTempFiles, isEmpty);
+      },
+    );
+
+    test(
+      'receiver fails without reporting success when final path cannot be committed',
+      () async {
+        final sourceFile = File(p.join(rootDirectory.path, 'source', 'd.bin'));
+        await sourceFile.parent.create(recursive: true);
+        await sourceFile.writeAsBytes(List<int>.filled(128, 4), flush: true);
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final blockedDestination = Directory(
+          p.join(destinationDirectory.path, 'blocked.bin'),
+        );
+        await blockedDestination.create(recursive: true);
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-blocked-destination',
+          expectedItems: null,
+          destinationDirectory: destinationDirectory,
+          destinationPathAllocator:
+              ({
+                required Directory destinationDirectory,
+                required String relativePath,
+              }) async => blockedDestination.path,
+        );
+
+        await service.sendFiles(
+          host: InternetAddress.loopbackIPv4.address,
+          port: receiveSession.port,
+          requestId: 'request-blocked-destination',
+          files: <TransferSourceFile>[
+            TransferSourceFile(
+              sourcePath: sourceFile.path,
+              fileName: 'blocked.bin',
+              sizeBytes: await sourceFile.length(),
+              sha256: '',
+            ),
+          ],
+        );
+        final result = await receiveSession.result;
+        final leftoverTempFiles = await destinationDirectory
+            .list(recursive: true)
+            .where((entity) => p.basename(entity.path).contains('.landa-part'))
+            .toList();
+
+        expect(result.success, isFalse);
+        expect(result.savedPaths, isEmpty);
+        expect(result.message, contains('Transfer receive failed'));
+        expect(leftoverTempFiles, isEmpty);
+      },
+    );
+
+    test(
       'transfer still verifies hash when manifest hash is provided',
       () async {
         final sourceFile = File(p.join(rootDirectory.path, 'source', 'b.txt'));
