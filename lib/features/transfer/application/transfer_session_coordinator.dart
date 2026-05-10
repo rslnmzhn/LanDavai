@@ -25,6 +25,7 @@ import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
+import 'transfer_speed_tracker.dart';
 
 class TransferSessionNotice {
   const TransferSessionNotice({
@@ -286,16 +287,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final Duration progressResetDelay;
 
   bool _isSendingTransfer = false;
+  final TransferSpeedTracker _speedTracker = TransferSpeedTracker();
   int _uploadSentBytes = 0;
   int _uploadTotalBytes = 0;
   int _downloadReceivedBytes = 0;
   int _downloadTotalBytes = 0;
-  double _uploadSpeedBytesPerSecond = 0;
-  double _downloadSpeedBytesPerSecond = 0;
-  DateTime? _uploadSpeedSampleAt;
-  DateTime? _downloadSpeedSampleAt;
-  int _uploadSpeedSampleBytes = 0;
-  int _downloadSpeedSampleBytes = 0;
   TransferSessionNotice? _pendingNotice;
   SharedDownloadPreparationState? _sharedDownloadPreparationState;
   SharedUploadPreparationState? _sharedUploadPreparationState;
@@ -317,18 +313,20 @@ class TransferSessionCoordinator extends ChangeNotifier {
   int get uploadTotalBytes => _uploadTotalBytes;
   int get downloadReceivedBytes => _downloadReceivedBytes;
   int get downloadTotalBytes => _downloadTotalBytes;
-  double get uploadSpeedBytesPerSecond => _uploadSpeedBytesPerSecond;
-  double get downloadSpeedBytesPerSecond => _downloadSpeedBytesPerSecond;
+  double get uploadSpeedBytesPerSecond =>
+      _speedTracker.uploadSpeedBytesPerSecond;
+  double get downloadSpeedBytesPerSecond =>
+      _speedTracker.downloadSpeedBytesPerSecond;
   Duration? get uploadEta => _estimateEta(
     totalBytes: _uploadTotalBytes,
     transferredBytes: _uploadSentBytes,
-    speedBytesPerSecond: _uploadSpeedBytesPerSecond,
+    speedBytesPerSecond: uploadSpeedBytesPerSecond,
     isActive: isUploading,
   );
   Duration? get downloadEta => _estimateEta(
     totalBytes: _downloadTotalBytes,
     transferredBytes: _downloadReceivedBytes,
-    speedBytesPerSecond: _downloadSpeedBytesPerSecond,
+    speedBytesPerSecond: downloadSpeedBytesPerSecond,
     isActive: isDownloading,
   );
   List<IncomingTransferRequest> get incomingRequests =>
@@ -770,7 +768,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           );
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
-          _resetDownloadSpeedTracking(currentBytes: 0);
+          _speedTracker.resetDownload(currentBytes: 0);
           _notify();
           final receiveSession = await _fileTransferService.startReceiver(
             requestId: requestId,
@@ -784,7 +782,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
               }
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
-              _updateDownloadSpeedTracking(currentBytes: received);
+              _speedTracker.updateDownload(currentBytes: received);
               _notify();
               unawaited(
                 _transferStorageService.showAndroidDownloadProgressNotification(
@@ -1252,7 +1250,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           );
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = expectedBytes;
-          _resetDownloadSpeedTracking(currentBytes: 0);
+          _speedTracker.resetDownload(currentBytes: 0);
           _notify();
 
           if (!isPreview) {
@@ -1290,7 +1288,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
               }
               _downloadReceivedBytes = received;
               _downloadTotalBytes = total;
-              _updateDownloadSpeedTracking(currentBytes: received);
+              _speedTracker.updateDownload(currentBytes: received);
               _notify();
 
               if (isPreview) {
@@ -1344,7 +1342,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
           _clearSharedDownloadPreparation(requestId: request.requestId);
           _downloadReceivedBytes = 0;
           _downloadTotalBytes = 0;
-          _clearDownloadSpeedTracking();
+          _speedTracker.clearDownload();
           if (isPreview) {
             decisionApproved = false;
             if (previewCompleter != null && !previewCompleter.isCompleted) {
@@ -2024,7 +2022,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       0,
       (sum, file) => sum + file.sizeBytes,
     );
-    _resetUploadSpeedTracking(currentBytes: 0);
+    _speedTracker.resetUpload(currentBytes: 0);
     _notify();
 
     try {
@@ -2044,12 +2042,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
         onProgress: (sent, total) {
           _uploadSentBytes = sent;
           _uploadTotalBytes = total;
-          _updateUploadSpeedTracking(currentBytes: sent);
+          _speedTracker.updateUpload(currentBytes: sent);
           _notify();
         },
       );
       _uploadSentBytes = _uploadTotalBytes;
-      _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
+      _speedTracker.updateUpload(currentBytes: _uploadSentBytes);
       _publishNotice(
         TransferSessionNotice(
           infoMessage:
@@ -2071,7 +2069,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         }
         _uploadSentBytes = 0;
         _uploadTotalBytes = 0;
-        _clearUploadSpeedTracking();
+        _speedTracker.clearUpload();
         _notify();
       });
       _notify();
@@ -2099,7 +2097,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _uploadTotalBytes =
         manifestItems?.fold<int>(0, (sum, file) => sum + file.sizeBytes) ??
         files.fold<int>(0, (sum, file) => sum + file.sizeBytes);
-    _resetUploadSpeedTracking(currentBytes: 0);
+    _speedTracker.resetUpload(currentBytes: 0);
     _notify();
 
     try {
@@ -2173,7 +2171,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         }
       }
       _uploadSentBytes = _uploadTotalBytes;
-      _updateUploadSpeedTracking(currentBytes: _uploadSentBytes);
+      _speedTracker.updateUpload(currentBytes: _uploadSentBytes);
       _notify();
       if (logWholeShareConnectAttempt) {
         _writeSharedDownloadDiagnostic(
@@ -2209,7 +2207,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         }
         _uploadSentBytes = 0;
         _uploadTotalBytes = 0;
-        _clearUploadSpeedTracking();
+        _speedTracker.clearUpload();
         _notify();
       });
     }
@@ -2224,7 +2222,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       return (sent, total) {
         _uploadSentBytes = sent;
         _uploadTotalBytes = total;
-        _updateUploadSpeedTracking(currentBytes: sent);
+        _speedTracker.updateUpload(currentBytes: sent);
         _notify();
       };
     }
@@ -2250,7 +2248,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
       _uploadSentBytes = sent;
       _uploadTotalBytes = total;
-      _updateUploadSpeedTracking(currentBytes: sent);
+      _speedTracker.updateUpload(currentBytes: sent);
       _notify();
       lastEmittedAt = now;
       lastEmittedBytes = sent;
@@ -2702,7 +2700,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         }
 
         _downloadReceivedBytes = _downloadTotalBytes;
-        _updateDownloadSpeedTracking(currentBytes: _downloadReceivedBytes);
+        _speedTracker.updateDownload(currentBytes: _downloadReceivedBytes);
       } else {
         if (previewCompleter != null && !previewCompleter.isCompleted) {
           previewCompleter.complete(null);
@@ -2761,7 +2759,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         }
         _downloadReceivedBytes = 0;
         _downloadTotalBytes = 0;
-        _clearDownloadSpeedTracking();
+        _speedTracker.clearDownload();
         _notify();
       });
       _notify();
@@ -4363,94 +4361,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
     final seconds = (remaining / speedBytesPerSecond).ceil();
     return Duration(seconds: seconds);
-  }
-
-  void _resetUploadSpeedTracking({required int currentBytes}) {
-    _uploadSpeedBytesPerSecond = 0;
-    _uploadSpeedSampleBytes = currentBytes;
-    _uploadSpeedSampleAt = DateTime.now();
-  }
-
-  void _updateUploadSpeedTracking({required int currentBytes}) {
-    final now = DateTime.now();
-    final sampleAt = _uploadSpeedSampleAt;
-    if (sampleAt == null) {
-      _uploadSpeedSampleAt = now;
-      _uploadSpeedSampleBytes = currentBytes;
-      return;
-    }
-
-    final elapsedMs = now.difference(sampleAt).inMilliseconds;
-    final deltaBytes = currentBytes - _uploadSpeedSampleBytes;
-    if (deltaBytes < 0) {
-      _uploadSpeedSampleAt = now;
-      _uploadSpeedSampleBytes = currentBytes;
-      _uploadSpeedBytesPerSecond = 0;
-      return;
-    }
-    if (elapsedMs < 250 || deltaBytes == 0) {
-      return;
-    }
-
-    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
-    if (_uploadSpeedBytesPerSecond <= 0) {
-      _uploadSpeedBytesPerSecond = instantSpeed;
-    } else {
-      _uploadSpeedBytesPerSecond =
-          (_uploadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
-    }
-    _uploadSpeedSampleAt = now;
-    _uploadSpeedSampleBytes = currentBytes;
-  }
-
-  void _clearUploadSpeedTracking() {
-    _uploadSpeedBytesPerSecond = 0;
-    _uploadSpeedSampleBytes = 0;
-    _uploadSpeedSampleAt = null;
-  }
-
-  void _resetDownloadSpeedTracking({required int currentBytes}) {
-    _downloadSpeedBytesPerSecond = 0;
-    _downloadSpeedSampleBytes = currentBytes;
-    _downloadSpeedSampleAt = DateTime.now();
-  }
-
-  void _updateDownloadSpeedTracking({required int currentBytes}) {
-    final now = DateTime.now();
-    final sampleAt = _downloadSpeedSampleAt;
-    if (sampleAt == null) {
-      _downloadSpeedSampleAt = now;
-      _downloadSpeedSampleBytes = currentBytes;
-      return;
-    }
-
-    final elapsedMs = now.difference(sampleAt).inMilliseconds;
-    final deltaBytes = currentBytes - _downloadSpeedSampleBytes;
-    if (deltaBytes < 0) {
-      _downloadSpeedSampleAt = now;
-      _downloadSpeedSampleBytes = currentBytes;
-      _downloadSpeedBytesPerSecond = 0;
-      return;
-    }
-    if (elapsedMs < 250 || deltaBytes == 0) {
-      return;
-    }
-
-    final instantSpeed = (deltaBytes * 1000) / elapsedMs;
-    if (_downloadSpeedBytesPerSecond <= 0) {
-      _downloadSpeedBytesPerSecond = instantSpeed;
-    } else {
-      _downloadSpeedBytesPerSecond =
-          (_downloadSpeedBytesPerSecond * 0.7) + (instantSpeed * 0.3);
-    }
-    _downloadSpeedSampleAt = now;
-    _downloadSpeedSampleBytes = currentBytes;
-  }
-
-  void _clearDownloadSpeedTracking() {
-    _downloadSpeedBytesPerSecond = 0;
-    _downloadSpeedSampleBytes = 0;
-    _downloadSpeedSampleAt = null;
   }
 
   String _pendingRemoteDownloadKey({
