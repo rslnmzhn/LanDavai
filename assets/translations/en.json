@@ -71,6 +71,22 @@
     "title": "Landa is already running",
     "message": "Another instance of Landa is already running on this device. Close it before starting again."
   },
+  "share_target": {
+    "title": "Send shared files",
+    "open_app": "Open app",
+    "ready_title": "Ready to send",
+    "file_count": "{count} file(s) selected",
+    "device_online": "Online",
+    "device_offline": "Offline",
+    "sending_title": "Starting transfer",
+    "sending_message": "Preparing the selected files for the trusted device.",
+    "error_title": "Could not start transfer",
+    "error_message": "Transfer could not be started: {error}",
+    "empty_payload_title": "No shared files found",
+    "empty_payload_message": "Open Landa and share files again when you are ready.",
+    "empty_friends_title": "No trusted devices nearby",
+    "empty_friends_message": "Open the app to discover devices or add a device as a friend."
+  },
   "discovery": {
     "action_bar": {
       "download": "Download",

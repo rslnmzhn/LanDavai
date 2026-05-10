@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 
 import 'discovery/discovery_composition.dart';
 import '../features/discovery/presentation/discovery_page.dart';
+import 'router.dart';
 
 class DiscoveryPageEntry extends StatefulWidget {
   const DiscoveryPageEntry({
@@ -24,11 +25,15 @@ class DiscoveryPageEntry extends StatefulWidget {
 class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
   late final DiscoveryCompositionResult _composition;
   bool _isBoundaryReady = false;
+  bool _shareRouteOpened = false;
 
   @override
   void initState() {
     super.initState();
     _composition = widget.composition ?? widget.compositionFactory.create();
+    _composition.pageDependencies.shareReceiveBoundary.addListener(
+      _handleShareBoundaryChanged,
+    );
     if (widget.autoStartController) {
       unawaited(_initializeComposition());
     }
@@ -36,6 +41,9 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
 
   @override
   void dispose() {
+    _composition.pageDependencies.shareReceiveBoundary.removeListener(
+      _handleShareBoundaryChanged,
+    );
     _composition.dispose();
     super.dispose();
   }
@@ -76,6 +84,40 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
     }
     setState(() {
       _isBoundaryReady = true;
+    });
+    _openShareTargetIfNeeded();
+  }
+
+  void _handleShareBoundaryChanged() {
+    _openShareTargetIfNeeded();
+  }
+
+  void _openShareTargetIfNeeded() {
+    if (!mounted || _shareRouteOpened) {
+      return;
+    }
+    final pageDependencies = _composition.pageDependencies;
+    if (!pageDependencies.shareReceiveBoundary.hasPendingShare) {
+      return;
+    }
+
+    _shareRouteOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) {
+        return;
+      }
+      await Navigator.of(context).pushNamed(
+        AppRoutes.shareTarget,
+        arguments: ShareTargetRouteArguments(
+          shareReceiveBoundary: pageDependencies.shareReceiveBoundary,
+          readModel: pageDependencies.readModel,
+          transferSessionCoordinator: pageDependencies.transferSessionCoordinator,
+        ),
+      );
+      if (mounted) {
+        _shareRouteOpened = false;
+        _openShareTargetIfNeeded();
+      }
     });
   }
 }

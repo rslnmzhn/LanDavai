@@ -45,6 +45,7 @@ import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
 import 'package:landa/features/nearby_transfer/data/wifi_direct_transport_adapter.dart';
 import 'package:landa/features/settings/application/settings_store.dart';
 import 'package:landa/features/settings/data/app_settings_repository.dart';
+import 'package:landa/features/share_target/application/share_receive_boundary.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
@@ -77,6 +78,7 @@ class TestDiscoveryControllerHarness {
     required this.remoteClipboardProjectionStore,
     required this.previewCacheOwner,
     required this.appUpdateBoundary,
+    required this.shareReceiveBoundary,
     required this.pathOpener,
   });
 
@@ -97,6 +99,7 @@ class TestDiscoveryControllerHarness {
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
   final PreviewCacheOwner previewCacheOwner;
   final AppUpdateBoundary appUpdateBoundary;
+  final ShareReceiveBoundary shareReceiveBoundary;
   final PathOpener pathOpener;
 
   DiscoveryCompositionResult createEntryComposition({
@@ -121,6 +124,7 @@ class TestDiscoveryControllerHarness {
         desktopWindowService: desktopWindowService,
         transferStorageService: transferStorageService,
         appUpdateBoundary: appUpdateBoundary,
+        shareReceiveBoundary: shareReceiveBoundary,
         createNearbyTransferSessionStore: createNearbyTransferSessionStore,
       ),
     );
@@ -343,6 +347,9 @@ class TestDiscoveryControllerHarness {
             );
           },
     );
+    final shareReceiveBoundary = ShareReceiveBoundary(
+      consumePendingSharedFiles: () async => const <String>[],
+    );
 
     return TestDiscoveryControllerHarness._(
       databaseHarness: databaseHarness,
@@ -362,6 +369,7 @@ class TestDiscoveryControllerHarness {
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
       previewCacheOwner: previewCacheOwner,
       appUpdateBoundary: appUpdateBoundary,
+      shareReceiveBoundary: shareReceiveBoundary,
       pathOpener: resolvedPathOpener,
     );
   }
@@ -374,6 +382,7 @@ class TestDiscoveryControllerHarness {
       controller.dispose();
     }
     appUpdateBoundary.dispose();
+    shareReceiveBoundary.dispose();
     remoteShareBrowser.dispose();
     previewCacheOwner.dispose();
     await databaseHarness.dispose();
