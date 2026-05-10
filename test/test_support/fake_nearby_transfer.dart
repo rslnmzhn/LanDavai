@@ -20,6 +20,7 @@ class FakeNearbyTransferTransportAdapter
     this.supportsVisibleCandidatePairing = true,
     this.emitDisconnectedOnDisconnect = false,
     this.onSendSelection,
+    this.connectError,
   });
 
   final bool supported;
@@ -32,6 +33,7 @@ class FakeNearbyTransferTransportAdapter
     NearbyTransferSelection selection,
   )?
   onSendSelection;
+  final Object? connectError;
 
   final StreamController<NearbyTransferTransportEvent> _events =
       StreamController<NearbyTransferTransportEvent>.broadcast();
@@ -94,6 +96,10 @@ class FakeNearbyTransferTransportAdapter
     lastConnectHost = host;
     lastConnectPort = port;
     lastExpectedSessionId = expectedSessionId;
+    final error = connectError;
+    if (error != null) {
+      throw error;
+    }
   }
 
   @override

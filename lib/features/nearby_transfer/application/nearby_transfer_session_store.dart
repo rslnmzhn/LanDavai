@@ -359,29 +359,29 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _selectedCandidateId = candidate.id;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
-    await adapter.connectToSession(
-      host: candidate.host,
-      port: port,
-      localDeviceId: _localDeviceIdProvider(),
-      localDeviceName: _localDeviceNameProvider(),
-    );
+    try {
+      await adapter.connectToSession(
+        host: candidate.host,
+        port: port,
+        localDeviceId: _localDeviceIdProvider(),
+        localDeviceName: _localDeviceNameProvider(),
+      );
+    } catch (error) {
+      await _resetFailedConnectAttempt(
+        'Не удалось подключиться к устройству: $error',
+      );
+    }
   }
 
   Future<void> handleQrPayloadText(String rawPayload) async {
-    final payload = _qrCodec.decode(rawPayload);
-    if (payload == null ||
-        payload.transportMode != NearbyTransferMode.lanFallback) {
-      return;
-    }
-
-    final host = payload.transportInfo['host'] as String?;
-    final port = (payload.transportInfo['port'] as num?)?.toInt();
-    final sessionId = payload.transportInfo['sessionId'] as String?;
-    if (host == null || port == null || sessionId == null) {
+    final connection = _qrCodec.decodeLanFallbackConnection(rawPayload);
+    if (connection == null) {
+      await _resetFailedConnectAttempt('QR-код недействителен или устарел.');
       return;
     }
     final adapter = _activeAdapter;
     if (adapter == null) {
+      await _resetFailedConnectAttempt('Приём рядом не готов к подключению.');
       return;
     }
     if (_phase == NearbyTransferSessionPhase.connecting ||
@@ -393,13 +393,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _autoAcceptPendingHandshake = true;
     _phase = NearbyTransferSessionPhase.connecting;
     notifyListeners();
-    await adapter.connectToSession(
-      host: host,
-      port: port,
-      localDeviceId: _localDeviceIdProvider(),
-      localDeviceName: _localDeviceNameProvider(),
-      expectedSessionId: sessionId,
-    );
+    try {
+      await adapter.connectToSession(
+        host: connection.host,
+        port: connection.port,
+        localDeviceId: _localDeviceIdProvider(),
+        localDeviceName: _localDeviceNameProvider(),
+        expectedSessionId: connection.sessionId,
+      );
+    } catch (error) {
+      await _resetFailedConnectAttempt(
+        'Не удалось подключиться по QR: $error',
+      );
+    }
   }
 
   Future<void> selectHandshakeChoice(List<String> choice) async {
@@ -751,6 +757,11 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     }
     if (event is NearbyTransferErrorEvent) {
       _setBanner(event.message, isError: true);
+      if (_phase == NearbyTransferSessionPhase.connecting ||
+          _phase == NearbyTransferSessionPhase.awaitingHandshake) {
+        await _resetFailedConnectAttempt(event.message);
+        return;
+      }
       notifyListeners();
     }
   }
@@ -867,6 +878,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _clearConnectionState();
     _phase = NearbyTransferSessionPhase.idle;
     _setBanner(message, isError: true);
+    notifyListeners();
+  }
+
+  Future<void> _resetFailedConnectAttempt(String message) async {
+    await _activeAdapter?.disconnect();
+    _clearConnectionState();
+    _phase = NearbyTransferSessionPhase.idle;
+    _setBanner(message, isError: true);
+    if (_role == NearbyTransferRole.receive &&
+        _mode == NearbyTransferMode.lanFallback) {
+      await refreshCandidates();
+      _startCandidateRefreshTimer();
+    }
     notifyListeners();
   }
 

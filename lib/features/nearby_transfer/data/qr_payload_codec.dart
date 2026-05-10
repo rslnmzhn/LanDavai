@@ -58,6 +58,18 @@ class NearbyTransferQrPayload {
   }
 }
 
+class NearbyTransferLanFallbackQrConnection {
+  const NearbyTransferLanFallbackQrConnection({
+    required this.host,
+    required this.port,
+    required this.sessionId,
+  });
+
+  final String host;
+  final int port;
+  final String sessionId;
+}
+
 class NearbyTransferQrCodec {
   static const String schemePrefix = 'landa-nearby://';
 
@@ -88,5 +100,39 @@ class NearbyTransferQrCodec {
     } catch (_) {
       return null;
     }
+  }
+
+  NearbyTransferLanFallbackQrConnection? decodeLanFallbackConnection(
+    String raw,
+  ) {
+    final payload = decode(raw);
+    if (payload == null ||
+        payload.transportMode != NearbyTransferMode.lanFallback) {
+      return null;
+    }
+
+    final host = payload.transportInfo['host'] as String?;
+    final rawPort = payload.transportInfo['port'];
+    final transportSessionId = payload.transportInfo['sessionId'] as String?;
+    final normalizedHost = host?.trim() ?? '';
+    final normalizedSessionId = payload.sessionId.trim();
+    final normalizedTransportSessionId = transportSessionId?.trim() ?? '';
+    final port = rawPort is num ? rawPort.toInt() : null;
+
+    if (normalizedHost.isEmpty ||
+        port == null ||
+        port <= 0 ||
+        port > 65535 ||
+        normalizedSessionId.isEmpty ||
+        normalizedTransportSessionId.isEmpty ||
+        normalizedSessionId != normalizedTransportSessionId) {
+      return null;
+    }
+
+    return NearbyTransferLanFallbackQrConnection(
+      host: normalizedHost,
+      port: port,
+      sessionId: normalizedSessionId,
+    );
   }
 }

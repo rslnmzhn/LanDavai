@@ -266,6 +266,146 @@ void main() {
     },
   );
 
+  test('qr connect transitions idle to pairing to paired to idle', () async {
+    final senderLanAdapter = FakeNearbyTransferTransportAdapter(
+      hostingPort: 47890,
+    );
+    final receiverLanAdapter = FakeNearbyTransferTransportAdapter();
+    final senderStore = buildTestNearbyTransferStore(
+      readModel: harness.readModel,
+      lanAdapter: senderLanAdapter,
+      localDeviceId: 'sender-device',
+      localDeviceName: 'Sender',
+      localIp: '192.168.0.44',
+    );
+    final receiverStore = buildTestNearbyTransferStore(
+      readModel: harness.readModel,
+      lanAdapter: receiverLanAdapter,
+      localDeviceId: 'receiver-device',
+      localDeviceName: 'Receiver',
+      localIp: '192.168.0.55',
+    );
+    addTearDown(senderStore.dispose);
+    addTearDown(receiverStore.dispose);
+
+    expect(receiverStore.phase, NearbyTransferSessionPhase.idle);
+
+    await senderStore.prepareSendFlow();
+    await receiverStore.prepareReceiveFlow();
+    await receiverStore.handleQrPayloadText(senderStore.qrPayloadText!);
+
+    expect(receiverStore.phase, NearbyTransferSessionPhase.connecting);
+
+    receiverLanAdapter.emit(
+      const NearbyTransferConnectedEvent(
+        peer: NearbyTransferPeerDevice(
+          deviceId: 'sender-device',
+          displayName: 'Sender',
+          host: '192.168.0.44',
+        ),
+        sessionId: 'session-1',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(receiverStore.phase, NearbyTransferSessionPhase.awaitingHandshake);
+
+    receiverLanAdapter.emit(
+      const NearbyTransferHandshakeOfferEvent(
+        verificationCode: <String>['1', '2'],
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(receiverStore.phase, NearbyTransferSessionPhase.connected);
+
+    await receiverStore.disconnect(restart: false);
+
+    expect(receiverStore.phase, NearbyTransferSessionPhase.idle);
+    expect(receiverStore.hasActiveConnection, isFalse);
+  });
+
+  test(
+    'failed QR socket connect resets to clean receive idle and candidate button works',
+    () async {
+      harness.controller.setTestDevices(<DiscoveredDevice>[
+        DiscoveredDevice(
+          ip: '192.168.0.44',
+          macAddress: 'aa:bb:cc:00:00:44',
+          deviceName: 'Sender',
+          isNearbyTransferAvailable: true,
+          nearbyTransferPort: 47890,
+          isAppDetected: true,
+          isReachable: true,
+          lastSeen: DateTime(2026, 1, 1, 10),
+        ),
+      ]);
+      final senderLanAdapter = FakeNearbyTransferTransportAdapter(
+        hostingPort: 47890,
+      );
+      final receiverLanAdapter = FakeNearbyTransferTransportAdapter(
+        connectError: StateError('socket refused'),
+      );
+      final senderStore = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: senderLanAdapter,
+        localDeviceId: 'sender-device',
+        localDeviceName: 'Sender',
+        localIp: '192.168.0.44',
+      );
+      final receiverStore = buildTestNearbyTransferStore(
+        readModel: harness.readModel,
+        lanAdapter: receiverLanAdapter,
+        localDeviceId: 'receiver-device',
+        localDeviceName: 'Receiver',
+        localIp: '192.168.0.55',
+      );
+      addTearDown(senderStore.dispose);
+      addTearDown(receiverStore.dispose);
+
+      await senderStore.prepareSendFlow();
+      await receiverStore.prepareReceiveFlow();
+
+      expect(receiverStore.candidateDevices, hasLength(1));
+
+      await receiverStore.handleQrPayloadText(senderStore.qrPayloadText!);
+
+      expect(receiverLanAdapter.connectCalls, 1);
+      expect(receiverLanAdapter.disconnectCalls, 1);
+      expect(receiverStore.phase, NearbyTransferSessionPhase.idle);
+      expect(receiverStore.hasActiveConnection, isFalse);
+      expect(receiverStore.bannerIsError, isTrue);
+
+      final candidate = receiverStore.candidateDevices.single;
+      await receiverStore.connectToCandidate(candidate);
+
+      expect(receiverLanAdapter.connectCalls, 2);
+      expect(receiverStore.phase, NearbyTransferSessionPhase.idle);
+      expect(receiverStore.hasActiveConnection, isFalse);
+    },
+  );
+
+  test('invalid QR payload restores clean idle receive state', () async {
+    final receiverLanAdapter = FakeNearbyTransferTransportAdapter();
+    final receiverStore = buildTestNearbyTransferStore(
+      readModel: harness.readModel,
+      lanAdapter: receiverLanAdapter,
+      localDeviceId: 'receiver-device',
+      localDeviceName: 'Receiver',
+      localIp: '192.168.0.55',
+    );
+    addTearDown(receiverStore.dispose);
+
+    await receiverStore.prepareReceiveFlow();
+    await receiverStore.handleQrPayloadText('https://example.com/not-landa');
+
+    expect(receiverLanAdapter.connectCalls, 0);
+    expect(receiverLanAdapter.disconnectCalls, 1);
+    expect(receiverStore.phase, NearbyTransferSessionPhase.idle);
+    expect(receiverStore.hasActiveConnection, isFalse);
+    expect(receiverStore.bannerIsError, isTrue);
+  });
+
   test('valid 2-digit handshake input confirms the session', () async {
     final lanAdapter = FakeNearbyTransferTransportAdapter();
     final store = buildTestNearbyTransferStore(
