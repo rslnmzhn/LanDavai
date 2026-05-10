@@ -68,6 +68,67 @@ void main() {
   );
 
   test(
+    'owner selection cache keeps prior files visible after sequential single-file adds',
+    () async {
+      final fileA = File(p.join(fixtureDirectory.path, 'alpha.txt'));
+      final fileB = File(p.join(fixtureDirectory.path, 'beta.txt'));
+      await fileA.writeAsString('alpha', flush: true);
+      await fileB.writeAsString('beta', flush: true);
+
+      final first = await catalog.buildOwnerSelectionCache(
+        ownerMacAddress: 'AA-BB-CC-DD-EE-FF',
+        filePaths: <String>[fileA.path],
+        displayName: 'Selected files',
+      );
+      final second = await catalog.buildOwnerSelectionCache(
+        ownerMacAddress: 'AA-BB-CC-DD-EE-FF',
+        filePaths: <String>[fileB.path],
+        displayName: 'Selected files',
+      );
+      await catalog.loadOwnerCaches(ownerMacAddress: 'aa:bb:cc:dd:ee:ff');
+      final entries = await indexStore.readIndexEntries(second);
+
+      expect(second.cacheId, first.cacheId);
+      expect(catalog.ownerCaches, hasLength(1));
+      expect(catalog.ownerCaches.single.itemCount, 2);
+      expect(entries.map((entry) => entry.relativePath), <String>[
+        'alpha.txt',
+        'beta.txt',
+      ]);
+    },
+  );
+
+  test(
+    'owner selection cache prunes a removed single file while keeping remaining files',
+    () async {
+      final fileA = File(p.join(fixtureDirectory.path, 'alpha.txt'));
+      final fileB = File(p.join(fixtureDirectory.path, 'beta.txt'));
+      await fileA.writeAsString('alpha', flush: true);
+      await fileB.writeAsString('beta', flush: true);
+
+      await catalog.buildOwnerSelectionCache(
+        ownerMacAddress: 'AA-BB-CC-DD-EE-FF',
+        filePaths: <String>[fileA.path],
+        displayName: 'Selected files',
+      );
+      final record = await catalog.buildOwnerSelectionCache(
+        ownerMacAddress: 'AA-BB-CC-DD-EE-FF',
+        filePaths: <String>[fileB.path],
+        displayName: 'Selected files',
+      );
+      await fileA.delete();
+
+      final refreshed = await catalog.refreshOwnerSelectionCacheEntries(record);
+      final entries = await indexStore.readIndexEntries(refreshed);
+
+      expect(refreshed.itemCount, 1);
+      expect(entries, hasLength(1));
+      expect(entries.single.relativePath, 'beta.txt');
+      expect(entries.single.absolutePath, fileB.path);
+    },
+  );
+
+  test(
     'receiver metadata writes stay deterministic and do not overwrite owner snapshot truth',
     () async {
       final ownerFile = File(p.join(fixtureDirectory.path, 'owner.txt'));

@@ -138,6 +138,103 @@ void main() {
   );
 
   test(
+    'materializeOwnerSelectionIndex appends sequential single-file adds',
+    () async {
+      final fileA = File(p.join(fixtureDirectory.path, 'alpha.txt'));
+      final fileB = File(p.join(fixtureDirectory.path, 'beta.txt'));
+      await fileA.writeAsString('alpha', flush: true);
+      await fileB.writeAsString('beta', flush: true);
+
+      const cacheId = 'selection-cache-append';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Selected files',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: 'selection://$cacheId',
+        displayName: 'Selected files',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 4321,
+      );
+
+      final first = await indexStore.materializeOwnerSelectionIndex(
+        record: record,
+        filePaths: <String>[fileA.path],
+      );
+      final second = await indexStore.materializeOwnerSelectionIndex(
+        record: record,
+        filePaths: <String>[fileB.path],
+      );
+      final entries = await indexStore.readIndexEntries(record);
+
+      expect(first.itemCount, 1);
+      expect(second.itemCount, 2);
+      expect(entries.map((entry) => entry.relativePath), <String>[
+        'alpha.txt',
+        'beta.txt',
+      ]);
+      expect(entries.map((entry) => entry.absolutePath), <String>[
+        fileA.path,
+        fileB.path,
+      ]);
+    },
+  );
+
+  test(
+    'refreshOwnerSelectionIndex removes missing file and preserves remaining sequential add',
+    () async {
+      final fileA = File(p.join(fixtureDirectory.path, 'alpha.txt'));
+      final fileB = File(p.join(fixtureDirectory.path, 'beta.txt'));
+      await fileA.writeAsString('alpha', flush: true);
+      await fileB.writeAsString('beta', flush: true);
+
+      const cacheId = 'selection-cache-append-remove';
+      final indexPath = await indexStore.resolveIndexFilePath(
+        role: SharedFolderCacheRole.owner,
+        displayName: 'Selected files',
+        cacheId: cacheId,
+      );
+      final record = SharedFolderCacheRecord(
+        cacheId: cacheId,
+        role: SharedFolderCacheRole.owner,
+        ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+        peerMacAddress: null,
+        rootPath: 'selection://$cacheId',
+        displayName: 'Selected files',
+        indexFilePath: indexPath,
+        itemCount: 0,
+        totalBytes: 0,
+        updatedAtMs: 4321,
+      );
+
+      await indexStore.materializeOwnerSelectionIndex(
+        record: record,
+        filePaths: <String>[fileA.path],
+      );
+      await indexStore.materializeOwnerSelectionIndex(
+        record: record,
+        filePaths: <String>[fileB.path],
+      );
+      await fileA.delete();
+
+      final refreshed = await indexStore.refreshOwnerSelectionIndex(record);
+      final entries = await indexStore.readIndexEntries(record);
+
+      expect(refreshed.itemCount, 1);
+      expect(entries, hasLength(1));
+      expect(entries.single.relativePath, 'beta.txt');
+      expect(entries.single.absolutePath, fileB.path);
+    },
+  );
+
+  test(
     'persistCachedManifestEntries stores optional sha256 without changing compact entry identity',
     () async {
       final file = File(p.join(fixtureDirectory.path, 'alpha.txt'));
