@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -29,6 +30,7 @@ import kotlin.math.abs
 class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "landa/network"
+        private const val SHARE_INTENT_CHANNEL = "landa/share_intent"
         private const val LOCK_TAG = "landa_multicast_lock"
         private const val DOWNLOAD_CHANNEL_ID = "landa_downloads"
         private const val DOWNLOAD_CHANNEL_NAME = "Landa downloads"
@@ -181,6 +183,27 @@ class MainActivity : FlutterActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SHARE_INTENT_CHANNEL,
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getSharedFiles" -> {
+                    try {
+                        result.success(consumeSharedFilesFromIntent())
+                    } catch (t: Throwable) {
+                        result.error("share_intent_failed", t.message, null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
     }
 
     override fun onDestroy() {
@@ -206,6 +229,93 @@ class MainActivity : FlutterActivity() {
     private fun releaseMulticastLock() {
         if (multicastLock?.isHeld == true) {
             multicastLock?.release()
+        }
+    }
+
+    private fun consumeSharedFilesFromIntent(): List<String> {
+        val sharedUris = sharedUrisFromIntent(intent)
+        if (sharedUris.isEmpty()) {
+            return emptyList()
+        }
+
+        val copiedPaths = sharedUris.mapNotNull { uri ->
+            copySharedUriToCache(uri)?.absolutePath
+        }
+        setIntent(Intent(this, MainActivity::class.java))
+        return copiedPaths
+    }
+
+    private fun sharedUrisFromIntent(source: Intent?): List<Uri> {
+        if (source == null) {
+            return emptyList()
+        }
+        val action = source.action
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) {
+            return emptyList()
+        }
+
+        val uris = mutableListOf<Uri>()
+        source.clipData?.let { clipData ->
+            for (index in 0 until clipData.itemCount) {
+                clipData.getItemAt(index)?.uri?.let(uris::add)
+            }
+        }
+
+        when (action) {
+            Intent.ACTION_SEND -> source.streamExtraUri()?.let(uris::add)
+            Intent.ACTION_SEND_MULTIPLE -> uris.addAll(source.streamExtraUris())
+        }
+
+        return uris.distinctBy { it.toString() }
+    }
+
+    private fun copySharedUriToCache(uri: Uri): File? {
+        val targetDir = File(cacheDir, "share_intent").apply { mkdirs() }
+        val target = nextAvailableFile(File(targetDir, displayNameForSharedUri(uri)))
+        val resolver = applicationContext.contentResolver
+        resolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        } ?: return null
+        return target
+    }
+
+    private fun displayNameForSharedUri(uri: Uri): String {
+        val queriedName = applicationContext.contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0) cursor.getString(index) else null
+            } else {
+                null
+            }
+        }
+        val fallbackName = uri.lastPathSegment?.substringAfterLast('/') ?: "shared_file"
+        val rawName = queriedName?.takeIf { it.isNotBlank() } ?: fallbackName
+        return rawName.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "shared_file" }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.streamExtraUri(): Uri? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.streamExtraUris(): List<Uri> {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java) ?: emptyList()
+        } else {
+            getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: emptyList()
         }
     }
 

@@ -55,6 +55,7 @@ import '../../features/nearby_transfer/data/qr_payload_codec.dart';
 import '../../features/nearby_transfer/data/wifi_direct_transport_adapter.dart';
 import '../../features/settings/application/settings_store.dart';
 import '../../features/settings/data/app_settings_repository.dart';
+import '../../features/share_target/application/share_receive_boundary.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
@@ -84,6 +85,7 @@ class DiscoveryPageDependencies {
     required this.desktopWindowService,
     required this.transferStorageService,
     required this.appUpdateBoundary,
+    required this.shareReceiveBoundary,
     required this.createNearbyTransferSessionStore,
   });
 
@@ -103,6 +105,7 @@ class DiscoveryPageDependencies {
   final DesktopWindowService desktopWindowService;
   final TransferStorageService transferStorageService;
   final AppUpdateBoundary appUpdateBoundary;
+  final ShareReceiveBoundary shareReceiveBoundary;
   final NearbyTransferSessionStore Function() createNearbyTransferSessionStore;
 }
 
@@ -140,6 +143,8 @@ class DiscoveryCompositionResult {
       pageDependencies.readModel.settings.minimizeToTrayOnClose,
     );
     await pageDependencies.appUpdateBoundary.initialize();
+    await pageDependencies.shareReceiveBoundary.initialize();
+    pageDependencies.shareReceiveBoundary.startLifecycleListener();
     unawaited(pageDependencies.appUpdateBoundary.checkForUpdates());
   }
 
@@ -279,6 +284,7 @@ class DiscoveryCompositionFactory {
     final nearbyTransferStorageService = NearbyTransferStorageService(
       transferStorageService: resolvedTransferStorageService,
     );
+    final shareReceiveBoundary = ShareReceiveBoundary();
     late final DiscoveryController controller;
     final transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
@@ -402,6 +408,7 @@ class DiscoveryCompositionFactory {
       desktopWindowService: resolvedDesktopWindowService,
       transferStorageService: resolvedTransferStorageService,
       appUpdateBoundary: appUpdateBoundary,
+      shareReceiveBoundary: shareReceiveBoundary,
       createNearbyTransferSessionStore: () {
         return NearbyTransferSessionStore(
           capabilityService: nearbyTransferCapabilityService,
@@ -434,6 +441,7 @@ class DiscoveryCompositionFactory {
         appUpdateBoundary.dispose();
         previewCacheOwner.dispose();
         videoLinkSessionBoundary.dispose();
+        shareReceiveBoundary.dispose();
         controller.dispose();
       },
     );
