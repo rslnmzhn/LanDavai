@@ -15,20 +15,20 @@ void main() {
         arch: 'armeabi-v7a',
         format: 'apk',
         primary: true,
-        fileName: 'android-arm.apk',
+        fileName: 'landa-android-armeabi-v7a.apk',
         size: 1,
         sha256: 'a',
-        downloadUrl: 'https://example.com/android-arm.apk',
+        downloadUrl: 'https://example.com/landa-android-armeabi-v7a.apk',
       ),
       AppUpdateAsset(
         platform: 'android',
         arch: 'arm64-v8a',
         format: 'apk',
         primary: true,
-        fileName: 'android-arm64.apk',
+        fileName: 'landa-android-arm64-v8a.apk',
         size: 1,
         sha256: 'b',
-        downloadUrl: 'https://example.com/android-arm64.apk',
+        downloadUrl: 'https://example.com/landa-android-arm64-v8a.apk',
       ),
       AppUpdateAsset(
         platform: 'windows',
@@ -52,7 +52,20 @@ void main() {
       ),
     );
 
-    expect(asset.fileName, 'android-arm64.apk');
+    expect(asset.fileName, 'landa-android-arm64-v8a.apk');
+  });
+
+  test('does not fall back to another Android ABI when exact ABI is absent', () {
+    expect(
+      () => selector.selectAsset(
+        release: release,
+        target: const AppUpdateTarget(
+          platform: AppUpdateRuntimePlatform.android,
+          archPreferences: <String>['x86_64'],
+        ),
+      ),
+      throwsStateError,
+    );
   });
 
   test('selects the correct desktop asset for Windows', () {

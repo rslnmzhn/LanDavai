@@ -380,6 +380,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -431,13 +433,26 @@ jobs:
             --tag "${{ needs.resolve_release.outputs.release_tag }}" \
             --repository "${{ github.repository }}"
 
+      - name: Generate release changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.resolve_release.outputs.release_tag }}"
+
+          git fetch --tags --force
+          if PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null)"; then
+            git log "${PREVIOUS_TAG}..HEAD" --oneline --no-merges > release_body.md
+          else
+            git log HEAD --oneline --no-merges > release_body.md
+          fi
+
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
           name: Release ${{ needs.resolve_release.outputs.release_tag }}
           tag_name: ${{ needs.resolve_release.outputs.release_tag }}
           prerelease: false
-          generate_release_notes: true
+          body_path: release_body.md
           files: |
             release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-android-armeabi-v7a.apk
             release_assets/landa-v${{ needs.resolve_release.outputs.release_version }}-android-arm64-v8a.apk

@@ -340,7 +340,7 @@ class TestDiscoveryControllerHarness {
           'Update download should not be used in this test harness.',
         );
       },
-      downloadedAssetOpener:
+      downloadedAssetInstaller:
           ({required AppUpdateAsset asset, required File file}) async {
             throw StateError(
               'Update apply should not be used in this test harness.',

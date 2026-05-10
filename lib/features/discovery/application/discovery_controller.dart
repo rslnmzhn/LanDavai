@@ -161,6 +161,8 @@ class DiscoveryController extends ChangeNotifier {
     Duration appPresenceTtl = const Duration(seconds: 12),
     Duration nearbyAvailabilityTtl = const Duration(seconds: 8),
     Duration presenceExpiryCheckInterval = const Duration(seconds: 2),
+    Duration androidResumeRestartDelay = defaultAndroidResumeRestartDelay,
+    bool Function()? isAndroidProvider,
     DateTime Function()? nowProvider,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _networkHostScanner = networkHostScanner,
@@ -184,6 +186,8 @@ class DiscoveryController extends ChangeNotifier {
        _appPresenceTtl = appPresenceTtl,
        _nearbyAvailabilityTtl = nearbyAvailabilityTtl,
        _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
+       _androidResumeRestartDelay = androidResumeRestartDelay,
+       _isAndroid = isAndroidProvider ?? (() => Platform.isAndroid),
        _now = nowProvider ?? DateTime.now,
        _nearbyTransferAvailabilityStore =
            nearbyTransferAvailabilityStore ??
@@ -240,6 +244,7 @@ class DiscoveryController extends ChangeNotifier {
   static const Duration _sharedFolderIndexingUiTickInterval = Duration(
     milliseconds: 120,
   );
+  static const Duration defaultAndroidResumeRestartDelay = Duration(seconds: 2);
   static const double _sharedFolderScanProgressWeight = 0.35;
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
@@ -265,6 +270,8 @@ class DiscoveryController extends ChangeNotifier {
   final Duration _appPresenceTtl;
   final Duration _nearbyAvailabilityTtl;
   final Duration _presenceExpiryCheckInterval;
+  final Duration _androidResumeRestartDelay;
+  final bool Function() _isAndroid;
   final DateTime Function() _now;
   final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
@@ -291,6 +298,7 @@ class DiscoveryController extends ChangeNotifier {
   bool _isAddingShare = false;
   SharedFolderIndexingProgress? _sharedFolderIndexingProgress;
   double? _sharedFolderIndexingVisualProgress;
+  bool _pendingDiscoveryRestartAfterRefresh = false;
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
@@ -682,6 +690,9 @@ class DiscoveryController extends ChangeNotifier {
       return;
     }
     _isAppInForeground = isForeground;
+    if (_started && isForeground && _isAndroid()) {
+      unawaited(_restartDiscoveryAfterAndroidResume());
+    }
     notifyListeners();
   }
 
@@ -1305,6 +1316,9 @@ class DiscoveryController extends ChangeNotifier {
         if (_pendingScopeReconfigureAfterRefresh) {
           _pendingScopeReconfigureAfterRefresh = false;
           unawaited(_refresh(isManual: false, refreshNetworkScope: false));
+        } else if (_pendingDiscoveryRestartAfterRefresh) {
+          _pendingDiscoveryRestartAfterRefresh = false;
+          unawaited(_restartDiscoveryAfterAndroidResume());
         }
       }
     }
@@ -2098,6 +2112,47 @@ class DiscoveryController extends ChangeNotifier {
       'localIps=$_activeDiscoveryLocalIps '
       'configuredTargets=$_activeDiscoveryConfiguredTargetIps',
     );
+  }
+
+  Future<void> _restartDiscoveryAfterAndroidResume() async {
+    if (_isDisposed || !_started) {
+      return;
+    }
+    if (_isRefreshInProgress) {
+      _pendingDiscoveryRestartAfterRefresh = true;
+      return;
+    }
+
+    _log('Android app resumed. Restarting discovery socket.');
+    try {
+      await _forceDiscoveryServiceRestart();
+      await Future<void>.delayed(_androidResumeRestartDelay);
+      if (!_isDisposed && _started) {
+        await _lanDiscoveryService.broadcastPresenceNow(deviceName: _localName);
+      }
+    } catch (error) {
+      if (_isDisposed) {
+        return;
+      }
+      _errorMessage = 'LAN discovery resume error: $error';
+      _log(_errorMessage!);
+      notifyListeners();
+    }
+  }
+
+  Future<void> _forceDiscoveryServiceRestart() async {
+    await _discoveryNetworkScopeStore.refresh();
+    _consumeNetworkScopeState();
+    if (!_started) {
+      return;
+    }
+    if (_isDiscoveryServiceRunning) {
+      await _lanDiscoveryService.stop();
+      _isDiscoveryServiceRunning = false;
+    }
+    _activeDiscoveryLocalIps = <String>{};
+    _activeDiscoveryConfiguredTargetIps = <String>{};
+    await _ensureDiscoveryScopeApplied();
   }
 
   void _resolveLocalDeviceMac() {

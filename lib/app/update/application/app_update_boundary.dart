@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import '../domain/app_update_models.dart';
 
 class AppUpdateBoundary extends ChangeNotifier {
+  static const String fileNotFoundMessage = 'File not found - download again.';
+
   AppUpdateBoundary({
     required Future<String> Function() currentVersionLoader,
     required Future<AppUpdateRelease> Function() latestReleaseLoader,
@@ -19,13 +21,13 @@ class AppUpdateBoundary extends ChangeNotifier {
       required AppUpdateAsset asset,
       required File file,
     })
-    downloadedAssetOpener,
+    downloadedAssetInstaller,
   }) : _currentVersionLoader = currentVersionLoader,
        _latestReleaseLoader = latestReleaseLoader,
        _targetResolver = targetResolver,
        _assetSelector = assetSelector,
        _assetDownloader = assetDownloader,
-       _downloadedAssetOpener = downloadedAssetOpener;
+       _downloadedAssetInstaller = downloadedAssetInstaller;
 
   final Future<String> Function() _currentVersionLoader;
   final Future<AppUpdateRelease> Function() _latestReleaseLoader;
@@ -40,7 +42,7 @@ class AppUpdateBoundary extends ChangeNotifier {
     required AppUpdateAsset asset,
     required File file,
   })
-  _downloadedAssetOpener;
+  _downloadedAssetInstaller;
 
   String? _currentVersion;
   AppUpdateRelease? _latestRelease;
@@ -49,6 +51,7 @@ class AppUpdateBoundary extends ChangeNotifier {
   AppUpdateApplyPhase _applyPhase = AppUpdateApplyPhase.idle;
   String? _lastError;
   String? _applyMessage;
+  File? _downloadedAssetFile;
   bool _initialized = false;
 
   String? get currentVersion => _currentVersion;
@@ -58,6 +61,7 @@ class AppUpdateBoundary extends ChangeNotifier {
   AppUpdateApplyPhase get applyPhase => _applyPhase;
   String? get lastError => _lastError;
   String? get applyMessage => _applyMessage;
+  String? get downloadedAssetPath => _downloadedAssetFile?.path;
 
   bool get isChecking => _phase == AppUpdateCheckPhase.checking;
   bool get isUpdateAvailable => _phase == AppUpdateCheckPhase.updateAvailable;
@@ -65,6 +69,14 @@ class AppUpdateBoundary extends ChangeNotifier {
   bool get hasFailure => _phase == AppUpdateCheckPhase.failed;
   bool get isApplying => _applyPhase == AppUpdateApplyPhase.applying;
   bool get hasApplyFailure => _applyPhase == AppUpdateApplyPhase.failed;
+  bool get canInstallDownloadedUpdate {
+    final asset = _selectedAsset;
+    return _phase == AppUpdateCheckPhase.updateAvailable &&
+        _applyPhase == AppUpdateApplyPhase.readyToInstall &&
+        _downloadedAssetFile != null &&
+        asset != null &&
+        !_shouldOpenAfterDownload(asset);
+  }
 
   Future<void> initialize() async {
     if (_initialized) {
@@ -83,6 +95,7 @@ class AppUpdateBoundary extends ChangeNotifier {
     _phase = AppUpdateCheckPhase.checking;
     _lastError = null;
     _selectedAsset = null;
+    _downloadedAssetFile = null;
     _applyPhase = AppUpdateApplyPhase.idle;
     _applyMessage = null;
     notifyListeners();
@@ -126,7 +139,10 @@ class AppUpdateBoundary extends ChangeNotifier {
 
     try {
       final file = await _assetDownloader(asset);
-      await _downloadedAssetOpener(asset: asset, file: file);
+      _downloadedAssetFile = file;
+      if (_shouldOpenAfterDownload(asset)) {
+        await _downloadedAssetInstaller(asset: asset, file: file);
+      }
       _applyPhase = AppUpdateApplyPhase.readyToInstall;
       _applyMessage = file.path;
     } catch (error) {
@@ -135,5 +151,43 @@ class AppUpdateBoundary extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  Future<void> installDownloadedUpdate() async {
+    final asset = _selectedAsset;
+    final file = _downloadedAssetFile;
+    if (asset == null || file == null) {
+      _applyPhase = AppUpdateApplyPhase.failed;
+      _applyMessage = 'No downloaded update file is available.';
+      notifyListeners();
+      return;
+    }
+
+    if (!await file.exists()) {
+      _downloadedAssetFile = null;
+      _applyPhase = AppUpdateApplyPhase.idle;
+      _applyMessage = fileNotFoundMessage;
+      notifyListeners();
+      return;
+    }
+
+    _applyPhase = AppUpdateApplyPhase.applying;
+    _applyMessage = null;
+    notifyListeners();
+
+    try {
+      await _downloadedAssetInstaller(asset: asset, file: file);
+      _applyPhase = AppUpdateApplyPhase.readyToInstall;
+      _applyMessage = file.path;
+    } catch (error) {
+      _applyPhase = AppUpdateApplyPhase.failed;
+      _applyMessage = error.toString();
+    }
+
+    notifyListeners();
+  }
+
+  bool _shouldOpenAfterDownload(AppUpdateAsset asset) {
+    return asset.platform == 'android' && asset.format == 'apk';
   }
 }

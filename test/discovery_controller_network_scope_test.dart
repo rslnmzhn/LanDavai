@@ -181,6 +181,35 @@ void main() {
     });
     expect(lanDiscoveryService.stopCalls, 1);
   });
+
+  test('Android foreground resume forces discovery service restart', () async {
+    controller.dispose();
+    lanDiscoveryService = RecordingLanDiscoveryService();
+    controller = _buildController(
+      database: harness.database,
+      lanDiscoveryService: lanDiscoveryService,
+      networkHostScanner: networkHostScanner,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
+      isAndroidProvider: () => true,
+      androidResumeRestartDelay: Duration.zero,
+    );
+
+    await controller.start();
+    controller.setAppForegroundState(false);
+
+    controller.setAppForegroundState(true);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(lanDiscoveryService.stopCalls, 1);
+    expect(lanDiscoveryService.startCalls, 2);
+    expect(lanDiscoveryService.startLocalSourceIps.last, <String>{
+      '192.168.1.10',
+      '100.90.1.10',
+    });
+    expect(lanDiscoveryService.broadcastPresenceNowCalls, 1);
+  });
 }
 
 DiscoveryController _buildController({
@@ -189,6 +218,9 @@ DiscoveryController _buildController({
   required RecordingNetworkHostScanner networkHostScanner,
   required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
   required ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore,
+  bool Function()? isAndroidProvider,
+  Duration androidResumeRestartDelay =
+      DiscoveryController.defaultAndroidResumeRestartDelay,
 }) {
   final deviceAliasRepository = DeviceAliasRepository(database: database);
   final deviceRegistry = DeviceRegistry(
@@ -257,6 +289,8 @@ DiscoveryController _buildController({
     transferStorageService: TransferStorageService(),
     previewCacheOwner: previewCacheOwner,
     pathOpener: PathOpener(),
+    isAndroidProvider: isAndroidProvider,
+    androidResumeRestartDelay: androidResumeRestartDelay,
   );
 }
 
@@ -265,6 +299,7 @@ class RecordingLanDiscoveryService extends LanDiscoveryService {
   final List<Set<String>> startConfiguredTargetIps = <Set<String>>[];
   int startCalls = 0;
   int stopCalls = 0;
+  int broadcastPresenceNowCalls = 0;
 
   @override
   Future<void> start({
@@ -296,6 +331,11 @@ class RecordingLanDiscoveryService extends LanDiscoveryService {
   @override
   Future<void> stop() async {
     stopCalls += 1;
+  }
+
+  @override
+  Future<void> broadcastPresenceNow({required String deviceName}) async {
+    broadcastPresenceNowCalls += 1;
   }
 }
 

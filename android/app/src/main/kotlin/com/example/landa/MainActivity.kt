@@ -180,6 +180,19 @@ class MainActivity : FlutterActivity() {
                     )
                     result.success(null)
                 }
+                "installApkUpdate" -> {
+                    val path = call.argument<String>("path")
+                    if (path.isNullOrBlank()) {
+                        result.error("invalid_args", "path is required", null)
+                        return@setMethodCallHandler
+                    }
+                    try {
+                        launchApkInstaller(path)
+                        result.success(null)
+                    } catch (t: Throwable) {
+                        result.error("install_apk_failed", t.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -866,6 +879,35 @@ class MainActivity : FlutterActivity() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+    }
+
+    private fun launchApkInstaller(path: String) {
+        val file = File(path)
+        if (!file.exists() || !file.isFile) {
+            throw IllegalStateException("APK file does not exist: $path")
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            val settingsIntent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                data = Uri.parse("package:$packageName")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            startActivity(settingsIntent)
+            throw IllegalStateException("Allow Landa to install unknown apps, then tap install again.")
+        }
+
+        val uri = fileUri(file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (intent.resolveActivity(packageManager) == null) {
+            throw IllegalStateException("No Android package installer is available.")
+        }
+        startActivity(intent)
     }
 
     private fun buildOpenDirectoryIntent(directoryPath: String?): Intent {

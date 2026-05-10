@@ -159,33 +159,41 @@ class SharedCacheCatalog extends ChangeNotifier {
       throw ArgumentError('filePaths must not be empty.');
     }
 
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final rootIdentity = normalizedPaths.join('|');
-    final cacheId = _createCacheId(
-      role: SharedFolderCacheRole.owner,
-      ownerMacAddress: ownerMac,
-      peerMacAddress: null,
-      rootIdentity: rootIdentity,
-    );
     final resolvedDisplayName = _resolveDisplayName(
       providedName: displayName,
       fallbackPath: 'Selected files',
     );
-    final indexFilePath = await _sharedCacheIndexStore.resolveIndexFilePath(
-      role: SharedFolderCacheRole.owner,
+    final existing = await _findOwnerSelectionCache(
+      ownerMacAddress: ownerMac,
       displayName: resolvedDisplayName,
-      cacheId: cacheId,
     );
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final rootIdentity = normalizedPaths.join('|');
+    final cacheId =
+        existing?.cacheId ??
+        _createCacheId(
+          role: SharedFolderCacheRole.owner,
+          ownerMacAddress: ownerMac,
+          peerMacAddress: null,
+          rootIdentity: rootIdentity,
+        );
+    final indexFilePath =
+        existing?.indexFilePath ??
+        await _sharedCacheIndexStore.resolveIndexFilePath(
+          role: SharedFolderCacheRole.owner,
+          displayName: resolvedDisplayName,
+          cacheId: cacheId,
+        );
     final draftRecord = SharedFolderCacheRecord(
       cacheId: cacheId,
       role: SharedFolderCacheRole.owner,
       ownerMacAddress: ownerMac,
       peerMacAddress: null,
-      rootPath: 'selection://$cacheId',
+      rootPath: existing?.rootPath ?? 'selection://$cacheId',
       displayName: resolvedDisplayName,
       indexFilePath: indexFilePath,
-      itemCount: 0,
-      totalBytes: 0,
+      itemCount: existing?.itemCount ?? 0,
+      totalBytes: existing?.totalBytes ?? 0,
       updatedAtMs: now,
     );
     final indexResult = await _sharedCacheIndexStore
@@ -198,7 +206,7 @@ class SharedCacheCatalog extends ChangeNotifier {
       role: SharedFolderCacheRole.owner,
       ownerMacAddress: ownerMac,
       peerMacAddress: null,
-      rootPath: 'selection://$cacheId',
+      rootPath: draftRecord.rootPath,
       displayName: resolvedDisplayName,
       indexFilePath: indexFilePath,
       itemCount: indexResult.itemCount,
@@ -209,6 +217,23 @@ class SharedCacheCatalog extends ChangeNotifier {
     await _sharedCacheRecordStore.upsertCacheRecord(record);
     _upsertLoadedOwnerCache(record);
     return record;
+  }
+
+  Future<SharedFolderCacheRecord?> _findOwnerSelectionCache({
+    required String ownerMacAddress,
+    required String displayName,
+  }) async {
+    final caches = await _sharedCacheRecordStore.listCaches(
+      role: SharedFolderCacheRole.owner,
+      ownerMacAddress: ownerMacAddress,
+    );
+    for (final cache in caches) {
+      if (cache.rootPath.startsWith('selection://') &&
+          cache.displayName == displayName) {
+        return cache;
+      }
+    }
+    return null;
   }
 
   Future<SharedFolderCacheRecord> refreshOwnerSelectionCacheEntries(

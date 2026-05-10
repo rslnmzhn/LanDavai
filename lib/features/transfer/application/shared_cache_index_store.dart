@@ -245,8 +245,26 @@ class SharedCacheIndexStore {
       throw ArgumentError('None of the selected files are accessible.');
     }
 
-    await _writeIndexFile(record, entries);
-    return _buildWriteResult(entries, changed: true);
+    final existingEntries = await _readIndexEntriesFromPath(
+      record.indexFilePath,
+    );
+    final mergedBySourcePath = <String, SharedFolderIndexEntry>{
+      for (final entry in existingEntries) _selectionEntryKey(entry): entry,
+    };
+    for (final entry in entries) {
+      mergedBySourcePath[_selectionEntryKey(entry)] = entry;
+    }
+    final merged = mergedBySourcePath.values.toList(growable: false)
+      ..sort((a, b) {
+        final relativeCompare = a.relativePath.compareTo(b.relativePath);
+        if (relativeCompare != 0) {
+          return relativeCompare;
+        }
+        return (a.absolutePath ?? '').compareTo(b.absolutePath ?? '');
+      });
+
+    await _writeIndexFile(record, merged);
+    return _buildWriteResult(merged, changed: true);
   }
 
   Future<SharedCacheIndexWriteResult> materializeReceiverIndex({
@@ -793,6 +811,15 @@ class SharedCacheIndexStore {
     }
     return normalizedRelative == normalizedFolder ||
         normalizedRelative.startsWith('$normalizedFolder/');
+  }
+
+  String _selectionEntryKey(SharedFolderIndexEntry entry) {
+    final absolutePath = entry.absolutePath?.trim();
+    if (absolutePath != null && absolutePath.isNotEmpty) {
+      final normalized = p.normalize(File(absolutePath).absolute.path);
+      return Platform.isWindows ? normalized.toLowerCase() : normalized;
+    }
+    return 'relative:${_normalizeRelativeFolderPath(entry.relativePath)}';
   }
 
   int _resolveParallelWorkerCount(int totalFiles, {int? overrideWorkers}) {

@@ -608,10 +608,14 @@ class FileTransferService {
                 destinationDirectory: destinationDirectory,
                 relativePath: file.name,
               );
-        inProgressPath = destinationPath;
+        final tempPath = await _allocateTemporaryDestinationPath(
+          destinationPath,
+        );
+        inProgressPath = tempPath;
         final destinationFile = File(destinationPath);
-        await destinationFile.parent.create(recursive: true);
-        final sink = destinationFile.openWrite(mode: FileMode.writeOnly);
+        final tempFile = File(tempPath);
+        await tempFile.parent.create(recursive: true);
+        final sink = tempFile.openWrite(mode: FileMode.writeOnly);
 
         final digestSink = _DigestSink();
         final hashSink = sha256.startChunkedConversion(digestSink);
@@ -649,10 +653,25 @@ class FileTransferService {
         if (expectedSha.isNotEmpty &&
             actualSha.toLowerCase() != expectedSha.toLowerCase()) {
           try {
-            await destinationFile.delete();
+            await tempFile.delete();
           } catch (_) {}
           throw StateError('SHA-256 mismatch for ${file.name}');
         }
+        await _verifyCompletedFile(
+          path: tempPath,
+          expectedBytes: file.sizeBytes,
+          label: file.name,
+        );
+        if (await destinationFile.exists()) {
+          throw StateError('Destination file already exists: $destinationPath');
+        }
+        await destinationFile.parent.create(recursive: true);
+        final completedFile = await tempFile.rename(destinationPath);
+        await _verifyCompletedFile(
+          path: completedFile.path,
+          expectedBytes: file.sizeBytes,
+          label: file.name,
+        );
         savedPaths.add(destinationPath);
         receivedItems.add(
           TransferFileManifestItem(
@@ -730,6 +749,42 @@ class FileTransferService {
       try {
         await File(path).delete();
       } catch (_) {}
+    }
+  }
+
+  Future<String> _allocateTemporaryDestinationPath(String destinationPath) async {
+    final directory = p.dirname(destinationPath);
+    final basename = p.basename(destinationPath);
+    var counter = 0;
+    while (true) {
+      final suffix = counter == 0 ? '' : '.$counter';
+      final candidate = p.join(directory, '.$basename.landa-part$suffix');
+      if (!await File(candidate).exists() &&
+          !await Directory(candidate).exists()) {
+        return candidate;
+      }
+      counter += 1;
+    }
+  }
+
+  Future<void> _verifyCompletedFile({
+    required String path,
+    required int expectedBytes,
+    required String label,
+  }) async {
+    final file = File(path);
+    if (!await file.exists()) {
+      throw StateError('Received file was not written: $label');
+    }
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file) {
+      throw StateError('Received path is not a file: $label');
+    }
+    if (stat.size != expectedBytes) {
+      throw StateError(
+        'Received file size mismatch for $label '
+        '(expected $expectedBytes, got ${stat.size}).',
+      );
     }
   }
 

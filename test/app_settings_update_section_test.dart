@@ -38,7 +38,7 @@ void main() {
       assetSelector: ({required release, required target}) =>
           release.assets.first,
       assetDownloader: (asset) async => throw UnimplementedError(),
-      downloadedAssetOpener: ({required asset, required file}) async {},
+      downloadedAssetInstaller: ({required asset, required file}) async {},
     );
     await appUpdateBoundary.initialize();
     await appUpdateBoundary.checkForUpdates();
@@ -60,14 +60,10 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await tester.pump();
 
-    await tester.scrollUntilVisible(
-      find.text('Updates'),
-      300,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.pumpAndSettle();
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -1200));
+    await tester.pump();
 
     expect(find.text('Updates'), findsOneWidget);
     expect(find.text('Current version: 1.0.0'), findsOneWidget);
@@ -86,4 +82,5 @@ void main() {
       findsOneWidget,
     );
   });
+
 }

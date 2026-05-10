@@ -16,7 +16,7 @@ void main() {
     assetSelector,
     Future<File> Function(AppUpdateAsset asset)? assetDownloader,
     Future<void> Function({required AppUpdateAsset asset, required File file})?
-    downloadedAssetOpener,
+    downloadedAssetInstaller,
   }) {
     return AppUpdateBoundary(
       currentVersionLoader: currentVersionLoader,
@@ -37,8 +37,8 @@ void main() {
           },
       assetDownloader:
           assetDownloader ?? (asset) async => File('C:/temp/${asset.fileName}'),
-      downloadedAssetOpener:
-          downloadedAssetOpener ?? ({required asset, required file}) async {},
+      downloadedAssetInstaller:
+          downloadedAssetInstaller ?? ({required asset, required file}) async {},
     );
   }
 
@@ -125,13 +125,13 @@ void main() {
     expect(boundary.currentVersion, '1.2.3');
   });
 
-  test('applyUpdate downloads and opens the selected asset', () async {
+  test('applyUpdate downloads desktop asset without opening it', () async {
     final applied = <String>[];
     final boundary = createBoundary(
       currentVersionLoader: () async => '1.0.0',
       latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
       assetDownloader: (asset) async => File('C:/temp/${asset.fileName}'),
-      downloadedAssetOpener: ({required asset, required file}) async {
+      downloadedAssetInstaller: ({required asset, required file}) async {
         applied.add('${asset.fileName}:${file.path}');
       },
     );
@@ -141,7 +141,69 @@ void main() {
     await boundary.applyUpdate();
 
     expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
-    expect(applied, <String>['landa.zip:C:/temp/landa.zip']);
+    expect(boundary.downloadedAssetPath, 'C:/temp/landa.zip');
+    expect(boundary.canInstallDownloadedUpdate, isTrue);
+    expect(applied, isEmpty);
+  });
+
+  test('installDownloadedUpdate opens an existing desktop asset', () async {
+    final temp = await Directory.systemTemp.createTemp('landa_update_test_');
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+    final file = File('${temp.path}/landa.zip');
+    final applied = <String>[];
+    final boundary = createBoundary(
+      currentVersionLoader: () async => '1.0.0',
+      latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
+      assetDownloader: (asset) async {
+        await file.writeAsString('zip');
+        return file;
+      },
+      downloadedAssetInstaller: ({required asset, required file}) async {
+        applied.add('${asset.fileName}:${file.path}');
+      },
+    );
+
+    await boundary.initialize();
+    await boundary.checkForUpdates();
+    await boundary.applyUpdate();
+    await boundary.installDownloadedUpdate();
+
+    expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
+    expect(applied, <String>['landa.zip:${file.path}']);
+  });
+
+  test('installDownloadedUpdate resets when downloaded file is missing', () async {
+    final temp = await Directory.systemTemp.createTemp('landa_update_missing_');
+    addTearDown(() async {
+      if (await temp.exists()) {
+        await temp.delete(recursive: true);
+      }
+    });
+    final file = File('${temp.path}/landa.zip');
+    final boundary = createBoundary(
+      currentVersionLoader: () async => '1.0.0',
+      latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
+      assetDownloader: (asset) async {
+        await file.writeAsString('zip');
+        return file;
+      },
+    );
+
+    await boundary.initialize();
+    await boundary.checkForUpdates();
+    await boundary.applyUpdate();
+    await file.delete();
+    await boundary.installDownloadedUpdate();
+
+    expect(boundary.applyPhase, AppUpdateApplyPhase.idle);
+    expect(boundary.applyMessage, AppUpdateBoundary.fileNotFoundMessage);
+    expect(boundary.downloadedAssetPath, isNull);
+    expect(boundary.canInstallDownloadedUpdate, isFalse);
+    expect(boundary.isUpdateAvailable, isTrue);
   });
 
   test('applyUpdate fails gracefully when the download step throws', () async {
