@@ -368,6 +368,49 @@ void main() {
         );
       }
     });
+
+    test(
+      'keeps incoming transfer request queue on IncomingTransferRequestBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/incoming_transfer_request_boundary.dart';
+        const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class IncomingTransferRequestBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the explicit ChangeNotifier owner for incoming transfer request queue truth.',
+        );
+        expect(
+          sourceTree.fileContainsLiteral(
+            compositionPath,
+            'IncomingTransferRequestBoundary incomingTransferRequestBoundary;',
+          ),
+          isTrue,
+          reason:
+              '$compositionPath must expose the incoming transfer request boundary directly to presentation.',
+        );
+
+        for (final symbol in <String>[
+          'final List<IncomingTransferRequest>',
+          'List<IncomingTransferRequest> get incomingRequests',
+          '_incomingTransferRequests',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not own incoming transfer request queue residue "$symbol".',
+          );
+        }
+      },
+    );
   });
 }
 

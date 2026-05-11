@@ -6,6 +6,7 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_download_boundary.dart';
+import '../../transfer/application/incoming_transfer_request_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../application/discovery_read_model.dart';
@@ -18,6 +19,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.errorMessage,
     required this.isManualRefreshInProgress,
     required this.transferSessionCoordinator,
+    required this.incomingTransferRequestBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
@@ -31,6 +33,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final String? errorMessage;
   final bool isManualRefreshInProgress;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
       transferSessionCoordinator.sharedDownloadBoundary;
@@ -51,6 +54,18 @@ class DiscoveryDeviceListSection extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
           if (errorMessage != null) ...[
             _ErrorBanner(message: errorMessage!),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          if (incomingTransferRequestBoundary.incomingRequests.isNotEmpty) ...[
+            _IncomingTransferRequestsCard(
+              requests: incomingTransferRequestBoundary.incomingRequests,
+              onRespond: ({required requestId, required approved}) {
+                return incomingTransferRequestBoundary.respondToTransferRequest(
+                  requestId: requestId,
+                  approved: approved,
+                );
+              },
+            ),
             const SizedBox(height: AppSpacing.sm),
           ],
           if (sharedDownloadBoundary
@@ -471,6 +486,47 @@ class _IncomingSharedDownloadRequestsCard extends StatelessWidget {
   }
 }
 
+class _IncomingTransferRequestsCard extends StatelessWidget {
+  const _IncomingTransferRequestsCard({
+    required this.requests,
+    required this.onRespond,
+  });
+
+  final List<IncomingTransferRequest> requests;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'discovery.incoming_transfer_requests.title'.tr(),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            for (var index = 0; index < requests.length; index += 1) ...[
+              _IncomingTransferRequestTile(
+                request: requests[index],
+                onRespond: onRespond,
+              ),
+              if (index != requests.length - 1)
+                const SizedBox(height: AppSpacing.sm),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _IncomingRemoteShareAccessRequestsCard extends StatelessWidget {
   const _IncomingRemoteShareAccessRequestsCard({
     required this.requests,
@@ -558,6 +614,73 @@ class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
                 child: Text('common.send'.tr()),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: false),
+                child: Text('common.reject'.tr()),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IncomingTransferRequestTile extends StatelessWidget {
+  const _IncomingTransferRequestTile({
+    required this.request,
+    required this.onRespond,
+  });
+
+  final IncomingTransferRequest request;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    final fileCount = request.items.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'discovery.incoming_transfer_requests.message'.tr(
+              namedArgs: <String, String>{
+                'sender': request.senderName,
+                'count': '$fileCount',
+              },
+            ),
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'discovery.incoming_transfer_requests.source'.tr(
+              namedArgs: <String, String>{'label': request.sharedLabel},
+            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: true),
+                child: Text('common.accept'.tr()),
               ),
               const SizedBox(width: AppSpacing.sm),
               OutlinedButton(

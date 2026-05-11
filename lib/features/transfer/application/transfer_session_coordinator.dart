@@ -23,6 +23,8 @@ import '../data/shared_download_diagnostic_log_store.dart';
 import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
+import 'incoming_transfer_request_boundary.dart';
+import 'incoming_transfer_request_helpers.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
 import 'shared_download_boundary.dart';
@@ -212,6 +214,34 @@ class TransferSessionCoordinator extends ChangeNotifier {
       progressResetDelay: progressResetDelay,
     );
     _sharedDownloadBoundary.addListener(_notify);
+    _incomingTransferRequestBoundary = IncomingTransferRequestBoundary(
+      lanDiscoveryService: lanDiscoveryService,
+      missingFileFilter: IncomingTransferMissingFileFilter(
+        fileHashService: fileHashService,
+        pathPolicy: _pathPolicy,
+      ),
+      fileTransferService: fileTransferService,
+      transferStorageService: transferStorageService,
+      sharedDownloadBoundary: _sharedDownloadBoundary,
+      remoteFilePreviewBoundary: _remoteFilePreviewBoundary,
+      pathPolicy: _pathPolicy,
+      localNameProvider: localNameProvider,
+      isTrustedSender: isTrustedSender,
+      publishNotice: _publishNotice,
+      updateDownloadProgress: _updateDownloadProgress,
+      resetDownloadProgress: _resetDownloadProgress,
+      resetDownloadSpeed: (currentBytes) =>
+          _speedTracker.resetDownload(currentBytes: currentBytes),
+      updateDownloadSpeed: (currentBytes) =>
+          _speedTracker.updateDownload(currentBytes: currentBytes),
+      clearDownloadSpeed: _speedTracker.clearDownload,
+      notifyOwner: _notify,
+      fileTransferDiagnosticLogger: _fileTransferDiagnosticLogger,
+      waitForIncomingTransferResult: _waitForIncomingTransferResult,
+      registerActiveReceiveSession: _registerActiveReceiveSession,
+      removeActiveReceiveSession: _removeActiveReceiveSession,
+    );
+    _incomingTransferRequestBoundary.addListener(_notify);
   }
 
   final LanDiscoveryService _lanDiscoveryService;
@@ -226,6 +256,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final bool Function(String? normalizedMac) _isTrustedSender;
   late final RemoteFilePreviewBoundary _remoteFilePreviewBoundary;
   late final SharedDownloadBoundary _sharedDownloadBoundary;
+  late final IncomingTransferRequestBoundary _incomingTransferRequestBoundary;
   final Future<RemoteShareAccessProjectionLoadResult> Function({
     required String ownerIp,
     required String ownerName,
@@ -236,8 +267,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final SharedDownloadDiagnosticLogStore _sharedDownloadDiagnosticLogStore;
   final TransferPathPolicy _pathPolicy = const TransferPathPolicy();
 
-  final List<IncomingTransferRequest> _incomingRequests =
-      <IncomingTransferRequest>[];
   final List<IncomingRemoteShareAccessRequest>
   _incomingRemoteShareAccessRequests = <IncomingRemoteShareAccessRequest>[];
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
@@ -295,8 +324,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     speedBytesPerSecond: downloadSpeedBytesPerSecond,
     isActive: isDownloading,
   );
-  List<IncomingTransferRequest> get incomingRequests =>
-      List<IncomingTransferRequest>.unmodifiable(_incomingRequests);
+  IncomingTransferRequestBoundary get incomingTransferRequestBoundary =>
+      _incomingTransferRequestBoundary;
   List<IncomingRemoteShareAccessRequest>
   get incomingRemoteShareAccessRequests =>
       List<IncomingRemoteShareAccessRequest>.unmodifiable(
@@ -691,371 +720,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
     String? destinationDirectoryOverridePath,
     SharedDownloadReceiveLayout receiveLayout =
         SharedDownloadReceiveLayout.preserveRelativeStructure,
-  }) async {
-    final index = _incomingRequests.indexWhere((r) => r.requestId == requestId);
-    if (index < 0) {
-      return;
-    }
-
-    final request = _incomingRequests[index];
-    final isPreview = forPreview;
-    TransferReceiveSession? receiveSession;
-    var skippedExistingCount = 0;
-    var itemsToReceive = request.items;
-    var decisionApproved = approved;
-    final previewCompleter = isPreview
-        ? _remoteFilePreviewBoundary.takePreviewResultCompleter(
-            request.requestId,
-          )
-        : null;
-
-    try {
-      if (decisionApproved) {
-        final destinationDirectory = isPreview
-            ? await _remoteFilePreviewBoundary.resolvePreviewArtifactDirectory()
-            : destinationDirectoryOverridePath != null
-            ? Directory(destinationDirectoryOverridePath)
-            : await _transferStorageService.resolveReceiveDirectory(
-                appFolderName: 'Landa',
-              );
-        final destinationRelativeRootPrefix =
-            !isPreview &&
-                receiveLayout == SharedDownloadReceiveLayout.preserveSharedRoot
-            ? _pathPolicy.resolveReceiveRootPrefix(request.sharedLabel)
-            : null;
-
-        if (isPreview) {
-          final normalizedPreviewPath = previewRelativePath == null
-              ? null
-              : _pathPolicy.normalizeForMatch(previewRelativePath);
-          if (normalizedPreviewPath != null &&
-              normalizedPreviewPath.isNotEmpty) {
-            itemsToReceive = request.items
-                .where(
-                  (item) =>
-                      _pathPolicy.normalizeForMatch(item.fileName) ==
-                      normalizedPreviewPath,
-                )
-                .toList(growable: false);
-          }
-          if (itemsToReceive.isEmpty && request.items.isNotEmpty) {
-            itemsToReceive = <TransferFileManifestItem>[request.items.first];
-          }
-        } else {
-          _sharedDownloadBoundary.setPreparation(
-            requestId: request.requestId,
-            ownerName: request.senderName,
-            stage: SharedDownloadPreparationStage.checkingExistingLocalFiles,
-          );
-          itemsToReceive = await _filterMissingIncomingItems(
-            items: request.items,
-            destinationDirectory: destinationDirectory,
-            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-          );
-          skippedExistingCount = request.items.length - itemsToReceive.length;
-        }
-
-        final expectedBytes = itemsToReceive.fold<int>(
-          0,
-          (sum, item) => sum + item.sizeBytes,
-        );
-
-        if (itemsToReceive.isNotEmpty) {
-          _sharedDownloadBoundary.setPreparation(
-            requestId: request.requestId,
-            ownerName: request.senderName,
-            stage: SharedDownloadPreparationStage.startingReceiver,
-          );
-          _downloadReceivedBytes = 0;
-          _downloadTotalBytes = expectedBytes;
-          _speedTracker.resetDownload(currentBytes: 0);
-          _notify();
-
-          if (!isPreview) {
-            unawaited(
-              _transferStorageService.showAndroidDownloadProgressNotification(
-                requestId: request.requestId,
-                senderName: request.senderName,
-                receivedBytes: 0,
-                totalBytes: expectedBytes,
-              ),
-            );
-          }
-
-          var lastNotifiedAtMs = 0;
-          var lastNotifiedPercent = -1;
-          receiveSession = await _fileTransferService.startReceiver(
-            requestId: request.requestId,
-            expectedItems: request.items,
-            destinationDirectory: destinationDirectory,
-            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-            onDiagnosticEvent: isPreview
-                ? null
-                : _fileTransferDiagnosticLogger(
-                    requestId: request.requestId,
-                    baseDetails: <String, Object?>{
-                      'pathKind': 'legacy',
-                      'senderIp': request.senderIp,
-                      'senderName': request.senderName,
-                      'sharedCacheId': request.sharedCacheId,
-                    },
-                  ),
-            onProgress: (received, total) {
-              if (received > 0) {
-                _sharedDownloadBoundary.clearPreparation(
-                  requestId: request.requestId,
-                );
-              }
-              _downloadReceivedBytes = received;
-              _downloadTotalBytes = total;
-              _speedTracker.updateDownload(currentBytes: received);
-              _notify();
-
-              if (isPreview) {
-                return;
-              }
-
-              final nowMs = DateTime.now().millisecondsSinceEpoch;
-              final percent = total <= 0
-                  ? -1
-                  : (received * 100 ~/ total).clamp(0, 100);
-              final isFinalChunk = total > 0 && received >= total;
-              final hasMeaningfulPercentStep =
-                  percent >= 0 &&
-                  (lastNotifiedPercent < 0 ||
-                      percent >= lastNotifiedPercent + 2);
-              final shouldNotify =
-                  isFinalChunk ||
-                  nowMs - lastNotifiedAtMs >= 600 ||
-                  hasMeaningfulPercentStep;
-              if (!shouldNotify) {
-                return;
-              }
-              lastNotifiedAtMs = nowMs;
-              if (percent >= 0) {
-                lastNotifiedPercent = percent;
-              }
-              unawaited(
-                _transferStorageService.showAndroidDownloadProgressNotification(
-                  requestId: request.requestId,
-                  senderName: request.senderName,
-                  receivedBytes: received,
-                  totalBytes: total,
-                ),
-              );
-            },
-          );
-          _activeReceiveSessions[request.requestId] = receiveSession;
-          unawaited(
-            _waitForIncomingTransferResult(
-              request: request,
-              session: receiveSession,
-              acceptedItems: itemsToReceive,
-              persistToUserDownloads: !isPreview,
-              recordHistory: !isPreview,
-              sendCompletionNotification: !isPreview,
-              destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-              previewCompleter: previewCompleter,
-            ),
-          );
-        } else {
-          _sharedDownloadBoundary.clearPreparation(
-            requestId: request.requestId,
-          );
-          _downloadReceivedBytes = 0;
-          _downloadTotalBytes = 0;
-          _speedTracker.clearDownload();
-          if (isPreview) {
-            decisionApproved = false;
-            if (previewCompleter != null && !previewCompleter.isCompleted) {
-              previewCompleter.complete(null);
-            }
-          }
-        }
-      }
-
-      await _lanDiscoveryService.sendTransferDecision(
-        targetIp: request.senderIp,
-        requestId: request.requestId,
-        approved: decisionApproved,
-        receiverName: _localName,
-        transferPort: decisionApproved ? receiveSession?.port : null,
-        acceptedFileNames: decisionApproved
-            ? itemsToReceive
-                  .map((item) => item.fileName)
-                  .toList(growable: false)
-            : null,
-      );
-
-      _incomingRequests.removeAt(index);
-      if (!decisionApproved) {
-        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-        _publishNotice(
-          TransferSessionNotice(
-            infoMessage: isPreview
-                ? 'Preview request was declined.'
-                : 'Transfer declined.',
-            clearError: true,
-          ),
-        );
-      } else if (isPreview) {
-        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-        _publishNotice(
-          const TransferSessionNotice(
-            infoMessage: 'Preview accepted. Waiting for file stream...',
-            clearError: true,
-          ),
-        );
-      } else if (itemsToReceive.isEmpty) {
-        _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-        _publishNotice(
-          const TransferSessionNotice(
-            infoMessage:
-                'All requested files already exist locally. Transfer skipped.',
-            clearError: true,
-          ),
-        );
-      } else if (skippedExistingCount > 0) {
-        _sharedDownloadBoundary.setPreparation(
-          requestId: request.requestId,
-          ownerName: request.senderName,
-          stage: SharedDownloadPreparationStage.waitingForRemote,
-        );
-        _publishNotice(
-          TransferSessionNotice(
-            infoMessage:
-                'Transfer accepted. Skipping $skippedExistingCount existing file(s), waiting for missing files...',
-            clearError: true,
-          ),
-        );
-      } else {
-        _sharedDownloadBoundary.setPreparation(
-          requestId: request.requestId,
-          ownerName: request.senderName,
-          stage: SharedDownloadPreparationStage.waitingForRemote,
-        );
-        _publishNotice(
-          const TransferSessionNotice(
-            infoMessage: 'Transfer accepted. Waiting for file stream...',
-            clearError: true,
-          ),
-        );
-      }
-    } catch (error) {
-      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-      if (receiveSession != null) {
-        await receiveSession.close();
-        _activeReceiveSessions.remove(request.requestId);
-      }
-      if (previewCompleter != null && !previewCompleter.isCompleted) {
-        previewCompleter.complete(null);
-      }
-      _remoteFilePreviewBoundary.discardPreviewResultCompleter(
-        request.requestId,
-      );
-      _log('Failed to respond to transfer request: $error');
-      _publishNotice(
-        TransferSessionNotice(
-          errorMessage: 'Failed to respond to transfer request: $error',
-        ),
-      );
-    }
+  }) {
+    return _incomingTransferRequestBoundary.respondToTransferRequest(
+      requestId: requestId,
+      approved: approved,
+      forPreview: forPreview,
+      previewRelativePath: previewRelativePath,
+      destinationDirectoryOverridePath: destinationDirectoryOverridePath,
+      receiveLayout: receiveLayout,
+    );
   }
 
   void handleTransferRequestEvent(TransferRequestEvent event) {
-    final mappedItems = event.items
-        .map(
-          (item) => TransferFileManifestItem(
-            fileName: item.fileName,
-            sizeBytes: item.sizeBytes,
-            sha256: item.sha256,
-          ),
-        )
-        .toList(growable: false);
-
-    _incomingRequests.removeWhere((req) => req.requestId == event.requestId);
-    _incomingRequests.insert(
-      0,
-      IncomingTransferRequest(
-        requestId: event.requestId,
-        senderIp: event.senderIp,
-        senderName: event.senderName,
-        senderMacAddress: event.senderMacAddress,
-        sharedCacheId: event.sharedCacheId,
-        sharedLabel: event.sharedLabel,
-        items: mappedItems,
-        createdAt: event.observedAt,
-      ),
-    );
-    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
-      event.senderMacAddress,
-    );
-    final pendingRemoteDownload = _sharedDownloadBoundary
-        .consumePendingRemoteDownload(event);
-    if (pendingRemoteDownload != null) {
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage:
-              'Auto-accepting download transfer from ${event.senderName}.',
-          clearError: true,
-        ),
-      );
-      unawaited(
-        respondToTransferRequest(
-          requestId: event.requestId,
-          approved: true,
-          destinationDirectoryOverridePath:
-              pendingRemoteDownload.destinationDirectoryPath,
-          receiveLayout: pendingRemoteDownload.receiveLayout,
-        ),
-      );
-      return;
-    }
-
-    final previewIntent = _remoteFilePreviewBoundary
-        .consumePendingRemotePreview(event);
-    if (previewIntent != null) {
-      _remoteFilePreviewBoundary.registerPreviewResultCompleter(
-        requestId: event.requestId,
-        completer: previewIntent.completer,
-      );
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage: 'Preparing remote preview from ${event.senderName}...',
-          clearError: true,
-        ),
-      );
-      unawaited(
-        respondToTransferRequest(
-          requestId: event.requestId,
-          approved: true,
-          forPreview: true,
-          previewRelativePath: previewIntent.normalizedRelativePath,
-        ),
-      );
-      return;
-    }
-
-    if (_isTrustedSender(normalizedSenderMac)) {
-      _publishNotice(
-        TransferSessionNotice(
-          infoMessage:
-              'Auto-accepting transfer from friend ${event.senderName}.',
-          clearError: true,
-        ),
-      );
-      unawaited(
-        respondToTransferRequest(requestId: event.requestId, approved: true),
-      );
-      return;
-    }
-
-    _publishNotice(
-      TransferSessionNotice(
-        infoMessage: 'Incoming transfer request from ${event.senderName}.',
-        clearError: true,
-      ),
-    );
+    _incomingTransferRequestBoundary.handleTransferRequestEvent(event);
   }
 
   void handleTransferDecisionEvent(TransferDecisionEvent event) {
@@ -2939,51 +2616,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
         .toList(growable: false);
   }
 
-  Future<List<TransferFileManifestItem>> _filterMissingIncomingItems({
-    required List<TransferFileManifestItem> items,
-    required Directory destinationDirectory,
-    String? destinationRelativeRootPrefix,
-  }) async {
-    final missing = <TransferFileManifestItem>[];
-    for (final item in items) {
-      final relativePath = _pathPolicy.buildReceiveRelativePath(
-        item.fileName,
-        destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-      );
-      final targetPath = p.join(destinationDirectory.path, relativePath);
-      final targetFile = File(targetPath);
-      if (!await targetFile.exists()) {
-        missing.add(item);
-        continue;
-      }
-
-      try {
-        final stat = await targetFile.stat();
-        if (stat.type != FileSystemEntityType.file ||
-            stat.size != item.sizeBytes) {
-          missing.add(item);
-          continue;
-        }
-
-        final expectedHash = item.sha256.trim();
-        if (expectedHash.isEmpty) {
-          missing.add(item);
-          continue;
-        }
-
-        final existingHash = await _fileHashService.computeSha256ForPath(
-          targetPath,
-        );
-        if (existingHash.toLowerCase() != expectedHash.toLowerCase()) {
-          missing.add(item);
-        }
-      } catch (_) {
-        missing.add(item);
-      }
-    }
-    return missing;
-  }
-
   Duration? _estimateEta({
     required int totalBytes,
     required int transferredBytes,
@@ -3063,6 +2695,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _remoteFilePreviewBoundary.dispose();
+    _incomingTransferRequestBoundary.removeListener(_notify);
+    _incomingTransferRequestBoundary.dispose();
     _sharedDownloadBoundary.removeListener(_notify);
     _sharedDownloadBoundary.dispose();
     for (final session in _activeReceiveSessions.values) {

@@ -2118,8 +2118,18 @@ void main() {
         );
 
         final notice = coordinator.takePendingNotice();
-        expect(coordinator.incomingRequests, hasLength(1));
-        expect(coordinator.incomingRequests.single.requestId, 'transfer-1');
+        expect(
+          coordinator.incomingTransferRequestBoundary.incomingRequests,
+          hasLength(1),
+        );
+        expect(
+          coordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests
+              .single
+              .requestId,
+          'transfer-1',
+        );
         expect(
           notice?.infoMessage,
           'Incoming transfer request from Remote peer.',
@@ -2185,10 +2195,8 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-2',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(requestId: 'transfer-2', approved: true);
         await _waitForDownloadHistoryRecords(
           boundary: downloadHistoryBoundary,
           expectedCount: 1,
@@ -2201,7 +2209,10 @@ void main() {
         );
         final history = downloadHistoryBoundary.records;
 
-        expect(coordinator.incomingRequests, isEmpty);
+        expect(
+          coordinator.incomingTransferRequestBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.transferDecisions, hasLength(1));
         expect(lanDiscoveryService.transferDecisions.single.approved, isTrue);
         expect(receiverCaches, hasLength(1));
@@ -2264,10 +2275,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-history-real-file',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(
+              requestId: 'transfer-history-real-file',
+              approved: true,
+            );
         await _waitForDownloadHistoryRecords(
           boundary: downloadHistoryBoundary,
           expectedCount: 1,
@@ -2335,10 +2347,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-ghost-file',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(
+              requestId: 'transfer-ghost-file',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         final notice = coordinator.takePendingNotice();
@@ -4441,9 +4454,18 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(transferSessionCoordinator.incomingRequests, hasLength(1));
         expect(
-          transferSessionCoordinator.incomingRequests.single.requestId,
+          transferSessionCoordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests,
+          hasLength(1),
+        );
+        expect(
+          transferSessionCoordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests
+              .single
+              .requestId,
           'transfer-3',
         );
         expect(

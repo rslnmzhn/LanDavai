@@ -11,7 +11,6 @@ import 'package:landa/features/transfer/application/transfer_session_coordinator
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
-import 'package:landa/features/transfer/domain/transfer_request.dart';
 
 import 'localized_test_app.dart';
 import 'test_discovery_controller.dart';
@@ -237,10 +236,6 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
   String? lastAccessRequestOwnerIp;
   Map<String, Set<String>>? lastSelectedByCache;
   Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
-
-  @override
-  List<IncomingTransferRequest> get incomingRequests =>
-      const <IncomingTransferRequest>[];
 
   @override
   Future<String?> requestRemoteFilePreview({

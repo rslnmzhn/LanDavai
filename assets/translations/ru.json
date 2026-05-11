@@ -154,6 +154,11 @@
       "kind_mixed": "файлы и папки",
       "and_more": "{summary} и ещё {count}"
     },
+    "incoming_transfer_requests": {
+      "title": "Входящие передачи",
+      "message": "Устройство \"{sender}\" хочет отправить файлов: {count}.",
+      "source": "Источник: {label}"
+    },
     "incoming_access_requests": {
       "title": "Запросы доступа к общим папкам",
       "message": "Устройство \"{requester}\" хочет получить доступ к вашим общим файлам.",
