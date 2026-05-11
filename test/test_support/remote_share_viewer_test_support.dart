@@ -30,6 +30,8 @@ Future<void> pumpRemoteBrowser(
         transferSessionCoordinator: coordinator,
         remoteShareAccessSessionBoundary:
             coordinator.remoteShareAccessSessionBoundary,
+        transferCachePreparationBoundary:
+            coordinator.transferCachePreparationBoundary,
         sharedDownloadBoundary: coordinator.sharedDownloadBoundary,
         useStandardAppDownloadFolder: true,
       ),

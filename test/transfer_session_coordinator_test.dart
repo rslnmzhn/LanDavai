@@ -942,7 +942,9 @@ void main() {
         var logContents = '';
         for (var index = 0; index < 20; index += 1) {
           final logFile = await diagnosticStore.resolveLogFile();
-          logContents = logFile == null ? '' : await logFile.readAsString();
+          logContents = logFile == null || !await logFile.exists()
+              ? ''
+              : await logFile.readAsString();
           if (logContents.contains(
             '"stage":"sender_whole_share_session_complete"',
           )) {
@@ -1515,7 +1517,7 @@ void main() {
 
         expect(
           coordinator
-              .sharedDownloadBoundary
+              .transferCachePreparationBoundary
               .sharedUploadPreparationState
               ?.stage,
           SharedUploadPreparationStage.resolvingSelection,
@@ -1532,7 +1534,7 @@ void main() {
 
         expect(
           coordinator
-              .sharedDownloadBoundary
+              .transferCachePreparationBoundary
               .sharedUploadPreparationState
               ?.stage,
           SharedUploadPreparationStage.waitingForRequester,
@@ -3651,19 +3653,21 @@ void main() {
         );
 
         expect(
-          coordinator.sharedDownloadBoundary.isPreparingSharedDownload,
+          coordinator
+              .transferCachePreparationBoundary
+              .isPreparingSharedDownload,
           isTrue,
         );
         expect(
           coordinator
-              .sharedDownloadBoundary
+              .transferCachePreparationBoundary
               .sharedDownloadPreparationState
               ?.stage,
           SharedDownloadPreparationStage.waitingForRemote,
         );
         expect(
           coordinator
-              .sharedDownloadBoundary
+              .transferCachePreparationBoundary
               .sharedDownloadPreparationState
               ?.message,
           'Ждём, пока Remote peer начнёт передачу...',

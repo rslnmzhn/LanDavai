@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
@@ -28,6 +27,8 @@ import 'remote_share_access_session_models.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
 import 'shared_download_boundary.dart';
+import 'transfer_cache_preparation_boundary.dart';
+import 'transfer_cache_snapshot_builder.dart';
 import 'remote_file_preview_boundary.dart';
 import 'transfer_path_policy.dart';
 import 'transfer_speed_tracker.dart';
@@ -47,7 +48,6 @@ class TransferSessionNotice {
 }
 
 class TransferSessionCoordinator extends ChangeNotifier {
-  static const int _wholeShareDirectStartFirstBatchFileCount = 256;
   static const Duration _wholeShareUploadProgressMinEmitInterval = Duration(
     milliseconds: 250,
   );
@@ -125,6 +125,12 @@ class TransferSessionCoordinator extends ChangeNotifier {
       previewRequestTimeout: previewRequestTimeout,
       pathPolicy: _pathPolicy,
     );
+    _transferCacheSnapshotBuilder = TransferCacheSnapshotBuilder(
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      fileHashService: fileHashService,
+    );
+    _transferCachePreparationBoundary = TransferCachePreparationBoundary();
+    _transferCachePreparationBoundary.addListener(_notify);
     _sharedDownloadBoundary = SharedDownloadBoundary(
       lanDiscoveryService: lanDiscoveryService,
       sharedCacheCatalog: sharedCacheCatalog,
@@ -153,11 +159,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
       sendDirectSharedDownload: _sendDirectSharedDownloadForBoundary,
       persistWholeShareTransferHashBackfill:
           _persistWholeShareTransferHashBackfillForBoundary,
+      cachePreparationBoundary: _transferCachePreparationBoundary,
       buildCompressedPreviewFilesForCache:
           _remoteFilePreviewBoundary.buildCompressedPreviewFilesForCache,
-      buildTransferFilesForCache: _buildTransferFilesForCacheForBoundary,
+      buildTransferFilesForCache:
+          _transferCacheSnapshotBuilder.buildTransferFilesForCache,
       buildWholeShareDirectStartSendPlan:
-          _buildWholeShareDirectStartSendPlanForBoundary,
+          _transferCacheSnapshotBuilder.buildWholeShareDirectStartSendPlan,
       diagnosticLogStore: _sharedDownloadDiagnosticLogStore,
       progressResetDelay: progressResetDelay,
     );
@@ -225,6 +233,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
   late final RemoteFilePreviewBoundary _remoteFilePreviewBoundary;
+  late final TransferCacheSnapshotBuilder _transferCacheSnapshotBuilder;
+  late final TransferCachePreparationBoundary _transferCachePreparationBoundary;
   late final SharedDownloadBoundary _sharedDownloadBoundary;
   late final IncomingTransferRequestBoundary _incomingTransferRequestBoundary;
   late final RemoteShareAccessSessionBoundary _remoteShareAccessSessionBoundary;
@@ -287,6 +297,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
   IncomingTransferRequestBoundary get incomingTransferRequestBoundary =>
       _incomingTransferRequestBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary => _sharedDownloadBoundary;
+  TransferCachePreparationBoundary get transferCachePreparationBoundary =>
+      _transferCachePreparationBoundary;
   RemoteShareAccessSessionBoundary get remoteShareAccessSessionBoundary =>
       _remoteShareAccessSessionBoundary;
   TransferSessionNotice? takePendingNotice() {
@@ -1290,513 +1302,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return List<String>.unmodifiable(verified);
   }
 
-  Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
-    SharedFolderCacheRecord cache, {
-    Set<String>? relativePathFilter,
-    Set<String>? folderPrefixFilter,
-    _TransferHashPreparationMode hashPreparationMode =
-        _TransferHashPreparationMode.full,
-    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
-  }) async {
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_scoped_selection_resolution_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'relativePathFilterCount': relativePathFilter?.length ?? 0,
-        'folderPrefixFilterCount': folderPrefixFilter?.length ?? 0,
-        'hashPreparationMode': hashPreparationMode.name,
-      },
-    );
-    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
-      cache,
-      relativePathFilter: relativePathFilter,
-      folderPrefixFilter: folderPrefixFilter,
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_scoped_selection_resolution_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'selectionFingerprint': scopedSelection.fingerprint,
-        'scopedEntryCount': scopedSelection.entries.length,
-      },
-    );
-    final items = <_PreparedTransferFile>[];
-    final refreshedManifestEntries = <SharedFolderIndexEntry>[];
-    var traversedFileCount = 0;
-    var skippedMissingSourceCount = 0;
-    var skippedNonFileCount = 0;
-    var preparedTotalBytes = 0;
-    var reusedCachedHashCount = 0;
-    var recomputedHashCount = 0;
-    var deferredHashCount = 0;
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_live_filesystem_traversal_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'indexedEntryCount': scopedSelection.entries.length,
-      },
-    );
-    if (hashPreparationMode == _TransferHashPreparationMode.full) {
-      onDiagnosticEvent?.call(
-        stage: 'sender_whole_share_hash_stage_start',
-        details: <String, Object?>{
-          'cacheId': cache.cacheId,
-          'indexedEntryCount': scopedSelection.entries.length,
-        },
-      );
-    }
-    for (final entry in scopedSelection.entries) {
-      final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
-      if (filePath == null) {
-        skippedMissingSourceCount += 1;
-        continue;
-      }
-      final file = File(filePath);
-      if (!await file.exists()) {
-        skippedMissingSourceCount += 1;
-        continue;
-      }
-      final stat = await file.stat();
-      if (stat.type != FileSystemEntityType.file) {
-        skippedNonFileCount += 1;
-        continue;
-      }
-      traversedFileCount += 1;
-      final currentSizeBytes = stat.size;
-      final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
-      String sha256Hash = '';
-      final cachedSha256 = entry.sha256?.trim() ?? '';
-      final canReuseCachedManifest =
-          cachedSha256.isNotEmpty &&
-          entry.sizeBytes == currentSizeBytes &&
-          entry.modifiedAtMs == currentModifiedAtMs;
-      if (hashPreparationMode == _TransferHashPreparationMode.full) {
-        if (canReuseCachedManifest) {
-          sha256Hash = cachedSha256;
-          reusedCachedHashCount += 1;
-        } else {
-          sha256Hash = await _fileHashService.computeSha256ForPath(filePath);
-          recomputedHashCount += 1;
-          refreshedManifestEntries.add(
-            entry.copyWith(
-              sizeBytes: currentSizeBytes,
-              modifiedAtMs: currentModifiedAtMs,
-              absolutePath: cache.rootPath.startsWith('selection://')
-                  ? filePath
-                  : null,
-              clearAbsolutePath: !cache.rootPath.startsWith('selection://'),
-              sha256: sha256Hash,
-            ),
-          );
-        }
-      } else if (hashPreparationMode ==
-          _TransferHashPreparationMode.cachedOnly) {
-        if (canReuseCachedManifest) {
-          sha256Hash = cachedSha256;
-          reusedCachedHashCount += 1;
-        } else {
-          deferredHashCount += 1;
-        }
-      }
-
-      items.add(
-        _PreparedTransferFile(
-          sourcePath: filePath,
-          announcement: TransferAnnouncementItem(
-            fileName: entry.relativePath,
-            sizeBytes: currentSizeBytes,
-            sha256: sha256Hash,
-          ),
-        ),
-      );
-      preparedTotalBytes += currentSizeBytes;
-    }
-    if (hashPreparationMode == _TransferHashPreparationMode.full) {
-      onDiagnosticEvent?.call(
-        stage: 'sender_whole_share_hash_stage_complete',
-        details: <String, Object?>{
-          'cacheId': cache.cacheId,
-          'reusedCachedHashCount': reusedCachedHashCount,
-          'recomputedHashCount': recomputedHashCount,
-          'refreshedManifestEntryCount': refreshedManifestEntries.length,
-        },
-      );
-    } else if (hashPreparationMode == _TransferHashPreparationMode.cachedOnly) {
-      onDiagnosticEvent?.call(
-        stage: 'sender_whole_share_hash_stage_deferred',
-        details: <String, Object?>{
-          'cacheId': cache.cacheId,
-          'reusedCachedHashCount': reusedCachedHashCount,
-          'deferredHashCount': deferredHashCount,
-        },
-      );
-    }
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_live_filesystem_traversal_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'traversedFileCount': traversedFileCount,
-        'skippedMissingSourceCount': skippedMissingSourceCount,
-        'skippedNonFileCount': skippedNonFileCount,
-        'preparedFileCount': items.length,
-        'preparedTotalBytes': preparedTotalBytes,
-      },
-    );
-    if (refreshedManifestEntries.isNotEmpty) {
-      await _sharedCacheIndexStore.persistCachedManifestEntries(
-        record: cache,
-        entries: refreshedManifestEntries,
-      );
-    }
-    return List<_PreparedTransferFile>.unmodifiable(items);
-  }
-
-  Future<List<SharedDownloadPreparedFile>>
-  _buildTransferFilesForCacheForBoundary(
-    SharedFolderCacheRecord cache, {
-    Set<String>? relativePathFilter,
-    Set<String>? folderPrefixFilter,
-    SharedDownloadHashPreparationMode hashPreparationMode =
-        SharedDownloadHashPreparationMode.full,
-    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
-  }) async {
-    final files = await _buildTransferFilesForCache(
-      cache,
-      relativePathFilter: relativePathFilter,
-      folderPrefixFilter: folderPrefixFilter,
-      hashPreparationMode: _hashPreparationModeFromBoundary(
-        hashPreparationMode,
-      ),
-      onDiagnosticEvent: onDiagnosticEvent,
-    );
-    return files
-        .map(
-          (file) => SharedDownloadPreparedFile(
-            sourcePath: file.sourcePath,
-            announcement: file.announcement,
-          ),
-        )
-        .toList(growable: false);
-  }
-
-  Future<_WholeShareDirectStartSendPlan> _buildWholeShareDirectStartSendPlan(
-    SharedFolderCacheRecord cache, {
-    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
-  }) async {
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_scoped_selection_resolution_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'relativePathFilterCount': 0,
-        'folderPrefixFilterCount': 0,
-        'hashPreparationMode': _TransferHashPreparationMode.cachedOnly.name,
-      },
-    );
-    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
-      cache,
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_scoped_selection_resolution_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'selectionFingerprint': scopedSelection.fingerprint,
-        'scopedEntryCount': scopedSelection.entries.length,
-      },
-    );
-
-    final manifestItems = List<TransferFileManifestItem>.generate(
-      scopedSelection.entries.length,
-      (index) {
-        final entry = scopedSelection.entries[index];
-        return TransferFileManifestItem(
-          fileName: entry.relativePath,
-          sizeBytes: entry.sizeBytes,
-          sha256: entry.sha256?.trim() ?? '',
-        );
-      },
-      growable: false,
-    );
-
-    final firstBatchTargetCount = min(
-      _wholeShareDirectStartFirstBatchFileCount,
-      scopedSelection.entries.length,
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_first_batch_prepare_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'manifestFileCount': manifestItems.length,
-        'firstBatchTargetCount': firstBatchTargetCount,
-      },
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_batch_prepare_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'batchNumber': 1,
-        'batchStartIndex': 0,
-        'batchFileCount': firstBatchTargetCount,
-        'cumulativePreparedFileCount': firstBatchTargetCount,
-        'totalManifestFileCount': manifestItems.length,
-      },
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_live_filesystem_traversal_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'indexedEntryCount': scopedSelection.entries.length,
-        'mode': 'first_batch_only',
-      },
-    );
-
-    final refreshedManifestEntries = <SharedFolderIndexEntry>[];
-    final firstBatchFiles = <TransferSourceFile>[];
-    var skippedMissingSourceCount = 0;
-    var skippedNonFileCount = 0;
-    var firstBatchPreparedBytes = 0;
-    var reusedCachedHashCount = 0;
-
-    for (
-      var index = 0;
-      index < scopedSelection.entries.length &&
-          firstBatchFiles.length < firstBatchTargetCount;
-      index += 1
-    ) {
-      final entry = scopedSelection.entries[index];
-      final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
-      if (filePath == null) {
-        skippedMissingSourceCount += 1;
-        continue;
-      }
-      final file = File(filePath);
-      if (!await file.exists()) {
-        skippedMissingSourceCount += 1;
-        continue;
-      }
-      final stat = await file.stat();
-      if (stat.type != FileSystemEntityType.file) {
-        skippedNonFileCount += 1;
-        continue;
-      }
-
-      final currentSizeBytes = stat.size;
-      final currentModifiedAtMs = stat.modified.millisecondsSinceEpoch;
-      final cachedSha256 = entry.sha256?.trim() ?? '';
-      final canReuseCachedManifest =
-          cachedSha256.isNotEmpty &&
-          entry.sizeBytes == currentSizeBytes &&
-          entry.modifiedAtMs == currentModifiedAtMs;
-      final effectiveSha256 = canReuseCachedManifest ? cachedSha256 : '';
-      if (canReuseCachedManifest) {
-        reusedCachedHashCount += 1;
-      }
-
-      manifestItems[index] = TransferFileManifestItem(
-        fileName: entry.relativePath,
-        sizeBytes: currentSizeBytes,
-        sha256: effectiveSha256,
-      );
-      if (entry.sizeBytes != currentSizeBytes ||
-          entry.modifiedAtMs != currentModifiedAtMs ||
-          (entry.sha256?.trim() ?? '') != effectiveSha256) {
-        refreshedManifestEntries.add(
-          entry.copyWith(
-            sizeBytes: currentSizeBytes,
-            modifiedAtMs: currentModifiedAtMs,
-            absolutePath: cache.rootPath.startsWith('selection://')
-                ? filePath
-                : null,
-            clearAbsolutePath: !cache.rootPath.startsWith('selection://'),
-            sha256: effectiveSha256.isEmpty ? null : effectiveSha256,
-            clearSha256: effectiveSha256.isEmpty,
-          ),
-        );
-      }
-
-      firstBatchFiles.add(
-        TransferSourceFile(
-          sourcePath: filePath,
-          fileName: entry.relativePath,
-          sizeBytes: currentSizeBytes,
-          sha256: effectiveSha256,
-          modifiedAtMs: currentModifiedAtMs,
-        ),
-      );
-      firstBatchPreparedBytes += currentSizeBytes;
-    }
-
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_live_filesystem_traversal_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'mode': 'first_batch_only',
-        'preparedFileCount': firstBatchFiles.length,
-        'preparedTotalBytes': firstBatchPreparedBytes,
-        'skippedMissingSourceCount': skippedMissingSourceCount,
-        'skippedNonFileCount': skippedNonFileCount,
-      },
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_hash_stage_deferred',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'reusedCachedHashCount': reusedCachedHashCount,
-        'deferredHashCount': manifestItems
-            .where((item) => item.sha256.trim().isEmpty)
-            .length,
-      },
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_first_batch_prepare_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'manifestFileCount': manifestItems.length,
-        'preparedFirstBatchCount': firstBatchFiles.length,
-        'preparedFirstBatchBytes': firstBatchPreparedBytes,
-        'reusedCachedHashCount': reusedCachedHashCount,
-      },
-    );
-    onDiagnosticEvent?.call(
-      stage: 'sender_whole_share_batch_prepare_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'batchNumber': 1,
-        'batchStartIndex': 0,
-        'batchFileCount': firstBatchFiles.length,
-        'cumulativePreparedFileCount': firstBatchFiles.length,
-        'totalManifestFileCount': manifestItems.length,
-      },
-    );
-
-    if (refreshedManifestEntries.isNotEmpty) {
-      await _sharedCacheIndexStore.persistCachedManifestEntries(
-        record: cache,
-        entries: refreshedManifestEntries,
-      );
-    }
-
-    return _WholeShareDirectStartSendPlan(
-      manifestItems: List<TransferFileManifestItem>.unmodifiable(manifestItems),
-      firstBatchFiles: List<TransferSourceFile>.unmodifiable(firstBatchFiles),
-      resolveBatch: (startIndex) =>
-          _prepareWholeShareDirectStartContinuationBatch(
-            cache: cache,
-            entries: scopedSelection.entries,
-            manifestItems: manifestItems,
-            startIndex: startIndex,
-          ),
-    );
-  }
-
-  Future<SharedDownloadWholeShareSendPlan>
-  _buildWholeShareDirectStartSendPlanForBoundary(
-    SharedFolderCacheRecord cache, {
-    TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
-  }) async {
-    final plan = await _buildWholeShareDirectStartSendPlan(
-      cache,
-      onDiagnosticEvent: onDiagnosticEvent,
-    );
-    return SharedDownloadWholeShareSendPlan(
-      manifestItems: plan.manifestItems,
-      firstBatchFiles: plan.firstBatchFiles,
-      resolveBatch: plan.resolveBatch,
-    );
-  }
-
-  Future<TransferSourceBatch> _prepareWholeShareDirectStartContinuationBatch({
-    required SharedFolderCacheRecord cache,
-    required List<SharedFolderIndexEntry> entries,
-    required List<TransferFileManifestItem> manifestItems,
-    required int startIndex,
-  }) async {
-    if (startIndex < 0 || startIndex >= entries.length) {
-      throw RangeError.index(startIndex, entries, 'startIndex');
-    }
-    final batchNumber =
-        (startIndex ~/ _wholeShareDirectStartFirstBatchFileCount) + 1;
-    final endIndex = min(
-      startIndex + _wholeShareDirectStartFirstBatchFileCount,
-      entries.length,
-    );
-    final batchFileCount = endIndex - startIndex;
-    _writeSharedDownloadDiagnostic(
-      stage: 'sender_whole_share_batch_prepare_start',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'batchNumber': batchNumber,
-        'batchStartIndex': startIndex,
-        'batchFileCount': batchFileCount,
-        'cumulativePreparedFileCount': endIndex,
-        'totalManifestFileCount': manifestItems.length,
-      },
-    );
-    final batchFiles = <TransferSourceFile>[];
-    for (var index = startIndex; index < endIndex; index += 1) {
-      batchFiles.add(
-        await _resolveWholeShareDirectStartSourceFile(
-          cache: cache,
-          entry: entries[index],
-          manifestItem: manifestItems[index],
-        ),
-      );
-    }
-    _writeSharedDownloadDiagnostic(
-      stage: 'sender_whole_share_batch_prepare_complete',
-      details: <String, Object?>{
-        'cacheId': cache.cacheId,
-        'batchNumber': batchNumber,
-        'batchStartIndex': startIndex,
-        'batchFileCount': batchFiles.length,
-        'cumulativePreparedFileCount': endIndex,
-        'totalManifestFileCount': manifestItems.length,
-      },
-    );
-    return TransferSourceBatch(
-      batchNumber: batchNumber,
-      startIndex: startIndex,
-      files: List<TransferSourceFile>.unmodifiable(batchFiles),
-    );
-  }
-
-  Future<TransferSourceFile> _resolveWholeShareDirectStartSourceFile({
-    required SharedFolderCacheRecord cache,
-    required SharedFolderIndexEntry entry,
-    required TransferFileManifestItem manifestItem,
-  }) async {
-    final filePath = _resolveCacheFilePath(cache: cache, entry: entry);
-    if (filePath == null) {
-      throw StateError(
-        'Source file does not exist for ${manifestItem.fileName}.',
-      );
-    }
-    final file = File(filePath);
-    if (!await file.exists()) {
-      throw StateError(
-        'Source file does not exist for ${manifestItem.fileName}.',
-      );
-    }
-    final stat = await file.stat();
-    if (stat.type != FileSystemEntityType.file) {
-      throw StateError(
-        'Source path is not a file for ${manifestItem.fileName}.',
-      );
-    }
-    if (stat.size != manifestItem.sizeBytes) {
-      throw StateError(
-        'Sender file size mismatch for ${manifestItem.fileName}. '
-        'File changed after first-batch preparation.',
-      );
-    }
-    return TransferSourceFile(
-      sourcePath: filePath,
-      fileName: manifestItem.fileName,
-      sizeBytes: manifestItem.sizeBytes,
-      sha256: manifestItem.sha256,
-      modifiedAtMs: stat.modified.millisecondsSinceEpoch,
-    );
-  }
-
   Future<void> _persistWholeShareTransferHashBackfill({
     required String requestId,
     required SharedFolderCacheRecord cache,
@@ -1861,30 +1366,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
           )
           .toList(growable: false),
     );
-  }
-
-  _TransferHashPreparationMode _hashPreparationModeFromBoundary(
-    SharedDownloadHashPreparationMode mode,
-  ) {
-    switch (mode) {
-      case SharedDownloadHashPreparationMode.full:
-        return _TransferHashPreparationMode.full;
-      case SharedDownloadHashPreparationMode.cachedOnly:
-        return _TransferHashPreparationMode.cachedOnly;
-      case SharedDownloadHashPreparationMode.none:
-        return _TransferHashPreparationMode.none;
-    }
-  }
-
-  String? _resolveCacheFilePath({
-    required SharedFolderCacheRecord cache,
-    required SharedFolderIndexEntry entry,
-  }) {
-    if (cache.rootPath.startsWith('selection://')) {
-      return entry.absolutePath;
-    }
-    final localRelative = entry.relativePath.replaceAll('/', p.separator);
-    return p.join(cache.rootPath, localRelative);
   }
 
   List<TransferSourceFile> _filterOutgoingFilesForDecision({
@@ -1991,6 +1472,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _incomingTransferRequestBoundary.dispose();
     _remoteShareAccessSessionBoundary.removeListener(_notify);
     _remoteShareAccessSessionBoundary.dispose();
+    _transferCachePreparationBoundary.removeListener(_notify);
+    _transferCachePreparationBoundary.dispose();
     _sharedDownloadBoundary.removeListener(_notify);
     _sharedDownloadBoundary.dispose();
     for (final session in _activeReceiveSessions.values) {
@@ -2017,15 +1500,6 @@ class _OutgoingTransferSession {
   Future<List<TransferSourceFile>>? finalizedFilesFuture;
 }
 
-enum _TransferHashPreparationMode { full, cachedOnly, none }
-
-class _PreparedTransferFile {
-  _PreparedTransferFile({required this.sourcePath, required this.announcement});
-
-  final String sourcePath;
-  final TransferAnnouncementItem announcement;
-}
-
 class _StreamedTransferFileHash {
   const _StreamedTransferFileHash({
     required this.file,
@@ -2034,16 +1508,4 @@ class _StreamedTransferFileHash {
 
   final TransferSourceFile file;
   final String computedSha256;
-}
-
-class _WholeShareDirectStartSendPlan {
-  _WholeShareDirectStartSendPlan({
-    required this.manifestItems,
-    required this.firstBatchFiles,
-    required this.resolveBatch,
-  });
-
-  final List<TransferFileManifestItem> manifestItems;
-  final List<TransferSourceFile> firstBatchFiles;
-  final Future<TransferSourceBatch> Function(int startIndex) resolveBatch;
 }

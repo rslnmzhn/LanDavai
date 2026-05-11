@@ -59,6 +59,7 @@ import '../../features/share_target/application/share_receive_boundary.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/shared_download_boundary.dart';
+import '../../features/transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../features/transfer/application/incoming_transfer_request_boundary.dart';
 import '../../features/transfer/application/remote_share_access_session_boundary.dart';
 import '../../features/transfer/application/remote_share_access_session_models.dart';
@@ -85,6 +86,7 @@ class DiscoveryPageDependencies {
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
+    required this.transferCachePreparationBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
@@ -108,6 +110,7 @@ class DiscoveryPageDependencies {
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
@@ -416,6 +419,8 @@ class DiscoveryCompositionFactory {
           transferSessionCoordinator.incomingTransferRequestBoundary,
       remoteShareAccessSessionBoundary:
           transferSessionCoordinator.remoteShareAccessSessionBoundary,
+      transferCachePreparationBoundary:
+          transferSessionCoordinator.transferCachePreparationBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,

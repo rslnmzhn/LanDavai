@@ -2,12 +2,13 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+export 'transfer_cache_preparation_models.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../../core/utils/app_notification_service.dart';
 import '../../discovery/data/device_alias_repository.dart';
 import '../../discovery/data/lan_discovery_service.dart';
-import '../../discovery/data/lan_packet_codec_models.dart';
 import '../../discovery/data/lan_protocol_events.dart';
 import '../../settings/domain/app_settings.dart';
 import '../data/file_hash_service.dart';
@@ -17,96 +18,13 @@ import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
+import 'transfer_cache_preparation_boundary.dart';
+import 'transfer_cache_preparation_models.dart';
 import 'transfer_session_coordinator.dart';
-
-enum SharedDownloadPreparationStage {
-  preparingRequest,
-  checkingExistingLocalFiles,
-  startingReceiver,
-  waitingForRemote,
-}
 
 enum SharedDownloadReceiveLayout {
   preserveRelativeStructure,
   preserveSharedRoot,
-}
-
-enum SharedUploadPreparationStage {
-  resolvingSelection,
-  preparingTransfer,
-  waitingForRequester,
-}
-
-class SharedDownloadPreparationState {
-  const SharedDownloadPreparationState({
-    required this.requestId,
-    required this.ownerName,
-    required this.stage,
-  });
-
-  final String requestId;
-  final String ownerName;
-  final SharedDownloadPreparationStage stage;
-
-  String get message {
-    switch (stage) {
-      case SharedDownloadPreparationStage.preparingRequest:
-        return 'Подготавливаем запрос для $ownerName...';
-      case SharedDownloadPreparationStage.checkingExistingLocalFiles:
-        return 'Проверяем, какие файлы уже есть локально...';
-      case SharedDownloadPreparationStage.startingReceiver:
-        return 'Запускаем приём для $ownerName...';
-      case SharedDownloadPreparationStage.waitingForRemote:
-        return 'Ждём, пока $ownerName начнёт передачу...';
-    }
-  }
-}
-
-class SharedUploadPreparationState {
-  const SharedUploadPreparationState({
-    required this.requestId,
-    required this.requesterName,
-    required this.stage,
-  });
-
-  final String requestId;
-  final String requesterName;
-  final SharedUploadPreparationStage stage;
-
-  String get message {
-    switch (stage) {
-      case SharedUploadPreparationStage.resolvingSelection:
-        return 'Определяем, что нужно отправить для $requesterName...';
-      case SharedUploadPreparationStage.preparingTransfer:
-        return 'Подготавливаем отправку для $requesterName...';
-      case SharedUploadPreparationStage.waitingForRequester:
-        return 'Ждём, пока $requesterName подтвердит приём...';
-    }
-  }
-}
-
-class SharedDownloadPreparedFile {
-  const SharedDownloadPreparedFile({
-    required this.sourcePath,
-    required this.announcement,
-    this.deleteAfterTransfer = false,
-  });
-
-  final String sourcePath;
-  final TransferAnnouncementItem announcement;
-  final bool deleteAfterTransfer;
-}
-
-class SharedDownloadWholeShareSendPlan {
-  const SharedDownloadWholeShareSendPlan({
-    required this.manifestItems,
-    required this.firstBatchFiles,
-    required this.resolveBatch,
-  });
-
-  final List<TransferFileManifestItem> manifestItems;
-  final List<TransferSourceFile> firstBatchFiles;
-  final Future<TransferSourceBatch> Function(int startIndex) resolveBatch;
 }
 
 class TransferStreamedFileHash {
@@ -118,8 +36,6 @@ class TransferStreamedFileHash {
   final TransferSourceFile file;
   final String computedSha256;
 }
-
-enum SharedDownloadHashPreparationMode { full, cachedOnly, none }
 
 class SharedDownloadBoundary extends ChangeNotifier {
   SharedDownloadBoundary({
@@ -203,6 +119,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
       required List<TransferStreamedFileHash> streamedHashes,
     })
     persistWholeShareTransferHashBackfill,
+    required TransferCachePreparationBoundary cachePreparationBoundary,
     required Future<List<SharedDownloadPreparedFile>> Function(
       SharedFolderCacheRecord cache, {
       Set<String>? relativePathFilter,
@@ -251,6 +168,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
        _sendDirectSharedDownload = sendDirectSharedDownload,
        _persistWholeShareTransferHashBackfill =
            persistWholeShareTransferHashBackfill,
+       _cachePreparationBoundary = cachePreparationBoundary,
        _buildCompressedPreviewFilesForCache =
            buildCompressedPreviewFilesForCache,
        _buildTransferFilesForCache = buildTransferFilesForCache,
@@ -335,6 +253,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
     required List<TransferStreamedFileHash> streamedHashes,
   })
   _persistWholeShareTransferHashBackfill;
+  final TransferCachePreparationBoundary _cachePreparationBoundary;
   final Future<List<SharedDownloadPreparedFile>> Function(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
@@ -365,8 +284,6 @@ class SharedDownloadBoundary extends ChangeNotifier {
   final Duration pendingRemoteDownloadTtl;
   final Duration progressResetDelay;
 
-  SharedDownloadPreparationState? _preparationState;
-  SharedUploadPreparationState? _uploadPreparationState;
   bool _disposed = false;
 
   String get _localName => _localNameProvider();
@@ -377,14 +294,16 @@ class SharedDownloadBoundary extends ChangeNotifier {
       List<IncomingSharedDownloadRequest>.unmodifiable(_incomingRequests);
 
   SharedDownloadPreparationState? get sharedDownloadPreparationState =>
-      _preparationState;
+      _cachePreparationBoundary.sharedDownloadPreparationState;
 
-  bool get isPreparingSharedDownload => _preparationState != null;
+  bool get isPreparingSharedDownload =>
+      _cachePreparationBoundary.isPreparingSharedDownload;
 
   SharedUploadPreparationState? get sharedUploadPreparationState =>
-      _uploadPreparationState;
+      _cachePreparationBoundary.sharedUploadPreparationState;
 
-  bool get isPreparingSharedUpload => _uploadPreparationState != null;
+  bool get isPreparingSharedUpload =>
+      _cachePreparationBoundary.isPreparingSharedUpload;
 
   @visibleForTesting
   void debugReplaceIncomingSharedDownloadRequests(
@@ -1844,17 +1763,17 @@ class SharedDownloadBoundary extends ChangeNotifier {
     required String ownerName,
     required SharedDownloadPreparationStage stage,
   }) {
-    final next = SharedDownloadPreparationState(
+    final current = _cachePreparationBoundary.sharedDownloadPreparationState;
+    if (current?.requestId == requestId &&
+        current?.stage == stage &&
+        current?.ownerName == ownerName) {
+      return;
+    }
+    _cachePreparationBoundary.setDownloadPreparation(
       requestId: requestId,
       ownerName: ownerName,
       stage: stage,
     );
-    if (_preparationState?.requestId == next.requestId &&
-        _preparationState?.stage == next.stage &&
-        _preparationState?.ownerName == next.ownerName) {
-      return;
-    }
-    _preparationState = next;
     _notify();
   }
 
@@ -1863,41 +1782,37 @@ class SharedDownloadBoundary extends ChangeNotifier {
     required String requesterName,
     required SharedUploadPreparationStage stage,
   }) {
-    final next = SharedUploadPreparationState(
+    final current = _cachePreparationBoundary.sharedUploadPreparationState;
+    if (current?.requestId == requestId &&
+        current?.stage == stage &&
+        current?.requesterName == requesterName) {
+      return;
+    }
+    _cachePreparationBoundary.setUploadPreparation(
       requestId: requestId,
       requesterName: requesterName,
       stage: stage,
     );
-    if (_uploadPreparationState?.requestId == next.requestId &&
-        _uploadPreparationState?.stage == next.stage &&
-        _uploadPreparationState?.requesterName == next.requesterName) {
-      return;
-    }
-    _uploadPreparationState = next;
     _notify();
   }
 
   void clearUploadPreparation({String? requestId}) {
-    final current = _uploadPreparationState;
-    if (current == null) {
+    final current = _cachePreparationBoundary.sharedUploadPreparationState;
+    if (current == null ||
+        (requestId != null && current.requestId != requestId)) {
       return;
     }
-    if (requestId != null && current.requestId != requestId) {
-      return;
-    }
-    _uploadPreparationState = null;
+    _cachePreparationBoundary.clearUploadPreparation(requestId: requestId);
     _notify();
   }
 
   void _clearPreparation({String? requestId}) {
-    final current = _preparationState;
-    if (current == null) {
+    final current = _cachePreparationBoundary.sharedDownloadPreparationState;
+    if (current == null ||
+        (requestId != null && current.requestId != requestId)) {
       return;
     }
-    if (requestId != null && current.requestId != requestId) {
-      return;
-    }
-    _preparationState = null;
+    _cachePreparationBoundary.clearDownloadPreparation(requestId: requestId);
     _notify();
   }
 
