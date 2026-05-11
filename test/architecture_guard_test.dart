@@ -298,6 +298,36 @@ void main() {
         );
       },
     );
+
+    test('keeps transfer path policy outside TransferSessionCoordinator', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const policyPath =
+          'lib/features/transfer/application/transfer_path_policy.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(policyPath, 'class TransferPathPolicy'),
+        isTrue,
+        reason:
+            '$policyPath must remain the explicit boundary for transfer path normalization and receive-path derivation.',
+      );
+
+      for (final symbol in <String>[
+        '_sanitizeTransferRelativePath(',
+        '_sanitizeTransferRelativePathPart(',
+        '_buildReceiveRelativePath(',
+        '_resolveReceiveRootPrefix(',
+        '_sharedParentPath(',
+        '_normalizeTransferPathForMatch(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not re-own transfer path policy method "$symbol".',
+        );
+      }
+    });
   });
 }
 

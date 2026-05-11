@@ -26,6 +26,7 @@ import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
 import 'shared_download_boundary.dart';
+import 'transfer_path_policy.dart';
 import 'transfer_speed_tracker.dart';
 
 class TransferSessionNotice {
@@ -225,6 +226,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   })
   _applyRemoteShareAccessSnapshot;
   final SharedDownloadDiagnosticLogStore _sharedDownloadDiagnosticLogStore;
+  final TransferPathPolicy _pathPolicy = const TransferPathPolicy();
 
   final List<IncomingTransferRequest> _incomingRequests =
       <IncomingTransferRequest>[];
@@ -671,7 +673,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String cacheId,
     required String relativePath,
   }) async {
-    final normalizedRelativePath = _normalizeTransferPathForMatch(relativePath);
+    final normalizedRelativePath = _pathPolicy.normalizeForMatch(relativePath);
     if (normalizedRelativePath.isEmpty) {
       _publishNotice(
         const TransferSessionNotice(errorMessage: 'Preview path is empty.'),
@@ -785,19 +787,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
         final destinationRelativeRootPrefix =
             !isPreview &&
                 receiveLayout == SharedDownloadReceiveLayout.preserveSharedRoot
-            ? _resolveReceiveRootPrefix(request.sharedLabel)
+            ? _pathPolicy.resolveReceiveRootPrefix(request.sharedLabel)
             : null;
 
         if (isPreview) {
           final normalizedPreviewPath = previewRelativePath == null
               ? null
-              : _normalizeTransferPathForMatch(previewRelativePath);
+              : _pathPolicy.normalizeForMatch(previewRelativePath);
           if (normalizedPreviewPath != null &&
               normalizedPreviewPath.isNotEmpty) {
             itemsToReceive = request.items
                 .where(
                   (item) =>
-                      _normalizeTransferPathForMatch(item.fileName) ==
+                      _pathPolicy.normalizeForMatch(item.fileName) ==
                       normalizedPreviewPath,
                 )
                 .toList(growable: false);
@@ -2097,7 +2099,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
             : acceptedItems;
         final recordedRelativePaths = effectiveItems
             .map(
-              (item) => _buildReceiveRelativePath(
+              (item) => _pathPolicy.buildReceiveRelativePath(
                 item.fileName,
                 destinationRelativeRootPrefix: destinationRelativeRootPrefix,
               ),
@@ -2127,7 +2129,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
                 _transferStorageService
                     .publishesReceivedDownloadsToUserDownloads
             ? hasReceiveRootPrefix
-                  ? _sharedParentPath(savedPaths)
+                  ? _pathPolicy.sharedParentPath(savedPaths)
                   : savedPaths.isEmpty
                   ? result.destinationDirectory
                   : File(savedPaths.first).parent.path
@@ -3061,7 +3063,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   }) async {
     final missing = <TransferFileManifestItem>[];
     for (final item in items) {
-      final relativePath = _buildReceiveRelativePath(
+      final relativePath = _pathPolicy.buildReceiveRelativePath(
         item.fileName,
         destinationRelativeRootPrefix: destinationRelativeRootPrefix,
       );
@@ -3099,126 +3101,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return missing;
   }
 
-  String _sanitizeTransferRelativePath(String input) {
-    final raw = input.replaceAll('\\', '/');
-    final parts = raw
-        .split('/')
-        .map((part) => _sanitizeTransferRelativePathPart(part.trim()))
-        .where((part) => part.isNotEmpty && part != '.' && part != '..')
-        .toList(growable: false);
-    if (parts.isEmpty) {
-      return 'file.bin';
-    }
-    return p.joinAll(parts);
-  }
-
-  String _sanitizeTransferRelativePathPart(String input) {
-    if (input.isEmpty) {
-      return '';
-    }
-
-    var value = input
-        .replaceAll(RegExp(r'[\x00-\x1F]'), '')
-        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-
-    if (Platform.isWindows) {
-      value = value.trimRight();
-      value = value.replaceFirst(RegExp(r'[. ]+$'), '');
-      if (value.isEmpty) {
-        return '_';
-      }
-
-      final reserved = <String>{
-        'con',
-        'prn',
-        'aux',
-        'nul',
-        'com1',
-        'com2',
-        'com3',
-        'com4',
-        'com5',
-        'com6',
-        'com7',
-        'com8',
-        'com9',
-        'lpt1',
-        'lpt2',
-        'lpt3',
-        'lpt4',
-        'lpt5',
-        'lpt6',
-        'lpt7',
-        'lpt8',
-        'lpt9',
-      };
-      final base = value.split('.').first.toLowerCase();
-      if (reserved.contains(base)) {
-        value = '_$value';
-      }
-    }
-
-    if (value.length > 120) {
-      value = value.substring(0, 120);
-    }
-
-    return value.isEmpty ? '_' : value;
-  }
-
-  String _buildReceiveRelativePath(
-    String relativePath, {
-    String? destinationRelativeRootPrefix,
-  }) {
-    final sanitizedRelativePath = _sanitizeTransferRelativePath(relativePath);
-    final sanitizedPrefix = destinationRelativeRootPrefix?.trim();
-    if (sanitizedPrefix == null || sanitizedPrefix.isEmpty) {
-      return sanitizedRelativePath;
-    }
-    return p.join(sanitizedPrefix, sanitizedRelativePath);
-  }
-
-  String? _resolveReceiveRootPrefix(String sharedLabel) {
-    final sanitized = _sanitizeTransferRelativePathPart(sharedLabel.trim());
-    if (sanitized.isEmpty || sanitized == '_') {
-      return null;
-    }
-    return sanitized;
-  }
-
-  String _sharedParentPath(List<String> paths) {
-    if (paths.isEmpty) {
-      return '';
-    }
-
-    final directories = paths
-        .map((path) => p.normalize(p.dirname(path)))
-        .where((path) => path.isNotEmpty)
-        .toList(growable: false);
-    if (directories.isEmpty) {
-      return '';
-    }
-
-    List<String> common = p.split(directories.first);
-    for (final directory in directories.skip(1)) {
-      final next = p.split(directory);
-      var sharedLength = 0;
-      while (sharedLength < common.length &&
-          sharedLength < next.length &&
-          common[sharedLength] == next[sharedLength]) {
-        sharedLength += 1;
-      }
-      common = common.take(sharedLength).toList(growable: false);
-      if (common.isEmpty) {
-        break;
-      }
-    }
-    if (common.isEmpty) {
-      final rootPrefix = p.rootPrefix(paths.first);
-      return rootPrefix.isEmpty ? p.dirname(paths.first) : rootPrefix;
-    }
-    return p.joinAll(common);
-  }
-
   Duration? _estimateEta({
     required int totalBytes,
     required int transferredBytes,
@@ -3245,10 +3127,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String normalizedRelativePath,
   }) {
     return '$ownerIp|$cacheId|$normalizedRelativePath';
-  }
-
-  String _normalizeTransferPathForMatch(String value) {
-    return value.replaceAll('\\', '/').trim().toLowerCase();
   }
 
   _PendingRemotePreviewIntent? _consumePendingRemotePreview(
