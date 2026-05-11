@@ -411,6 +411,45 @@ void main() {
         }
       },
     );
+
+    test(
+      'keeps shared-download queue and preparation state on SharedDownloadBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/shared_download_boundary.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class SharedDownloadBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the canonical ChangeNotifier owner for shared-download request/preparation truth.',
+        );
+
+        for (final symbol in <String>[
+          'final List<IncomingSharedDownloadRequest>',
+          'List<IncomingSharedDownloadRequest> get incomingSharedDownloadRequests',
+          '_incomingSharedDownloadRequests',
+          'SharedDownloadPreparationState? _sharedDownloadPreparationState',
+          'SharedUploadPreparationState? _sharedUploadPreparationState',
+          '_preparedTransferFilesByScopeKey',
+          '_preparedTransferScopeCacheHits',
+          'preparedTransferScopeCacheEntryCount',
+          'preparedTransferScopeCacheHits',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not retain duplicate shared-download queue/preparation state "$symbol".',
+          );
+        }
+      },
+    );
   });
 }
 

@@ -1631,8 +1631,6 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
       },
     );
 
@@ -1696,8 +1694,6 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
         coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
@@ -1724,8 +1720,6 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
       },
     );
 
@@ -1789,8 +1783,6 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
         coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
@@ -1817,8 +1809,6 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
         await File(p.join(ownerRoot.path, 'docs', 'c.txt')).writeAsString('c');
         cache = await sharedCacheCatalog.refreshOwnerFolderSubdirectoryEntries(
@@ -1854,8 +1844,6 @@ void main() {
 
         expect(changedFingerprint.itemCount, 3);
         expect(fileHashService.computeCalls, greaterThan(2));
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 2);
       },
     );
 
@@ -1997,8 +1985,6 @@ void main() {
           coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
           isEmpty,
         );
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 0);
       },
     );
 

@@ -278,8 +278,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final Map<String, _PendingRemoteShareAccessIntent>
   _pendingRemoteShareAccessByRequestId =
       <String, _PendingRemoteShareAccessIntent>{};
-  final Map<String, List<_PreparedTransferFile>>
-  _preparedTransferFilesByScopeKey = <String, List<_PreparedTransferFile>>{};
 
   final Duration progressResetDelay;
 
@@ -292,7 +290,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   TransferSessionNotice? _pendingNotice;
   RemoteShareAccessState? _remoteShareAccessState;
   bool _disposed = false;
-  int _preparedTransferScopeCacheHits = 0;
 
   bool get isSendingTransfer => _isSendingTransfer;
   bool get isUploading =>
@@ -333,11 +330,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
       );
   SharedDownloadBoundary get sharedDownloadBoundary => _sharedDownloadBoundary;
   RemoteShareAccessState? get remoteShareAccessState => _remoteShareAccessState;
-  @visibleForTesting
-  int get preparedTransferScopeCacheEntryCount =>
-      _preparedTransferFilesByScopeKey.length;
-  @visibleForTesting
-  int get preparedTransferScopeCacheHits => _preparedTransferScopeCacheHits;
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;
     _pendingNotice = null;
@@ -1943,15 +1935,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'hashPreparationMode': hashPreparationMode.name,
       },
     );
-    var scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
+    final scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
       cache,
       relativePathFilter: relativePathFilter,
       folderPrefixFilter: folderPrefixFilter,
-    );
-    final initialScopeCacheKey = _preparedTransferScopeCacheKey(
-      cacheId: cache.cacheId,
-      selectionFingerprint: scopedSelection.fingerprint,
-      hashPreparationMode: hashPreparationMode,
     );
     onDiagnosticEvent?.call(
       stage: 'sender_whole_share_scoped_selection_resolution_complete',
@@ -1961,24 +1948,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
         'scopedEntryCount': scopedSelection.entries.length,
       },
     );
-    final cachedPreparedFiles =
-        _preparedTransferFilesByScopeKey[initialScopeCacheKey];
-    if (cachedPreparedFiles != null) {
-      _preparedTransferScopeCacheHits += 1;
-      onDiagnosticEvent?.call(
-        stage: 'sender_whole_share_prepared_scope_cache_hit',
-        details: <String, Object?>{
-          'cacheId': cache.cacheId,
-          'preparedFileCount': cachedPreparedFiles.length,
-          'preparedTotalBytes': cachedPreparedFiles.fold<int>(
-            0,
-            (sum, file) => sum + file.announcement.sizeBytes,
-          ),
-        },
-      );
-      return cachedPreparedFiles;
-    }
-
     final items = <_PreparedTransferFile>[];
     final refreshedManifestEntries = <SharedFolderIndexEntry>[];
     var traversedFileCount = 0;
@@ -2106,20 +2075,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
         record: cache,
         entries: refreshedManifestEntries,
       );
-      scopedSelection = await _sharedCacheIndexStore.readScopedSelection(
-        cache,
-        relativePathFilter: relativePathFilter,
-        folderPrefixFilter: folderPrefixFilter,
-      );
     }
-    final preparedItems = List<_PreparedTransferFile>.unmodifiable(items);
-    _cachePreparedTransferFiles(
-      cacheId: cache.cacheId,
-      selectionFingerprint: scopedSelection.fingerprint,
-      hashPreparationMode: hashPreparationMode,
-      files: preparedItems,
-    );
-    return preparedItems;
+    return List<_PreparedTransferFile>.unmodifiable(items);
   }
 
   Future<List<SharedDownloadPreparedFile>>
@@ -2545,42 +2502,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
         return _TransferHashPreparationMode.cachedOnly;
       case SharedDownloadHashPreparationMode.none:
         return _TransferHashPreparationMode.none;
-    }
-  }
-
-  String _preparedTransferScopeCacheKey({
-    required String cacheId,
-    required String selectionFingerprint,
-    required _TransferHashPreparationMode hashPreparationMode,
-  }) {
-    return '$cacheId|$selectionFingerprint|${hashPreparationMode.name}';
-  }
-
-  void _cachePreparedTransferFiles({
-    required String cacheId,
-    required String selectionFingerprint,
-    required _TransferHashPreparationMode hashPreparationMode,
-    required List<_PreparedTransferFile> files,
-  }) {
-    final cacheKey = _preparedTransferScopeCacheKey(
-      cacheId: cacheId,
-      selectionFingerprint: selectionFingerprint,
-      hashPreparationMode: hashPreparationMode,
-    );
-    _preparedTransferFilesByScopeKey[cacheKey] = files;
-
-    const maxEntriesPerCache = 8;
-    final keysForCache = _preparedTransferFilesByScopeKey.keys
-        .where((key) => key.startsWith('$cacheId|'))
-        .toList(growable: false);
-    if (keysForCache.length <= maxEntriesPerCache) {
-      return;
-    }
-    final keysToRemove = keysForCache.take(
-      keysForCache.length - maxEntriesPerCache,
-    );
-    for (final key in keysToRemove) {
-      _preparedTransferFilesByScopeKey.remove(key);
     }
   }
 
