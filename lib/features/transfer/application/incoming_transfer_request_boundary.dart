@@ -12,7 +12,7 @@ import '../data/file_transfer_service.dart';
 import '../data/transfer_storage_service.dart';
 import '../domain/transfer_request.dart';
 import 'incoming_transfer_request_helpers.dart';
-import 'remote_file_preview_boundary.dart';
+import 'remote_file_preview_transfer_boundary.dart';
 import 'shared_download_boundary.dart';
 import 'transfer_path_policy.dart';
 import 'transfer_session_coordinator.dart';
@@ -24,7 +24,8 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
     required SharedDownloadBoundary sharedDownloadBoundary,
-    required RemoteFilePreviewBoundary remoteFilePreviewBoundary,
+    required RemoteFilePreviewTransferBoundary
+    remoteFilePreviewTransferBoundary,
     required TransferPathPolicy pathPolicy,
     required String Function() localNameProvider,
     required bool Function(String? normalizedMac) isTrustedSender,
@@ -47,7 +48,7 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
        _sharedDownloadBoundary = sharedDownloadBoundary,
-       _remoteFilePreviewBoundary = remoteFilePreviewBoundary,
+       _remoteFilePreviewTransferBoundary = remoteFilePreviewTransferBoundary,
        _pathPolicy = pathPolicy,
        _localNameProvider = localNameProvider,
        _isTrustedSender = isTrustedSender,
@@ -68,7 +69,7 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
   final SharedDownloadBoundary _sharedDownloadBoundary;
-  final RemoteFilePreviewBoundary _remoteFilePreviewBoundary;
+  final RemoteFilePreviewTransferBoundary _remoteFilePreviewTransferBoundary;
   final TransferPathPolicy _pathPolicy;
   final String Function() _localNameProvider;
   final bool Function(String? normalizedMac) _isTrustedSender;
@@ -116,7 +117,7 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
     var itemsToReceive = request.items;
     var decisionApproved = approved;
     final previewCompleter = isPreview
-        ? _remoteFilePreviewBoundary.takePreviewResultCompleter(
+        ? _remoteFilePreviewTransferBoundary.takePreviewResultCompleter(
             request.requestId,
           )
         : null;
@@ -124,7 +125,8 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
     try {
       if (decisionApproved) {
         final destinationDirectory = isPreview
-            ? await _remoteFilePreviewBoundary.resolvePreviewArtifactDirectory()
+            ? await _remoteFilePreviewTransferBoundary
+                  .resolvePreviewArtifactDirectory()
             : destinationDirectoryOverridePath != null
             ? Directory(destinationDirectoryOverridePath)
             : await _transferStorageService.resolveReceiveDirectory(
@@ -363,7 +365,7 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
       if (previewCompleter != null && !previewCompleter.isCompleted) {
         previewCompleter.complete(null);
       }
-      _remoteFilePreviewBoundary.discardPreviewResultCompleter(
+      _remoteFilePreviewTransferBoundary.discardPreviewResultCompleter(
         request.requestId,
       );
       _log('Failed to respond to transfer request: $error');
@@ -402,10 +404,10 @@ class IncomingTransferRequestBoundary extends ChangeNotifier {
       return;
     }
 
-    final previewIntent = _remoteFilePreviewBoundary
+    final previewIntent = _remoteFilePreviewTransferBoundary
         .consumePendingRemotePreview(event);
     if (previewIntent != null) {
-      _remoteFilePreviewBoundary.registerPreviewResultCompleter(
+      _remoteFilePreviewTransferBoundary.registerPreviewResultCompleter(
         requestId: event.requestId,
         completer: previewIntent.completer,
       );

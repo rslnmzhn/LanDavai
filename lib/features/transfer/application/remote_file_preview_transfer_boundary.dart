@@ -14,8 +14,8 @@ import 'shared_download_boundary.dart';
 import 'transfer_path_policy.dart';
 import 'transfer_session_coordinator.dart';
 
-class RemoteFilePreviewBoundary {
-  RemoteFilePreviewBoundary({
+class RemoteFilePreviewTransferBoundary {
+  RemoteFilePreviewTransferBoundary({
     required LanDiscoveryService lanDiscoveryService,
     required FileHashService fileHashService,
     required PreviewCacheOwner previewCacheOwner,
@@ -273,7 +273,7 @@ class RemoteFilePreviewBoundary {
   }
 
   void _log(String message) {
-    developer.log(message, name: 'RemoteFilePreviewBoundary');
+    developer.log(message, name: 'RemoteFilePreviewTransferBoundary');
   }
 
   String get _localName => _localNameProvider();

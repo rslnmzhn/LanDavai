@@ -61,6 +61,7 @@ import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/shared_download_boundary.dart';
 import '../../features/transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../features/transfer/application/incoming_transfer_request_boundary.dart';
+import '../../features/transfer/application/remote_file_preview_transfer_boundary.dart';
 import '../../features/transfer/application/remote_share_access_session_boundary.dart';
 import '../../features/transfer/application/remote_share_access_session_models.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
@@ -86,6 +87,7 @@ class DiscoveryPageDependencies {
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
+    required this.remoteFilePreviewTransferBoundary,
     required this.transferCachePreparationBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
@@ -110,6 +112,7 @@ class DiscoveryPageDependencies {
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
@@ -299,7 +302,27 @@ class DiscoveryCompositionFactory {
     );
     final shareReceiveBoundary = ShareReceiveBoundary();
     late final DiscoveryController controller;
-    final transferSessionCoordinator = TransferSessionCoordinator(
+    late final TransferSessionCoordinator transferSessionCoordinator;
+    late final RemoteFilePreviewTransferBoundary
+    remoteFilePreviewTransferBoundary;
+    remoteFilePreviewTransferBoundary = RemoteFilePreviewTransferBoundary(
+      lanDiscoveryService: lanDiscoveryService,
+      fileHashService: fileHashService,
+      previewCacheOwner: previewCacheOwner,
+      settingsProvider: () => settingsStore.settings,
+      localNameProvider: () => controller.localName,
+      localDeviceMacProvider: () => controller.localDeviceMac,
+      resolveRemoteOwnerMac:
+          ({required String ownerIp, required String cacheId}) =>
+              remoteShareBrowser.ownerMacForCache(
+                ownerIp: ownerIp,
+                cacheId: cacheId,
+              ),
+      publishNotice: (notice) {
+        transferSessionCoordinator.publishBoundaryNotice(notice);
+      },
+    );
+    transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -307,7 +330,6 @@ class DiscoveryCompositionFactory {
       fileTransferService: fileTransferService,
       transferStorageService: resolvedTransferStorageService,
       downloadHistoryBoundary: downloadHistoryBoundary,
-      previewCacheOwner: previewCacheOwner,
       appNotificationService: AppNotificationService.instance,
       settingsProvider: () => settingsStore.settings,
       localNameProvider: () => controller.localName,
@@ -347,6 +369,7 @@ class DiscoveryCompositionFactory {
               ),
             );
           },
+      remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
       sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
     );
     controller = DiscoveryController(
@@ -419,6 +442,7 @@ class DiscoveryCompositionFactory {
           transferSessionCoordinator.incomingTransferRequestBoundary,
       remoteShareAccessSessionBoundary:
           transferSessionCoordinator.remoteShareAccessSessionBoundary,
+      remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
       transferCachePreparationBoundary:
           transferSessionCoordinator.transferCachePreparationBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
@@ -462,6 +486,7 @@ class DiscoveryCompositionFactory {
         previewCacheOwner.dispose();
         videoLinkSessionBoundary.dispose();
         shareReceiveBoundary.dispose();
+        remoteFilePreviewTransferBoundary.dispose();
         controller.dispose();
       },
     );

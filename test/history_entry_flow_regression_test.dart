@@ -103,6 +103,8 @@ Future<void> _pumpDiscoveryPage(
             harness.incomingTransferRequestBoundary,
         remoteShareAccessSessionBoundary:
             harness.remoteShareAccessSessionBoundary,
+        remoteFilePreviewTransferBoundary:
+            harness.remoteFilePreviewTransferBoundary,
         transferCachePreparationBoundary:
             harness.transferCachePreparationBoundary,
         sharedDownloadBoundary: harness.sharedDownloadBoundary,

@@ -6,7 +6,12 @@ import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 import 'package:landa/features/discovery/presentation/remote_download_browser_page.dart';
+import 'package:landa/features/files/application/preview_cache_owner.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
+import 'package:landa/features/history/application/download_history_boundary.dart';
+import 'package:landa/features/transfer/application/remote_file_preview_transfer_boundary.dart';
+import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
+import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -28,6 +33,8 @@ Future<void> pumpRemoteBrowser(
         remoteShareBrowser: browser,
         previewCacheOwner: harness.previewCacheOwner,
         transferSessionCoordinator: coordinator,
+        remoteFilePreviewTransferBoundary:
+            coordinator.remoteFilePreviewTransferBoundaryForTests,
         remoteShareAccessSessionBoundary:
             coordinator.remoteShareAccessSessionBoundary,
         transferCachePreparationBoundary:
@@ -213,17 +220,43 @@ Future<void> setLargeSurface(WidgetTester tester) async {
 }
 
 class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
-  TestRemoteShareTransferCoordinator({
+  factory TestRemoteShareTransferCoordinator({
     required Future<String?> Function() previewPathProvider,
-    required super.sharedCacheCatalog,
-    required super.sharedCacheIndexStore,
-    required super.previewCacheOwner,
-    required super.downloadHistoryBoundary,
+    required SharedCacheCatalog sharedCacheCatalog,
+    required SharedCacheIndexStore sharedCacheIndexStore,
+    required PreviewCacheOwner previewCacheOwner,
+    required DownloadHistoryBoundary downloadHistoryBoundary,
     required AppSettings settings,
     LanDiscoveryService? lanDiscoveryService,
-  }) : _previewPathProvider = previewPathProvider,
+  }) {
+    final resolvedLanDiscoveryService =
+        lanDiscoveryService ?? LanDiscoveryService();
+    final previewBoundary = _TestRemoteFilePreviewTransferBoundary(
+      previewPathProvider: previewPathProvider,
+      resolvedPreviewCacheOwner: previewCacheOwner,
+    );
+    return TestRemoteShareTransferCoordinator._(
+      resolvedLanDiscoveryService: resolvedLanDiscoveryService,
+      resolvedRemoteFilePreviewTransferBoundary: previewBoundary,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      settings: settings,
+    );
+  }
+
+  TestRemoteShareTransferCoordinator._({
+    required LanDiscoveryService resolvedLanDiscoveryService,
+    required RemoteFilePreviewTransferBoundary
+    resolvedRemoteFilePreviewTransferBoundary,
+    required super.sharedCacheCatalog,
+    required super.sharedCacheIndexStore,
+    required super.downloadHistoryBoundary,
+    required AppSettings settings,
+  }) : _remoteFilePreviewTransferBoundary =
+           resolvedRemoteFilePreviewTransferBoundary,
        super(
-         lanDiscoveryService: lanDiscoveryService ?? LanDiscoveryService(),
+         lanDiscoveryService: resolvedLanDiscoveryService,
          fileHashService: FileHashService(),
          fileTransferService: FileTransferService(),
          transferStorageService: TransferStorageService(),
@@ -233,12 +266,38 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
          localDeviceMacProvider: () => '02:00:00:00:00:01',
          isTrustedSender: (_) => true,
          resolveRemoteOwnerMac: ({required ownerIp, required cacheId}) => null,
+         remoteFilePreviewTransferBoundary:
+             resolvedRemoteFilePreviewTransferBoundary,
        );
 
-  final Future<String?> Function() _previewPathProvider;
+  final RemoteFilePreviewTransferBoundary _remoteFilePreviewTransferBoundary;
   int downloadCalls = 0;
   Map<String, Set<String>>? lastSelectedByCache;
   Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
+
+  RemoteFilePreviewTransferBoundary
+  get remoteFilePreviewTransferBoundaryForTests =>
+      _remoteFilePreviewTransferBoundary;
+}
+
+class _TestRemoteFilePreviewTransferBoundary
+    extends RemoteFilePreviewTransferBoundary {
+  _TestRemoteFilePreviewTransferBoundary({
+    required Future<String?> Function() previewPathProvider,
+    required PreviewCacheOwner resolvedPreviewCacheOwner,
+  }) : _previewPathProvider = previewPathProvider,
+       super(
+         lanDiscoveryService: LanDiscoveryService(),
+         fileHashService: FileHashService(),
+         previewCacheOwner: resolvedPreviewCacheOwner,
+         settingsProvider: () => AppSettings.defaults,
+         localNameProvider: () => 'Local',
+         localDeviceMacProvider: () => '02:00:00:00:00:01',
+         resolveRemoteOwnerMac: ({required ownerIp, required cacheId}) => null,
+         publishNotice: (_) {},
+       );
+
+  final Future<String?> Function() _previewPathProvider;
 
   @override
   Future<String?> requestRemoteFilePreview({
@@ -246,7 +305,7 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
     required String ownerName,
     required String cacheId,
     required String relativePath,
-  }) async {
+  }) {
     return _previewPathProvider();
   }
 }

@@ -29,6 +29,7 @@ import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/shared_cache_owner_contracts.dart';
+import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
@@ -217,7 +218,6 @@ class DiscoveryController extends ChangeNotifier {
           fileTransferService: fileTransferService,
           transferStorageService: transferStorageService,
           downloadHistoryBoundary: _downloadHistoryBoundary,
-          previewCacheOwner: previewCacheOwner,
           appNotificationService: appNotificationService,
           settingsProvider: () => _settingsStore.settings,
           localNameProvider: () => _localName,
@@ -227,6 +227,20 @@ class DiscoveryController extends ChangeNotifier {
           resolveRemoteOwnerMac:
               ({required String ownerIp, required String cacheId}) =>
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
+          remoteFilePreviewTransferBoundary: RemoteFilePreviewTransferBoundary(
+            lanDiscoveryService: lanDiscoveryService,
+            fileHashService: fileHashService,
+            previewCacheOwner: previewCacheOwner,
+            settingsProvider: () => _settingsStore.settings,
+            localNameProvider: () => _localName,
+            localDeviceMacProvider: () => _localDeviceMac,
+            resolveRemoteOwnerMac:
+                ({required String ownerIp, required String cacheId}) =>
+                    _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
+            publishNotice: (notice) {
+              _transferSessionCoordinator.publishBoundaryNotice(notice);
+            },
+          ),
         );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
     _configuredDiscoveryTargetsStore.addListener(

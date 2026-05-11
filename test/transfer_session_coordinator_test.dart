@@ -32,6 +32,7 @@ import 'package:landa/features/settings/domain/app_settings.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/shared_download_boundary.dart';
+import 'package:landa/features/transfer/application/remote_file_preview_transfer_boundary.dart';
 import 'package:landa/features/transfer/application/remote_share_access_session_models.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
@@ -4354,7 +4355,27 @@ void main() {
       );
       final videoLinkShareService = VideoLinkShareService();
       late final DiscoveryController controller;
-      final transferSessionCoordinator = TransferSessionCoordinator(
+      late final TransferSessionCoordinator transferSessionCoordinator;
+      late final RemoteFilePreviewTransferBoundary
+      remoteFilePreviewTransferBoundary;
+      remoteFilePreviewTransferBoundary = RemoteFilePreviewTransferBoundary(
+        lanDiscoveryService: lanDiscoveryService,
+        fileHashService: fileHashService,
+        previewCacheOwner: previewCacheOwner,
+        settingsProvider: () => settingsStore.settings,
+        localNameProvider: () => controller.localName,
+        localDeviceMacProvider: () => controller.localDeviceMac,
+        resolveRemoteOwnerMac:
+            ({required String ownerIp, required String cacheId}) =>
+                remoteShareBrowser.ownerMacForCache(
+                  ownerIp: ownerIp,
+                  cacheId: cacheId,
+                ),
+        publishNotice: (notice) {
+          transferSessionCoordinator.publishBoundaryNotice(notice);
+        },
+      );
+      transferSessionCoordinator = TransferSessionCoordinator(
         lanDiscoveryService: lanDiscoveryService,
         sharedCacheCatalog: sharedCacheCatalog,
         sharedCacheIndexStore: sharedCacheIndexStore,
@@ -4362,7 +4383,6 @@ void main() {
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
         downloadHistoryBoundary: downloadHistoryBoundary,
-        previewCacheOwner: previewCacheOwner,
         appNotificationService: AppNotificationService.instance,
         settingsProvider: () => settingsStore.settings,
         localNameProvider: () => controller.localName,
@@ -4375,6 +4395,7 @@ void main() {
                   ownerIp: ownerIp,
                   cacheId: cacheId,
                 ),
+        remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
       );
       final remoteShareMediaProjectionBoundary =
           RemoteShareMediaProjectionBoundary(
@@ -4527,7 +4548,24 @@ TransferSessionCoordinator _buildCoordinator({
   String? Function({required String ownerIp, required String cacheId})?
   resolveRemoteOwnerMac,
 }) {
-  return TransferSessionCoordinator(
+  late final TransferSessionCoordinator coordinator;
+  final previewBoundary = RemoteFilePreviewTransferBoundary(
+    lanDiscoveryService: lanDiscoveryService,
+    fileHashService: fileHashService,
+    previewCacheOwner: previewCacheOwner,
+    settingsProvider: () => AppSettings.defaults,
+    localNameProvider: () => localName,
+    localDeviceMacProvider: () => localDeviceMac,
+    resolveRemoteOwnerMac:
+        resolveRemoteOwnerMac ??
+        ({required String ownerIp, required String cacheId}) {
+          return null;
+        },
+    publishNotice: (notice) {
+      coordinator.publishBoundaryNotice(notice);
+    },
+  );
+  coordinator = TransferSessionCoordinator(
     lanDiscoveryService: lanDiscoveryService,
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
@@ -4537,7 +4575,6 @@ TransferSessionCoordinator _buildCoordinator({
         transferStorageService ??
         RecordingTransferStorageService(rootDirectory: rootDirectory),
     downloadHistoryBoundary: downloadHistoryBoundary,
-    previewCacheOwner: previewCacheOwner,
     appNotificationService: AppNotificationService.instance,
     settingsProvider: () => AppSettings.defaults,
     localNameProvider: () => localName,
@@ -4549,8 +4586,10 @@ TransferSessionCoordinator _buildCoordinator({
           return null;
         },
     applyRemoteShareAccessSnapshot: applyRemoteShareAccessSnapshot,
+    remoteFilePreviewTransferBoundary: previewBoundary,
     sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
   );
+  return coordinator;
 }
 
 Future<void> _waitForDownloadHistoryRecords({

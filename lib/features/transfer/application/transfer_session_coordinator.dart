@@ -10,7 +10,6 @@ import '../../../core/utils/app_notification_service.dart';
 import '../../discovery/data/lan_discovery_service.dart';
 import '../../discovery/data/lan_packet_codec.dart';
 import '../../discovery/data/lan_protocol_events.dart';
-import '../../files/application/preview_cache_owner.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../history/domain/transfer_history_record.dart';
 import '../../settings/domain/app_settings.dart';
@@ -29,7 +28,7 @@ import 'shared_cache_index_store.dart';
 import 'shared_download_boundary.dart';
 import 'transfer_cache_preparation_boundary.dart';
 import 'transfer_cache_snapshot_builder.dart';
-import 'remote_file_preview_boundary.dart';
+import 'remote_file_preview_transfer_boundary.dart';
 import 'transfer_path_policy.dart';
 import 'transfer_speed_tracker.dart';
 
@@ -75,7 +74,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required FileTransferService fileTransferService,
     required TransferStorageService transferStorageService,
     required DownloadHistoryBoundary downloadHistoryBoundary,
-    required PreviewCacheOwner previewCacheOwner,
     required AppNotificationService appNotificationService,
     required AppSettings Function() settingsProvider,
     required String Function() localNameProvider,
@@ -93,9 +91,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
       required List<SharedCatalogEntryItem> entries,
     })?
     applyRemoteShareAccessSnapshot,
+    required RemoteFilePreviewTransferBoundary
+    remoteFilePreviewTransferBoundary,
     SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
-    Duration pendingRemotePreviewTtl = const Duration(minutes: 1),
-    Duration previewRequestTimeout = const Duration(seconds: 45),
     this.progressResetDelay = const Duration(seconds: 1),
   }) : _lanDiscoveryService = lanDiscoveryService,
        _sharedCacheCatalog = sharedCacheCatalog,
@@ -106,25 +104,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
        _downloadHistoryBoundary = downloadHistoryBoundary,
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
+       _remoteFilePreviewTransferBoundary = remoteFilePreviewTransferBoundary,
        _applyRemoteShareAccessSnapshot =
            applyRemoteShareAccessSnapshot ??
            _noopApplyRemoteShareAccessSnapshot,
        _sharedDownloadDiagnosticLogStore =
            sharedDownloadDiagnosticLogStore ??
            SharedDownloadDiagnosticLogStore.disabled() {
-    _remoteFilePreviewBoundary = RemoteFilePreviewBoundary(
-      lanDiscoveryService: lanDiscoveryService,
-      fileHashService: fileHashService,
-      previewCacheOwner: previewCacheOwner,
-      settingsProvider: settingsProvider,
-      localNameProvider: localNameProvider,
-      localDeviceMacProvider: localDeviceMacProvider,
-      resolveRemoteOwnerMac: resolveRemoteOwnerMac,
-      publishNotice: _publishNotice,
-      pendingRemotePreviewTtl: pendingRemotePreviewTtl,
-      previewRequestTimeout: previewRequestTimeout,
-      pathPolicy: _pathPolicy,
-    );
     _transferCacheSnapshotBuilder = TransferCacheSnapshotBuilder(
       sharedCacheIndexStore: sharedCacheIndexStore,
       fileHashService: fileHashService,
@@ -160,8 +146,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
       persistWholeShareTransferHashBackfill:
           _persistWholeShareTransferHashBackfillForBoundary,
       cachePreparationBoundary: _transferCachePreparationBoundary,
-      buildCompressedPreviewFilesForCache:
-          _remoteFilePreviewBoundary.buildCompressedPreviewFilesForCache,
+      buildCompressedPreviewFilesForCache: _remoteFilePreviewTransferBoundary
+          .buildCompressedPreviewFilesForCache,
       buildTransferFilesForCache:
           _transferCacheSnapshotBuilder.buildTransferFilesForCache,
       buildWholeShareDirectStartSendPlan:
@@ -179,7 +165,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
       sharedDownloadBoundary: _sharedDownloadBoundary,
-      remoteFilePreviewBoundary: _remoteFilePreviewBoundary,
+      remoteFilePreviewTransferBoundary: _remoteFilePreviewTransferBoundary,
       pathPolicy: _pathPolicy,
       localNameProvider: localNameProvider,
       isTrustedSender: isTrustedSender,
@@ -232,7 +218,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final DownloadHistoryBoundary _downloadHistoryBoundary;
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
-  late final RemoteFilePreviewBoundary _remoteFilePreviewBoundary;
+  final RemoteFilePreviewTransferBoundary _remoteFilePreviewTransferBoundary;
   late final TransferCacheSnapshotBuilder _transferCacheSnapshotBuilder;
   late final TransferCachePreparationBoundary _transferCachePreparationBoundary;
   late final SharedDownloadBoundary _sharedDownloadBoundary;
@@ -301,6 +287,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
       _transferCachePreparationBoundary;
   RemoteShareAccessSessionBoundary get remoteShareAccessSessionBoundary =>
       _remoteShareAccessSessionBoundary;
+
+  void publishBoundaryNotice(TransferSessionNotice notice) {
+    _publishNotice(notice);
+  }
+
   TransferSessionNotice? takePendingNotice() {
     final notice = _pendingNotice;
     _pendingNotice = null;
@@ -510,20 +501,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
       _isSendingTransfer = false;
       _notify();
     }
-  }
-
-  Future<String?> requestRemoteFilePreview({
-    required String ownerIp,
-    required String ownerName,
-    required String cacheId,
-    required String relativePath,
-  }) {
-    return _remoteFilePreviewBoundary.requestRemoteFilePreview(
-      ownerIp: ownerIp,
-      ownerName: ownerName,
-      cacheId: cacheId,
-      relativePath: relativePath,
-    );
   }
 
   Future<void> respondToTransferRequest({
@@ -1467,7 +1444,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _remoteFilePreviewBoundary.dispose();
     _incomingTransferRequestBoundary.removeListener(_notify);
     _incomingTransferRequestBoundary.dispose();
     _remoteShareAccessSessionBoundary.removeListener(_notify);

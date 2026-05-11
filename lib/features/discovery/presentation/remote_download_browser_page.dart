@@ -16,6 +16,7 @@ import '../../files/presentation/file_explorer/file_explorer_widgets.dart';
 import '../../files/presentation/file_explorer/local_file_viewer.dart';
 import '../../transfer/application/remote_share_access_session_boundary.dart';
 import '../../transfer/application/remote_share_access_session_models.dart';
+import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
 import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
@@ -28,6 +29,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.remoteFilePreviewTransferBoundary,
     required this.remoteShareAccessSessionBoundary,
     required this.transferCachePreparationBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
@@ -39,6 +41,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
@@ -790,7 +793,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       _previewingToken = token;
     });
     try {
-      final previewPath = await widget.transferSessionCoordinator
+      final previewPath = await widget.remoteFilePreviewTransferBoundary
           .requestRemoteFilePreview(
             ownerIp: file.ownerIp,
             ownerName: file.ownerName,

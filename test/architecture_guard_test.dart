@@ -329,16 +329,17 @@ void main() {
       }
     });
 
-    test('keeps remote file preview session state on RemoteFilePreviewBoundary', () {
+    test('keeps remote file preview transfer on RemoteFilePreviewTransferBoundary', () {
       const coordinatorPath =
           'lib/features/transfer/application/transfer_session_coordinator.dart';
       const boundaryPath =
-          'lib/features/transfer/application/remote_file_preview_boundary.dart';
+          'lib/features/transfer/application/remote_file_preview_transfer_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
 
       expect(
         sourceTree.fileContainsLiteral(
           boundaryPath,
-          'class RemoteFilePreviewBoundary',
+          'class RemoteFilePreviewTransferBoundary',
         ),
         isTrue,
         reason:
@@ -350,15 +351,25 @@ void main() {
         reason:
             '$boundaryPath is a command/session boundary and must not become UI state.',
       );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must wire remote file preview transfer as an explicit boundary.',
+      );
 
       for (final symbol in <String>[
         '_pendingRemotePreviewsByKey',
         '_previewResultCompletersByRequestId',
         '_PendingRemotePreviewIntent',
-        '_consumePendingRemotePreview(',
-        '_purgeExpiredPendingRemotePreviews(',
-        '_cleanupPreviewCacheBySettings(',
-        '_buildCompressedPreviewFilesForCache(',
+        'consumePendingRemotePreview(',
+        'purgeExpiredPendingRemotePreviews(',
+        'cleanupPreviewCacheBySettings(',
+        'buildCompressedPreviewFilesForCache(',
+        'requestRemoteFilePreview(',
       ]) {
         expect(
           sourceTree.fileContainsLiteral(coordinatorPath, symbol),
