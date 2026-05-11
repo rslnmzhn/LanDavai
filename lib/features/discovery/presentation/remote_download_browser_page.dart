@@ -278,7 +278,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       animation: Listenable.merge(<Listenable>[
         _browser,
         widget.readModel,
-        widget.transferSessionCoordinator,
+        widget.incomingTransferCompletionBoundary,
+        widget.transferCachePreparationBoundary,
+        widget.sharedDownloadBoundary,
         ..._ownersByFilterKey.values,
       ]),
       builder: (context, _) {

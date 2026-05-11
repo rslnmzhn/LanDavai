@@ -74,6 +74,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
           pageDependencies.incomingTransferCompletionBoundary,
       transferCachePreparationBoundary:
           pageDependencies.transferCachePreparationBoundary,
+      outgoingTransferSendBoundary:
+          pageDependencies.outgoingTransferSendBoundary,
       sharedDownloadBoundary: pageDependencies.sharedDownloadBoundary,
       downloadHistoryBoundary: pageDependencies.downloadHistoryBoundary,
       clipboardHistoryStore: pageDependencies.clipboardHistoryStore,

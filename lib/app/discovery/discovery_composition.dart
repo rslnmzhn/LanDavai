@@ -91,6 +91,7 @@ class DiscoveryPageDependencies {
     required this.remoteFilePreviewTransferBoundary,
     required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
+    required this.outgoingTransferSendBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
@@ -117,6 +118,7 @@ class DiscoveryPageDependencies {
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
   final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
@@ -450,6 +452,8 @@ class DiscoveryCompositionFactory {
           transferSessionCoordinator.incomingTransferCompletionBoundary,
       transferCachePreparationBoundary:
           transferSessionCoordinator.transferCachePreparationBoundary,
+      outgoingTransferSendBoundary:
+          transferSessionCoordinator.outgoingTransferSendBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,

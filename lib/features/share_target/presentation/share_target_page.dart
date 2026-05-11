@@ -182,11 +182,12 @@ class _ShareTargetPageState extends State<ShareTargetPage> {
     });
 
     try {
-      await widget.transferSessionCoordinator.sendFilesToDevice(
-        targetIp: device.ip,
-        targetName: device.displayName,
-        selectedPaths: files,
-      );
+      await widget.transferSessionCoordinator.outgoingTransferSendBoundary
+          .sendFilesToDevice(
+            targetIp: device.ip,
+            targetName: device.displayName,
+            selectedPaths: files,
+          );
       widget.shareReceiveBoundary.clearPendingShare();
       if (mounted) {
         Navigator.of(context).pop();
@@ -385,9 +386,9 @@ class _CenteredState extends StatelessWidget {
             Text(
               message,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: AppColors.textSecondary,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
             ),
             ?child,
           ],

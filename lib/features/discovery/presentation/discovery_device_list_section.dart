@@ -26,6 +26,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.remoteShareAccessSessionBoundary,
     required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
+    required this.outgoingTransferSendBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
@@ -43,6 +44,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
       transferSessionCoordinator.sharedDownloadBoundary;
@@ -105,12 +107,12 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator.isUploading ||
+          if (outgoingTransferSendBoundary.isUploading ||
               incomingTransferCompletionBoundary.isDownloading ||
               transferCachePreparationBoundary.isPreparingSharedDownload ||
               transferCachePreparationBoundary.isPreparingSharedUpload) ...[
             _TransferProgressCard(
-              transferSessionCoordinator: transferSessionCoordinator,
+              outgoingTransferSendBoundary: outgoingTransferSendBoundary,
               incomingTransferCompletionBoundary:
                   incomingTransferCompletionBoundary,
               transferCachePreparationBoundary:
@@ -269,12 +271,12 @@ class _ErrorBanner extends StatelessWidget {
 
 class _TransferProgressCard extends StatelessWidget {
   const _TransferProgressCard({
-    required this.transferSessionCoordinator,
+    required this.outgoingTransferSendBoundary,
     required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
   });
 
-  final TransferSessionCoordinator transferSessionCoordinator;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
   final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
 
@@ -290,13 +292,14 @@ class _TransferProgressCard extends StatelessWidget {
               'discovery.transfer.title'.tr(),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            if (transferSessionCoordinator.isUploading) ...[
+            if (outgoingTransferSendBoundary.isUploading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.upload'.tr(
                   namedArgs: <String, String>{
-                    'percent': (transferSessionCoordinator.uploadProgress * 100)
-                        .toStringAsFixed(0),
+                    'percent':
+                        (outgoingTransferSendBoundary.uploadProgress * 100)
+                            .toStringAsFixed(0),
                   },
                 ),
                 style: Theme.of(context).textTheme.bodySmall,
@@ -305,8 +308,8 @@ class _TransferProgressCard extends StatelessWidget {
               Text(
                 _formatRateAndEta(
                   speedBytesPerSecond:
-                      transferSessionCoordinator.uploadSpeedBytesPerSecond,
-                  eta: transferSessionCoordinator.uploadEta,
+                      outgoingTransferSendBoundary.uploadSpeedBytesPerSecond,
+                  eta: outgoingTransferSendBoundary.uploadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -314,13 +317,13 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: transferSessionCoordinator.uploadProgress,
+                value: outgoingTransferSendBoundary.uploadProgress,
                 minHeight: 6,
                 color: AppColors.brandPrimary,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (!transferSessionCoordinator.isUploading &&
+            if (!outgoingTransferSendBoundary.isUploading &&
                 transferCachePreparationBoundary.isPreparingSharedUpload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(

@@ -62,6 +62,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.remoteFilePreviewTransferBoundary,
     required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
+    required this.outgoingTransferSendBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
@@ -90,6 +91,7 @@ class DiscoveryPage extends StatefulWidget {
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
   final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
@@ -134,6 +136,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       widget.incomingTransferCompletionBoundary;
   TransferCachePreparationBoundary get _transferCachePreparationBoundary =>
       widget.transferCachePreparationBoundary;
+  OutgoingTransferSendBoundary get _outgoingTransferSendBoundary =>
+      widget.outgoingTransferSendBoundary;
   SharedDownloadBoundary get _sharedDownloadBoundary =>
       widget.sharedDownloadBoundary;
   DownloadHistoryBoundary get _downloadHistoryBoundary =>
@@ -209,6 +213,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         _readModel,
         _sharedCacheMaintenanceBoundary,
         _transferSessionCoordinator,
+        _outgoingTransferSendBoundary,
         _incomingTransferRequestBoundary,
       ]),
       builder: (context, _) {
@@ -236,7 +241,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           sharedFolderIndexingProgressValue:
               _controller.sharedFolderIndexingProgressValue,
           isAddingShare: _controller.isAddingShare,
-          isSendingTransfer: _transferSessionCoordinator.isSendingTransfer,
+          isSendingTransfer: _outgoingTransferSendBoundary.isSendingTransfer,
           onReceive: _openDownloadBrowser,
           onAdd: _openAddShareMenu,
           onSend: _openNearbyTransferSheet,
@@ -252,6 +257,7 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           incomingTransferCompletionBoundary:
               _incomingTransferCompletionBoundary,
           transferCachePreparationBoundary: _transferCachePreparationBoundary,
+          outgoingTransferSendBoundary: _outgoingTransferSendBoundary,
           sharedDownloadBoundary: _sharedDownloadBoundary,
           onRefresh: _controller.refresh,
           onSelectDeviceByIp: _controller.selectDeviceByIp,

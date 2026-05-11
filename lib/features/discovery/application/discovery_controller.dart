@@ -1208,11 +1208,12 @@ class DiscoveryController extends ChangeNotifier {
       if (selectedPaths.isEmpty) {
         return;
       }
-      await _transferSessionCoordinator.sendFilesToDevice(
-        targetIp: target.ip,
-        targetName: target.displayName,
-        selectedPaths: selectedPaths,
-      );
+      await _transferSessionCoordinator.outgoingTransferSendBoundary
+          .sendFilesToDevice(
+            targetIp: target.ip,
+            targetName: target.displayName,
+            selectedPaths: selectedPaths,
+          );
     } catch (error) {
       _errorMessage = 'Failed to send transfer request: $error';
       _log(_errorMessage!);
@@ -1467,7 +1468,8 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onTransferRequest(TransferRequestEvent event) {
-    _transferSessionCoordinator.handleTransferRequestEvent(event);
+    _transferSessionCoordinator.incomingTransferRequestBoundary
+        .handleTransferRequestEvent(event);
   }
 
   void _onFriendRequest(FriendRequestEvent event) {
@@ -1652,7 +1654,8 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
-    _transferSessionCoordinator.handleTransferDecisionEvent(event);
+    _transferSessionCoordinator.outgoingTransferSendBoundary
+        .handleTransferDecisionEvent(event);
   }
 
   Future<void> openHistoryPath(String path) async {

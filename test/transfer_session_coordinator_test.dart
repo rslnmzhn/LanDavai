@@ -242,7 +242,7 @@ void main() {
         }
         expect(lanDiscoveryService.transferRequests, hasLength(1));
 
-        coordinator.handleTransferDecisionEvent(
+        coordinator.outgoingTransferSendBoundary.handleTransferDecisionEvent(
           TransferDecisionEvent(
             requestId: lanDiscoveryService.transferRequests.single.requestId,
             approved: true,
@@ -1100,8 +1100,14 @@ void main() {
         expect(fileTransferService.progressEventCount, 120);
         expect(fileTransferService.sawResolveBatch, isTrue);
         expect(fileTransferService.completed, isTrue);
-        expect(coordinator.uploadSentBytes, coordinator.uploadTotalBytes);
-        expect(coordinator.uploadTotalBytes, greaterThan(0));
+        expect(
+          coordinator.outgoingTransferSendBoundary.uploadSentBytes,
+          coordinator.outgoingTransferSendBoundary.uploadTotalBytes,
+        );
+        expect(
+          coordinator.outgoingTransferSendBoundary.uploadTotalBytes,
+          greaterThan(0),
+        );
         expect(notifyCount, lessThan(60));
 
         var entries = const <Map<String, Object?>>[];
@@ -2088,7 +2094,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-1',
             senderIp: '192.168.1.40',
@@ -2166,7 +2172,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-2',
             senderIp: '192.168.1.40',
@@ -2246,7 +2252,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-history-real-file',
             senderIp: '192.168.1.40',
@@ -2318,7 +2324,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-ghost-file',
             senderIp: '192.168.1.40',
@@ -2402,7 +2408,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 0);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3732,7 +3738,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 1);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3859,7 +3865,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 0);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3923,7 +3929,7 @@ void main() {
           useStandardAppDownloadFolder: true,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4029,7 +4035,7 @@ void main() {
           containsAll(<String>['docs/a.txt', 'docs/sub/b.txt']),
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4170,7 +4176,7 @@ void main() {
           isEmpty,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4264,7 +4270,7 @@ void main() {
           useStandardAppDownloadFolder: false,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',

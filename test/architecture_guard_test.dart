@@ -575,6 +575,92 @@ void main() {
       }
     });
 
+    test('keeps outgoing transfer send on OutgoingTransferSendBoundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/outgoing_transfer_send_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class OutgoingTransferSendBoundary extends ChangeNotifier',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must own outgoing transfer send state as a ChangeNotifier boundary.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferCachePreparationBoundary cachePreparationBoundary',
+        ),
+        isTrue,
+        reason:
+            'Outgoing send must consume the existing cache-preparation boundary instead of duplicating preparation truth.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferSpeedTracker speedTracker',
+        ),
+        isTrue,
+        reason:
+            'Outgoing send must inject TransferSpeedTracker instead of duplicating speed tracking implementation.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'OutgoingTransferSendBoundary outgoingTransferSendBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must expose outgoing send progress directly to presentation.',
+      );
+
+      for (final symbol in <String>[
+        '_pendingOutgoingTransfers',
+        '_activeOutgoing',
+        '_outgoingSend',
+        '_sendProgress',
+        '_isSendingTransfer',
+        '_uploadSentBytes',
+        '_uploadTotalBytes',
+        'bool get isSendingTransfer',
+        'bool get isUploading',
+        'double get uploadProgress',
+        'int get uploadSentBytes',
+        'int get uploadTotalBytes',
+        'double get uploadSpeedBytesPerSecond',
+        'Duration? get uploadEta',
+        'sendFilesToDevice(',
+        '_sendApprovedTransfer(',
+        '_sendDirectSharedDownload(',
+        '_buildUploadProgressEmitter(',
+        '_cleanupTemporaryOutgoingFiles(',
+        '_hydrateTransferSourceFilesWithHashes(',
+        '_persistWholeShareTransferHashBackfill(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not retain outgoing send residue "$symbol".',
+        );
+      }
+
+      final measuredCoordinatorLines = sourceTree.readLineCount(
+        coordinatorPath,
+      );
+      expect(
+        measuredCoordinatorLines,
+        lessThan(400),
+        reason:
+            '$coordinatorPath must stay under 400 lines after outgoing send extraction.',
+      );
+    });
+
     test(
       'keeps remote-share access session state on RemoteShareAccessSessionBoundary',
       () {
@@ -696,6 +782,14 @@ class _SourceTree {
 
   bool fileContainsRegex(String relativePath, RegExp pattern) {
     return pattern.hasMatch(_readFile(relativePath));
+  }
+
+  int readLineCount(String relativePath) {
+    final text = _readFile(relativePath);
+    if (text.isEmpty) {
+      return 0;
+    }
+    return text.split('\n').length;
   }
 
   String describeMatches({
