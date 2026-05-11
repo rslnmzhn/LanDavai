@@ -7,6 +7,7 @@ import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/incoming_transfer_request_boundary.dart';
+import '../../transfer/application/remote_share_access_session_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../application/discovery_read_model.dart';
@@ -20,6 +21,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.isManualRefreshInProgress,
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
+    required this.remoteShareAccessSessionBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
@@ -34,6 +36,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final bool isManualRefreshInProgress;
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
       transferSessionCoordinator.sharedDownloadBoundary;
@@ -83,15 +86,12 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator
-              .incomingRemoteShareAccessRequests
-              .isNotEmpty) ...[
+          if (remoteShareAccessSessionBoundary.incomingRequests.isNotEmpty) ...[
             _IncomingRemoteShareAccessRequestsCard(
-              requests:
-                  transferSessionCoordinator.incomingRemoteShareAccessRequests,
+              requests: remoteShareAccessSessionBoundary.incomingRequests,
               onRespond: ({required requestId, required approved}) {
-                return transferSessionCoordinator
-                    .respondToIncomingRemoteShareAccessRequest(
+                return remoteShareAccessSessionBoundary
+                    .respondToIncomingRequest(
                       requestId: requestId,
                       approved: approved,
                     );

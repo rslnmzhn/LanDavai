@@ -50,6 +50,7 @@ import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/shared_download_boundary.dart';
 import 'package:landa/features/transfer/application/incoming_transfer_request_boundary.dart';
+import 'package:landa/features/transfer/application/remote_share_access_session_boundary.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -76,6 +77,7 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
+    required this.remoteShareAccessSessionBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
@@ -99,6 +101,7 @@ class TestDiscoveryControllerHarness {
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
@@ -125,6 +128,7 @@ class TestDiscoveryControllerHarness {
         previewCacheOwner: previewCacheOwner,
         transferSessionCoordinator: transferSessionCoordinator,
         incomingTransferRequestBoundary: incomingTransferRequestBoundary,
+        remoteShareAccessSessionBoundary: remoteShareAccessSessionBoundary,
         sharedDownloadBoundary: sharedDownloadBoundary,
         downloadHistoryBoundary: downloadHistoryBoundary,
         clipboardHistoryStore: clipboardHistoryStore,
@@ -374,6 +378,8 @@ class TestDiscoveryControllerHarness {
       transferSessionCoordinator: transferSessionCoordinator,
       incomingTransferRequestBoundary:
           transferSessionCoordinator.incomingTransferRequestBoundary,
+      remoteShareAccessSessionBoundary:
+          transferSessionCoordinator.remoteShareAccessSessionBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,

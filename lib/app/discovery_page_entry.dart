@@ -66,6 +66,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
       transferSessionCoordinator: pageDependencies.transferSessionCoordinator,
       incomingTransferRequestBoundary:
           pageDependencies.incomingTransferRequestBoundary,
+      remoteShareAccessSessionBoundary:
+          pageDependencies.remoteShareAccessSessionBoundary,
       sharedDownloadBoundary: pageDependencies.sharedDownloadBoundary,
       downloadHistoryBoundary: pageDependencies.downloadHistoryBoundary,
       clipboardHistoryStore: pageDependencies.clipboardHistoryStore,

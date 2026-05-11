@@ -60,6 +60,8 @@ import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/shared_download_boundary.dart';
 import '../../features/transfer/application/incoming_transfer_request_boundary.dart';
+import '../../features/transfer/application/remote_share_access_session_boundary.dart';
+import '../../features/transfer/application/remote_share_access_session_models.dart';
 import '../../features/transfer/application/transfer_session_coordinator.dart';
 import '../../features/transfer/data/file_hash_service.dart';
 import '../../features/transfer/data/file_transfer_service.dart';
@@ -82,6 +84,7 @@ class DiscoveryPageDependencies {
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
+    required this.remoteShareAccessSessionBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
@@ -104,6 +107,7 @@ class DiscoveryPageDependencies {
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
@@ -410,6 +414,8 @@ class DiscoveryCompositionFactory {
       transferSessionCoordinator: transferSessionCoordinator,
       incomingTransferRequestBoundary:
           transferSessionCoordinator.incomingTransferRequestBoundary,
+      remoteShareAccessSessionBoundary:
+          transferSessionCoordinator.remoteShareAccessSessionBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,

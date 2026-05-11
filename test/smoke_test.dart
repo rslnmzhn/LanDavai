@@ -125,6 +125,8 @@ Future<void> _pumpDiscoveryPage(
         transferSessionCoordinator: harness.transferSessionCoordinator,
         incomingTransferRequestBoundary:
             harness.incomingTransferRequestBoundary,
+        remoteShareAccessSessionBoundary:
+            harness.remoteShareAccessSessionBoundary,
         sharedDownloadBoundary: harness.sharedDownloadBoundary,
         downloadHistoryBoundary: harness.downloadHistoryBoundary,
         clipboardHistoryStore: harness.clipboardHistoryStore,

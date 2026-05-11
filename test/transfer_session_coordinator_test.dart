@@ -32,6 +32,7 @@ import 'package:landa/features/settings/domain/app_settings.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/shared_download_boundary.dart';
+import 'package:landa/features/transfer/application/remote_share_access_session_models.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -2919,7 +2920,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestRemoteShareAccess(
+        await coordinator.remoteShareAccessSessionBoundary.requestAccess(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
         );
@@ -3037,15 +3038,13 @@ void main() {
         addTearDown(requesterCoordinator.dispose);
         addTearDown(senderCoordinator.dispose);
 
-        await requesterCoordinator.requestRemoteShareAccess(
-          ownerIp: '192.168.1.40',
-          ownerName: 'Sender device',
-        );
+        await requesterCoordinator.remoteShareAccessSessionBoundary
+            .requestAccess(ownerIp: '192.168.1.40', ownerName: 'Sender device');
         expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
 
         final sentRequest =
             requesterLanDiscoveryService.shareAccessRequests.single;
-        senderCoordinator.handleShareAccessRequestEvent(
+        senderCoordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: sentRequest.requestId,
             requesterIp: '192.168.1.88',
@@ -3057,7 +3056,10 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 60));
 
-        expect(senderCoordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(
+          senderCoordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(senderLanDiscoveryService.shareAccessResponses, hasLength(1));
         expect(
           senderLanDiscoveryService.shareAccessResponses.single.approved,
@@ -3067,16 +3069,17 @@ void main() {
 
         final sentResponse =
             senderLanDiscoveryService.shareAccessResponses.single;
-        requesterCoordinator.handleShareAccessResponseEvent(
-          ShareAccessResponseEvent(
-            requestId: sentResponse.requestId,
-            responderIp: '192.168.1.40',
-            responderName: sentResponse.responderName,
-            approved: sentResponse.approved,
-            observedAt: DateTime(2026, 1, 3),
-            message: sentResponse.message,
-          ),
-        );
+        requesterCoordinator.remoteShareAccessSessionBoundary
+            .handleResponseEvent(
+              ShareAccessResponseEvent(
+                requestId: sentResponse.requestId,
+                responderIp: '192.168.1.40',
+                responderName: sentResponse.responderName,
+                approved: sentResponse.approved,
+                observedAt: DateTime(2026, 1, 3),
+                message: sentResponse.message,
+              ),
+            );
 
         final snapshotSourcePath =
             senderSendService.lastFiles.single.sourcePath;
@@ -3173,15 +3176,13 @@ void main() {
         addTearDown(requesterCoordinator.dispose);
         addTearDown(senderCoordinator.dispose);
 
-        await requesterCoordinator.requestRemoteShareAccess(
-          ownerIp: '192.168.1.40',
-          ownerName: 'Sender device',
-        );
+        await requesterCoordinator.remoteShareAccessSessionBoundary
+            .requestAccess(ownerIp: '192.168.1.40', ownerName: 'Sender device');
         expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
 
         final sentRequest =
             requesterLanDiscoveryService.shareAccessRequests.single;
-        senderCoordinator.handleShareAccessRequestEvent(
+        senderCoordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: sentRequest.requestId,
             requesterIp: '192.168.1.88',
@@ -3194,7 +3195,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(
-          senderCoordinator.incomingRemoteShareAccessRequests,
+          senderCoordinator.remoteShareAccessSessionBoundary.incomingRequests,
           hasLength(1),
         );
         expect(senderLanDiscoveryService.shareAccessResponses, isEmpty);
@@ -3231,13 +3232,13 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestRemoteShareAccess(
+        await coordinator.remoteShareAccessSessionBoundary.requestAccess(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
         );
         final request = lanDiscoveryService.shareAccessRequests.single;
 
-        coordinator.handleShareAccessResponseEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleResponseEvent(
           ShareAccessResponseEvent(
             requestId: request.requestId,
             responderIp: '192.168.1.40',
@@ -3251,7 +3252,7 @@ void main() {
 
         expect(fileTransferService.closeCalls, 1);
         expect(
-          coordinator.remoteShareAccessState?.stage,
+          coordinator.remoteShareAccessSessionBoundary.state?.stage,
           RemoteShareAccessStage.rejected,
         );
       },
@@ -3290,7 +3291,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-1',
             requesterIp: '192.168.1.40',
@@ -3300,12 +3301,13 @@ void main() {
             observedAt: DateTime(2026, 1, 3),
           ),
         );
-        expect(coordinator.incomingRemoteShareAccessRequests, hasLength(1));
-
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-1',
-          approved: true,
+        expect(
+          coordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          hasLength(1),
         );
+
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(requestId: 'access-1', approved: true);
         await Future<void>.delayed(const Duration(milliseconds: 40));
 
         expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
@@ -3353,7 +3355,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-friend-1',
             requesterIp: '192.168.1.40',
@@ -3368,7 +3370,10 @@ void main() {
           expectedCount: 1,
         );
 
-        expect(coordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(
+          coordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
         expect(
           lanDiscoveryService.shareAccessResponses.single.approved,
@@ -3420,7 +3425,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-atomic',
             requesterIp: '192.168.1.40',
@@ -3431,10 +3436,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-atomic',
-          approved: true,
-        );
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(
+              requestId: 'access-atomic',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 40));
 
         expect(fileTransferService.sendFilesCalls, 1);
@@ -3534,7 +3540,7 @@ void main() {
         addTearDown(coordinator.dispose);
         addTearDown(receiveSession.close);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-e2e',
             requesterIp: InternetAddress.loopbackIPv4.address,
@@ -3545,10 +3551,8 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-e2e',
-          approved: true,
-        );
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(requestId: 'access-e2e', approved: true);
 
         final result = await receiveSession.result.timeout(
           const Duration(seconds: 5),

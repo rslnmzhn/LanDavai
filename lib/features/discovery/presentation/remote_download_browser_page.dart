@@ -14,6 +14,8 @@ import '../../files/presentation/file_explorer/file_explorer_models.dart';
 import '../../files/presentation/file_explorer/file_explorer_tail_widgets.dart';
 import '../../files/presentation/file_explorer/file_explorer_widgets.dart';
 import '../../files/presentation/file_explorer/local_file_viewer.dart';
+import '../../transfer/application/remote_share_access_session_boundary.dart';
+import '../../transfer/application/remote_share_access_session_models.dart';
 import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../application/discovery_read_model.dart';
@@ -25,6 +27,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.remoteShareAccessSessionBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.useStandardAppDownloadFolder,
     super.key,
@@ -34,6 +37,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
       transferSessionCoordinator.sharedDownloadBoundary;
@@ -327,9 +331,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       _RemoteShareAccessActionRow(
                         deviceLabel: _rootLabelForActiveFilter,
                         activeOwnerIp: _activeFilterKey,
-                        accessState: widget
-                            .transferSessionCoordinator
-                            .remoteShareAccessState,
+                        accessState:
+                            widget.remoteShareAccessSessionBoundary.state,
                         onRequestAccess: _canRequestAccess
                             ? _requestAccessForActiveDevice
                             : null,
@@ -639,9 +642,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       requestId: 'browser',
       details: <String, Object?>{'ownerIp': nextKey},
     );
-    widget.transferSessionCoordinator.clearRemoteShareAccessState(
-      ownerIp: nextKey,
-    );
+    widget.remoteShareAccessSessionBoundary.clearState(ownerIp: nextKey);
     _syncSearchController();
   }
 
@@ -658,7 +659,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         'ownerName': _rootLabelForActiveFilter,
       },
     );
-    await widget.transferSessionCoordinator.requestRemoteShareAccess(
+    await widget.remoteShareAccessSessionBoundary.requestAccess(
       ownerIp: ownerIp,
       ownerName: _rootLabelForActiveFilter,
     );

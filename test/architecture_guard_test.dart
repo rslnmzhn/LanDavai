@@ -450,6 +450,59 @@ void main() {
         }
       },
     );
+
+    test(
+      'keeps remote-share access session state on RemoteShareAccessSessionBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/remote_share_access_session_boundary.dart';
+        const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class RemoteShareAccessSessionBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the explicit ChangeNotifier owner for remote-share access session truth.',
+        );
+        expect(
+          sourceTree.fileContainsLiteral(
+            compositionPath,
+            'RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;',
+          ),
+          isTrue,
+          reason:
+              '$compositionPath must expose the remote-share access session boundary directly to presentation.',
+        );
+
+        for (final symbol in <String>[
+          '_incomingRemoteShareAccessRequests',
+          '_activeRemoteShareAccessSessions',
+          '_pendingRemoteShareAccessByRequestId',
+          '_remoteShareAccessState',
+          'incomingRemoteShareAccessRequests',
+          'remoteShareAccessState',
+          'clearRemoteShareAccessState',
+          'requestRemoteShareAccess',
+          'respondToIncomingRemoteShareAccessRequest',
+          'handleShareAccessResponseEvent',
+          'handleShareAccessRequestEvent',
+          '_waitForRemoteShareAccessSnapshot',
+          '_PendingRemoteShareAccessIntent',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not retain remote-share access session residue "$symbol".',
+          );
+        }
+      },
+    );
   });
 }
 

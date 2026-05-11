@@ -1833,11 +1833,13 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onShareAccessRequest(ShareAccessRequestEvent event) {
-    _transferSessionCoordinator.handleShareAccessRequestEvent(event);
+    _transferSessionCoordinator.remoteShareAccessSessionBoundary
+        .handleRequestEvent(event);
   }
 
   void _onShareAccessResponse(ShareAccessResponseEvent event) {
-    _transferSessionCoordinator.handleShareAccessResponseEvent(event);
+    _transferSessionCoordinator.remoteShareAccessSessionBoundary
+        .handleResponseEvent(event);
   }
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {

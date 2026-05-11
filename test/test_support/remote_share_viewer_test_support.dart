@@ -28,6 +28,8 @@ Future<void> pumpRemoteBrowser(
         remoteShareBrowser: browser,
         previewCacheOwner: harness.previewCacheOwner,
         transferSessionCoordinator: coordinator,
+        remoteShareAccessSessionBoundary:
+            coordinator.remoteShareAccessSessionBoundary,
         sharedDownloadBoundary: coordinator.sharedDownloadBoundary,
         useStandardAppDownloadFolder: true,
       ),
@@ -216,9 +218,10 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
     required super.previewCacheOwner,
     required super.downloadHistoryBoundary,
     required AppSettings settings,
+    LanDiscoveryService? lanDiscoveryService,
   }) : _previewPathProvider = previewPathProvider,
        super(
-         lanDiscoveryService: LanDiscoveryService(),
+         lanDiscoveryService: lanDiscoveryService ?? LanDiscoveryService(),
          fileHashService: FileHashService(),
          fileTransferService: FileTransferService(),
          transferStorageService: TransferStorageService(),
@@ -232,8 +235,6 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
 
   final Future<String?> Function() _previewPathProvider;
   int downloadCalls = 0;
-  int accessRequestCalls = 0;
-  String? lastAccessRequestOwnerIp;
   Map<String, Set<String>>? lastSelectedByCache;
   Map<String, Set<String>>? lastSelectedFolderPrefixesByCache;
 
@@ -245,14 +246,5 @@ class TestRemoteShareTransferCoordinator extends TransferSessionCoordinator {
     required String relativePath,
   }) async {
     return _previewPathProvider();
-  }
-
-  @override
-  Future<void> requestRemoteShareAccess({
-    required String ownerIp,
-    required String ownerName,
-  }) async {
-    accessRequestCalls += 1;
-    lastAccessRequestOwnerIp = ownerIp;
   }
 }

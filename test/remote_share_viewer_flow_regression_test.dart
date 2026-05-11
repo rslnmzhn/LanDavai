@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
+import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/domain/discovered_device.dart';
 
 import 'test_support/remote_share_viewer_test_support.dart';
@@ -73,6 +74,7 @@ void main() {
         <String>['192.168.1.44', '192.168.1.55'],
       );
 
+      final lanDiscoveryService = _CapturingShareAccessLanDiscoveryService();
       final coordinator = TestRemoteShareTransferCoordinator(
         previewPathProvider: () async => null,
         sharedCacheCatalog: harness.sharedCacheCatalog,
@@ -80,16 +82,33 @@ void main() {
         previewCacheOwner: harness.previewCacheOwner,
         downloadHistoryBoundary: harness.downloadHistoryBoundary,
         settings: harness.readModel.settings,
+        lanDiscoveryService: lanDiscoveryService,
       );
       addTearDown(coordinator.dispose);
 
-      await coordinator.requestRemoteShareAccess(
+      await coordinator.remoteShareAccessSessionBoundary.requestAccess(
         ownerIp: '192.168.1.44',
         ownerName: 'Remote A',
       );
 
-      expect(coordinator.accessRequestCalls, 1);
-      expect(coordinator.lastAccessRequestOwnerIp, '192.168.1.44');
+      expect(lanDiscoveryService.shareAccessRequestTargets, <String>[
+        '192.168.1.44',
+      ]);
     },
   );
+}
+
+class _CapturingShareAccessLanDiscoveryService extends LanDiscoveryService {
+  final List<String> shareAccessRequestTargets = <String>[];
+
+  @override
+  Future<void> sendShareAccessRequest({
+    required String targetIp,
+    required String requestId,
+    required String requesterName,
+    required String requesterMacAddress,
+    required int transferPort,
+  }) async {
+    shareAccessRequestTargets.add(targetIp);
+  }
 }
