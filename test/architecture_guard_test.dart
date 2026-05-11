@@ -328,6 +328,46 @@ void main() {
         );
       }
     });
+
+    test('keeps remote file preview session state on RemoteFilePreviewBoundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/remote_file_preview_boundary.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class RemoteFilePreviewBoundary',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must remain the explicit owner for remote file preview request/session state.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(boundaryPath, 'extends ChangeNotifier'),
+        isFalse,
+        reason:
+            '$boundaryPath is a command/session boundary and must not become UI state.',
+      );
+
+      for (final symbol in <String>[
+        '_pendingRemotePreviewsByKey',
+        '_previewResultCompletersByRequestId',
+        '_PendingRemotePreviewIntent',
+        '_consumePendingRemotePreview(',
+        '_purgeExpiredPendingRemotePreviews(',
+        '_cleanupPreviewCacheBySettings(',
+        '_buildCompressedPreviewFilesForCache(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not re-own remote file preview seam "$symbol".',
+        );
+      }
+    });
   });
 }
 

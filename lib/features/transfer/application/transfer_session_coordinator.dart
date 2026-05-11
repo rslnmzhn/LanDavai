@@ -26,6 +26,7 @@ import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
 import 'shared_cache_index_store.dart';
 import 'shared_download_boundary.dart';
+import 'remote_file_preview_boundary.dart';
 import 'transfer_path_policy.dart';
 import 'transfer_speed_tracker.dart';
 
@@ -142,8 +143,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     })?
     applyRemoteShareAccessSnapshot,
     SharedDownloadDiagnosticLogStore? sharedDownloadDiagnosticLogStore,
-    this.pendingRemotePreviewTtl = const Duration(minutes: 1),
-    this.previewRequestTimeout = const Duration(seconds: 45),
+    Duration pendingRemotePreviewTtl = const Duration(minutes: 1),
+    Duration previewRequestTimeout = const Duration(seconds: 45),
     this.progressResetDelay = const Duration(seconds: 1),
   }) : _lanDiscoveryService = lanDiscoveryService,
        _sharedCacheCatalog = sharedCacheCatalog,
@@ -152,18 +153,28 @@ class TransferSessionCoordinator extends ChangeNotifier {
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
        _downloadHistoryBoundary = downloadHistoryBoundary,
-       _previewCacheOwner = previewCacheOwner,
-       _settingsProvider = settingsProvider,
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
        _isTrustedSender = isTrustedSender,
-       _resolveRemoteOwnerMac = resolveRemoteOwnerMac,
        _applyRemoteShareAccessSnapshot =
            applyRemoteShareAccessSnapshot ??
            _noopApplyRemoteShareAccessSnapshot,
        _sharedDownloadDiagnosticLogStore =
            sharedDownloadDiagnosticLogStore ??
            SharedDownloadDiagnosticLogStore.disabled() {
+    _remoteFilePreviewBoundary = RemoteFilePreviewBoundary(
+      lanDiscoveryService: lanDiscoveryService,
+      fileHashService: fileHashService,
+      previewCacheOwner: previewCacheOwner,
+      settingsProvider: settingsProvider,
+      localNameProvider: localNameProvider,
+      localDeviceMacProvider: localDeviceMacProvider,
+      resolveRemoteOwnerMac: resolveRemoteOwnerMac,
+      publishNotice: _publishNotice,
+      pendingRemotePreviewTtl: pendingRemotePreviewTtl,
+      previewRequestTimeout: previewRequestTimeout,
+      pathPolicy: _pathPolicy,
+    );
     _sharedDownloadBoundary = SharedDownloadBoundary(
       lanDiscoveryService: lanDiscoveryService,
       sharedCacheCatalog: sharedCacheCatalog,
@@ -193,7 +204,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       persistWholeShareTransferHashBackfill:
           _persistWholeShareTransferHashBackfillForBoundary,
       buildCompressedPreviewFilesForCache:
-          _buildCompressedPreviewFilesForCacheForBoundary,
+          _remoteFilePreviewBoundary.buildCompressedPreviewFilesForCache,
       buildTransferFilesForCache: _buildTransferFilesForCacheForBoundary,
       buildWholeShareDirectStartSendPlan:
           _buildWholeShareDirectStartSendPlanForBoundary,
@@ -210,14 +221,11 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
   final DownloadHistoryBoundary _downloadHistoryBoundary;
-  final PreviewCacheOwner _previewCacheOwner;
-  final AppSettings Function() _settingsProvider;
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
   final bool Function(String? normalizedMac) _isTrustedSender;
+  late final RemoteFilePreviewBoundary _remoteFilePreviewBoundary;
   late final SharedDownloadBoundary _sharedDownloadBoundary;
-  final String? Function({required String ownerIp, required String cacheId})
-  _resolveRemoteOwnerMac;
   final Future<RemoteShareAccessProjectionLoadResult> Function({
     required String ownerIp,
     required String ownerName,
@@ -234,10 +242,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   _incomingRemoteShareAccessRequests = <IncomingRemoteShareAccessRequest>[];
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
-  final Map<String, _PendingRemotePreviewIntent> _pendingRemotePreviewsByKey =
-      <String, _PendingRemotePreviewIntent>{};
-  final Map<String, Completer<String?>> _previewResultCompletersByRequestId =
-      <String, Completer<String?>>{};
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
   final Map<String, TransferReceiveSession> _activeRemoteShareAccessSessions =
@@ -248,8 +252,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final Map<String, List<_PreparedTransferFile>>
   _preparedTransferFilesByScopeKey = <String, List<_PreparedTransferFile>>{};
 
-  final Duration pendingRemotePreviewTtl;
-  final Duration previewRequestTimeout;
   final Duration progressResetDelay;
 
   bool _isSendingTransfer = false;
@@ -672,83 +674,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String ownerName,
     required String cacheId,
     required String relativePath,
-  }) async {
-    final normalizedRelativePath = _pathPolicy.normalizeForMatch(relativePath);
-    if (normalizedRelativePath.isEmpty) {
-      _publishNotice(
-        const TransferSessionNotice(errorMessage: 'Preview path is empty.'),
-      );
-      return null;
-    }
-
-    await _cleanupPreviewCacheBySettings();
-    _purgeExpiredPendingRemotePreviews();
-    final pendingKey = _pendingRemotePreviewKey(
+  }) {
+    return _remoteFilePreviewBoundary.requestRemoteFilePreview(
       ownerIp: ownerIp,
+      ownerName: ownerName,
       cacheId: cacheId,
-      normalizedRelativePath: normalizedRelativePath,
+      relativePath: relativePath,
     );
-
-    final existing = _pendingRemotePreviewsByKey[pendingKey];
-    if (existing != null) {
-      return existing.completer.future;
-    }
-
-    final previewCompleter = Completer<String?>();
-    _pendingRemotePreviewsByKey[pendingKey] = _PendingRemotePreviewIntent(
-      ownerIp: ownerIp,
-      ownerMacAddress: _resolveRemoteOwnerMac(
-        ownerIp: ownerIp,
-        cacheId: cacheId,
-      ),
-      cacheId: cacheId,
-      normalizedRelativePath: normalizedRelativePath,
-      createdAt: DateTime.now(),
-      completer: previewCompleter,
-    );
-
-    try {
-      final requestId = _fileHashService.buildStableId(
-        'preview|$ownerIp|$cacheId|$normalizedRelativePath|'
-        '${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
-      );
-      await _lanDiscoveryService.sendDownloadRequest(
-        targetIp: ownerIp,
-        requestId: requestId,
-        requesterName: _localName,
-        requesterMacAddress: _localDeviceMac,
-        cacheId: cacheId,
-        selectedRelativePaths: <String>[relativePath],
-        selectedFolderPrefixes: const <String>[],
-        previewMode: true,
-      );
-
-      final previewPath = await previewCompleter.future.timeout(
-        previewRequestTimeout,
-        onTimeout: () => null,
-      );
-      if (previewPath == null) {
-        _publishNotice(
-          TransferSessionNotice(
-            errorMessage: 'Preview timed out for $ownerName.',
-          ),
-        );
-      }
-      return previewPath;
-    } catch (error) {
-      _log('Failed to request preview: $error');
-      _publishNotice(
-        TransferSessionNotice(
-          errorMessage: 'Failed to request preview: $error',
-        ),
-      );
-      if (!previewCompleter.isCompleted) {
-        previewCompleter.complete(null);
-      }
-      return null;
-    } finally {
-      _pendingRemotePreviewsByKey.remove(pendingKey);
-    }
   }
 
   Future<void> respondToTransferRequest({
@@ -772,13 +704,15 @@ class TransferSessionCoordinator extends ChangeNotifier {
     var itemsToReceive = request.items;
     var decisionApproved = approved;
     final previewCompleter = isPreview
-        ? _previewResultCompletersByRequestId.remove(request.requestId)
+        ? _remoteFilePreviewBoundary.takePreviewResultCompleter(
+            request.requestId,
+          )
         : null;
 
     try {
       if (decisionApproved) {
         final destinationDirectory = isPreview
-            ? await _previewCacheOwner.resolvePreviewArtifactDirectory()
+            ? await _remoteFilePreviewBoundary.resolvePreviewArtifactDirectory()
             : destinationDirectoryOverridePath != null
             ? Directory(destinationDirectoryOverridePath)
             : await _transferStorageService.resolveReceiveDirectory(
@@ -1016,7 +950,9 @@ class TransferSessionCoordinator extends ChangeNotifier {
       if (previewCompleter != null && !previewCompleter.isCompleted) {
         previewCompleter.complete(null);
       }
-      _previewResultCompletersByRequestId.remove(request.requestId);
+      _remoteFilePreviewBoundary.discardPreviewResultCompleter(
+        request.requestId,
+      );
       _log('Failed to respond to transfer request: $error');
       _publishNotice(
         TransferSessionNotice(
@@ -1076,10 +1012,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
       return;
     }
 
-    final previewIntent = _consumePendingRemotePreview(event);
+    final previewIntent = _remoteFilePreviewBoundary
+        .consumePendingRemotePreview(event);
     if (previewIntent != null) {
-      _previewResultCompletersByRequestId[event.requestId] =
-          previewIntent.completer;
+      _remoteFilePreviewBoundary.registerPreviewResultCompleter(
+        requestId: event.requestId,
+        completer: previewIntent.completer,
+      );
       _publishNotice(
         TransferSessionNotice(
           infoMessage: 'Preparing remote preview from ${event.senderName}...',
@@ -2310,62 +2249,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return List<String>.unmodifiable(verified);
   }
 
-  Future<void> _cleanupPreviewCacheBySettings() async {
-    try {
-      final settings = _settingsProvider();
-      await _previewCacheOwner.cleanupPreviewArtifacts(
-        maxSizeGb: settings.previewCacheMaxSizeGb,
-        maxAgeDays: settings.previewCacheMaxAgeDays,
-      );
-    } catch (error) {
-      _log('Failed to cleanup preview cache: $error');
-    }
-  }
-
-  Future<List<_PreparedTransferFile>> _buildCompressedPreviewFilesForCache(
-    SharedFolderCacheRecord cache, {
-    Set<String>? relativePathFilter,
-  }) async {
-    final prepared = await _previewCacheOwner
-        .buildCompressedPreviewFilesForCache(
-          cache,
-          relativePathFilter: relativePathFilter,
-        );
-    return prepared
-        .map(
-          (file) => _PreparedTransferFile(
-            sourcePath: file.sourcePath,
-            announcement: TransferAnnouncementItem(
-              fileName: file.fileName,
-              sizeBytes: file.sizeBytes,
-              sha256: file.sha256,
-            ),
-            deleteAfterTransfer: file.deleteAfterTransfer,
-          ),
-        )
-        .toList(growable: false);
-  }
-
-  Future<List<SharedDownloadPreparedFile>>
-  _buildCompressedPreviewFilesForCacheForBoundary(
-    SharedFolderCacheRecord cache, {
-    Set<String>? relativePathFilter,
-  }) async {
-    final files = await _buildCompressedPreviewFilesForCache(
-      cache,
-      relativePathFilter: relativePathFilter,
-    );
-    return files
-        .map(
-          (file) => SharedDownloadPreparedFile(
-            sourcePath: file.sourcePath,
-            announcement: file.announcement,
-            deleteAfterTransfer: file.deleteAfterTransfer,
-          ),
-        )
-        .toList(growable: false);
-  }
-
   Future<List<_PreparedTransferFile>> _buildTransferFilesForCache(
     SharedFolderCacheRecord cache, {
     Set<String>? relativePathFilter,
@@ -3121,48 +3004,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return Duration(seconds: seconds);
   }
 
-  String _pendingRemotePreviewKey({
-    required String ownerIp,
-    required String cacheId,
-    required String normalizedRelativePath,
-  }) {
-    return '$ownerIp|$cacheId|$normalizedRelativePath';
-  }
-
-  _PendingRemotePreviewIntent? _consumePendingRemotePreview(
-    TransferRequestEvent event,
-  ) {
-    _purgeExpiredPendingRemotePreviews();
-    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
-      event.senderMacAddress,
-    );
-
-    String? matchedKey;
-    for (final entry in _pendingRemotePreviewsByKey.entries) {
-      final pending = entry.value;
-      if (pending.cacheId != event.sharedCacheId) {
-        continue;
-      }
-
-      final ipMatches = pending.ownerIp == event.senderIp;
-      final macMatches =
-          pending.ownerMacAddress != null &&
-          normalizedSenderMac != null &&
-          pending.ownerMacAddress == normalizedSenderMac;
-      if (!ipMatches && !macMatches) {
-        continue;
-      }
-
-      matchedKey = entry.key;
-      break;
-    }
-
-    if (matchedKey == null) {
-      return null;
-    }
-    return _pendingRemotePreviewsByKey.remove(matchedKey);
-  }
-
   Future<List<TransferSourceFile>> _resolveOutgoingSessionFiles(
     _OutgoingTransferSession session,
   ) async {
@@ -3202,18 +3043,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     return hydrated;
   }
 
-  void _purgeExpiredPendingRemotePreviews() {
-    final now = DateTime.now();
-    _pendingRemotePreviewsByKey.removeWhere((_, pending) {
-      final expired =
-          now.difference(pending.createdAt) > pendingRemotePreviewTtl;
-      if (expired && !pending.completer.isCompleted) {
-        pending.completer.complete(null);
-      }
-      return expired;
-    });
-  }
-
   void _publishNotice(TransferSessionNotice notice) {
     _pendingNotice = notice;
     _notify();
@@ -3233,6 +3062,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _remoteFilePreviewBoundary.dispose();
     _sharedDownloadBoundary.removeListener(_notify);
     _sharedDownloadBoundary.dispose();
     for (final session in _activeReceiveSessions.values) {
@@ -3243,18 +3073,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
       unawaited(session.close());
     }
     _activeRemoteShareAccessSessions.clear();
-    for (final pending in _pendingRemotePreviewsByKey.values) {
-      if (!pending.completer.isCompleted) {
-        pending.completer.complete(null);
-      }
-    }
-    _pendingRemotePreviewsByKey.clear();
-    for (final completer in _previewResultCompletersByRequestId.values) {
-      if (!completer.isCompleted) {
-        completer.complete(null);
-      }
-    }
-    _previewResultCompletersByRequestId.clear();
     super.dispose();
   }
 
@@ -3311,24 +3129,6 @@ class _WholeShareDirectStartSendPlan {
   final List<TransferFileManifestItem> manifestItems;
   final List<TransferSourceFile> firstBatchFiles;
   final Future<TransferSourceBatch> Function(int startIndex) resolveBatch;
-}
-
-class _PendingRemotePreviewIntent {
-  _PendingRemotePreviewIntent({
-    required this.ownerIp,
-    required this.ownerMacAddress,
-    required this.cacheId,
-    required this.normalizedRelativePath,
-    required this.createdAt,
-    required this.completer,
-  });
-
-  final String ownerIp;
-  final String? ownerMacAddress;
-  final String cacheId;
-  final String normalizedRelativePath;
-  final DateTime createdAt;
-  final Completer<String?> completer;
 }
 
 class _PendingRemoteShareAccessIntent {
