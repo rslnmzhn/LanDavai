@@ -20,6 +20,7 @@ import '../../nearby_transfer/presentation/nearby_transfer_entry_sheet.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/shared_download_boundary.dart';
+import '../../transfer/application/incoming_transfer_completion_boundary.dart';
 import '../../transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../transfer/application/incoming_transfer_request_boundary.dart';
 import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
@@ -59,6 +60,7 @@ class DiscoveryPage extends StatefulWidget {
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
     required this.remoteFilePreviewTransferBoundary,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
@@ -86,6 +88,7 @@ class DiscoveryPage extends StatefulWidget {
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
@@ -127,6 +130,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
       widget.remoteShareAccessSessionBoundary;
   RemoteFilePreviewTransferBoundary get _remoteFilePreviewTransferBoundary =>
       widget.remoteFilePreviewTransferBoundary;
+  IncomingTransferCompletionBoundary get _incomingTransferCompletionBoundary =>
+      widget.incomingTransferCompletionBoundary;
   TransferCachePreparationBoundary get _transferCachePreparationBoundary =>
       widget.transferCachePreparationBoundary;
   SharedDownloadBoundary get _sharedDownloadBoundary =>
@@ -244,6 +249,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           transferSessionCoordinator: _transferSessionCoordinator,
           incomingTransferRequestBoundary: _incomingTransferRequestBoundary,
           remoteShareAccessSessionBoundary: _remoteShareAccessSessionBoundary,
+          incomingTransferCompletionBoundary:
+              _incomingTransferCompletionBoundary,
           transferCachePreparationBoundary: _transferCachePreparationBoundary,
           sharedDownloadBoundary: _sharedDownloadBoundary,
           onRefresh: _controller.refresh,
@@ -451,6 +458,8 @@ class _DiscoveryPageState extends State<DiscoveryPage>
           transferSessionCoordinator: _transferSessionCoordinator,
           remoteFilePreviewTransferBoundary: _remoteFilePreviewTransferBoundary,
           remoteShareAccessSessionBoundary: _remoteShareAccessSessionBoundary,
+          incomingTransferCompletionBoundary:
+              _incomingTransferCompletionBoundary,
           transferCachePreparationBoundary: _transferCachePreparationBoundary,
           sharedDownloadBoundary: _sharedDownloadBoundary,
           useStandardAppDownloadFolder:

@@ -11,7 +11,6 @@ import '../../discovery/data/lan_discovery_service.dart';
 import '../../discovery/data/lan_packet_codec.dart';
 import '../../discovery/data/lan_protocol_events.dart';
 import '../../history/application/download_history_boundary.dart';
-import '../../history/domain/transfer_history_record.dart';
 import '../../settings/domain/app_settings.dart';
 import '../data/file_hash_service.dart';
 import '../data/file_transfer_service.dart';
@@ -19,6 +18,7 @@ import '../data/shared_download_diagnostic_log_store.dart';
 import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
+import 'incoming_transfer_completion_boundary.dart';
 import 'incoming_transfer_request_boundary.dart';
 import 'incoming_transfer_request_helpers.dart';
 import 'remote_share_access_session_boundary.dart';
@@ -101,7 +101,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
        _fileHashService = fileHashService,
        _fileTransferService = fileTransferService,
        _transferStorageService = transferStorageService,
-       _downloadHistoryBoundary = downloadHistoryBoundary,
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
        _remoteFilePreviewTransferBoundary = remoteFilePreviewTransferBoundary,
@@ -117,6 +116,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
     );
     _transferCachePreparationBoundary = TransferCachePreparationBoundary();
     _transferCachePreparationBoundary.addListener(_notify);
+    _incomingTransferCompletionBoundary = IncomingTransferCompletionBoundary(
+      sharedCacheCatalog: sharedCacheCatalog,
+      fileHashService: fileHashService,
+      transferStorageService: transferStorageService,
+      downloadHistoryBoundary: downloadHistoryBoundary,
+      cachePreparationBoundary: _transferCachePreparationBoundary,
+      remoteFilePreviewTransferBoundary: _remoteFilePreviewTransferBoundary,
+      localDeviceMacProvider: localDeviceMacProvider,
+      publishNotice: _publishNotice,
+      writeDiagnostic: _writeSharedDownloadDiagnostic,
+      progressResetDelay: progressResetDelay,
+    );
+    _incomingTransferCompletionBoundary.addListener(_notify);
     _sharedDownloadBoundary = SharedDownloadBoundary(
       lanDiscoveryService: lanDiscoveryService,
       sharedCacheCatalog: sharedCacheCatalog,
@@ -130,13 +142,19 @@ class TransferSessionCoordinator extends ChangeNotifier {
       isTrustedSender: isTrustedSender,
       resolveRemoteOwnerMac: resolveRemoteOwnerMac,
       publishNotice: _publishNotice,
-      updateDownloadProgress: _updateDownloadProgress,
-      resetDownloadProgress: _resetDownloadProgress,
+      updateDownloadProgress:
+          _incomingTransferCompletionBoundary.updateDownloadProgress,
+      resetDownloadProgress:
+          _incomingTransferCompletionBoundary.resetDownloadProgress,
       fileTransferDiagnosticLogger: _fileTransferDiagnosticLogger,
-      waitForIncomingTransferResult: _waitForIncomingTransferResult,
-      registerActiveReceiveSession: _registerActiveReceiveSession,
-      removeActiveReceiveSession: _removeActiveReceiveSession,
-      activeReceiveSessionForRequest: _activeReceiveSessionForRequest,
+      waitForIncomingTransferResult:
+          _incomingTransferCompletionBoundary.waitForIncomingTransferResult,
+      registerActiveReceiveSession:
+          _incomingTransferCompletionBoundary.registerActiveReceiveSession,
+      removeActiveReceiveSession:
+          _incomingTransferCompletionBoundary.removeActiveReceiveSession,
+      activeReceiveSessionForRequest:
+          _incomingTransferCompletionBoundary.activeReceiveSessionForRequest,
       registerOutgoingTransfer: _registerOutgoingTransfer,
       removeOutgoingTransfer: _removeOutgoingTransfer,
       cleanupTemporaryOutgoingFiles: _cleanupTemporaryOutgoingFiles,
@@ -170,18 +188,24 @@ class TransferSessionCoordinator extends ChangeNotifier {
       localNameProvider: localNameProvider,
       isTrustedSender: isTrustedSender,
       publishNotice: _publishNotice,
-      updateDownloadProgress: _updateDownloadProgress,
-      resetDownloadProgress: _resetDownloadProgress,
-      resetDownloadSpeed: (currentBytes) =>
-          _speedTracker.resetDownload(currentBytes: currentBytes),
-      updateDownloadSpeed: (currentBytes) =>
-          _speedTracker.updateDownload(currentBytes: currentBytes),
-      clearDownloadSpeed: _speedTracker.clearDownload,
+      updateDownloadProgress:
+          _incomingTransferCompletionBoundary.updateDownloadProgress,
+      resetDownloadProgress:
+          _incomingTransferCompletionBoundary.resetDownloadProgress,
+      resetDownloadSpeed:
+          _incomingTransferCompletionBoundary.resetDownloadSpeed,
+      updateDownloadSpeed:
+          _incomingTransferCompletionBoundary.updateDownloadSpeed,
+      clearDownloadSpeed:
+          _incomingTransferCompletionBoundary.clearDownloadSpeed,
       notifyOwner: _notify,
       fileTransferDiagnosticLogger: _fileTransferDiagnosticLogger,
-      waitForIncomingTransferResult: _waitForIncomingTransferResult,
-      registerActiveReceiveSession: _registerActiveReceiveSession,
-      removeActiveReceiveSession: _removeActiveReceiveSession,
+      waitForIncomingTransferResult:
+          _incomingTransferCompletionBoundary.waitForIncomingTransferResult,
+      registerActiveReceiveSession:
+          _incomingTransferCompletionBoundary.registerActiveReceiveSession,
+      removeActiveReceiveSession:
+          _incomingTransferCompletionBoundary.removeActiveReceiveSession,
     );
     _incomingTransferRequestBoundary.addListener(_notify);
     _remoteShareAccessSessionBoundary = RemoteShareAccessSessionBoundary(
@@ -215,12 +239,13 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final FileHashService _fileHashService;
   final FileTransferService _fileTransferService;
   final TransferStorageService _transferStorageService;
-  final DownloadHistoryBoundary _downloadHistoryBoundary;
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
   final RemoteFilePreviewTransferBoundary _remoteFilePreviewTransferBoundary;
   late final TransferCacheSnapshotBuilder _transferCacheSnapshotBuilder;
   late final TransferCachePreparationBoundary _transferCachePreparationBoundary;
+  late final IncomingTransferCompletionBoundary
+  _incomingTransferCompletionBoundary;
   late final SharedDownloadBoundary _sharedDownloadBoundary;
   late final IncomingTransferRequestBoundary _incomingTransferRequestBoundary;
   late final RemoteShareAccessSessionBoundary _remoteShareAccessSessionBoundary;
@@ -236,8 +261,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
 
   final Map<String, _OutgoingTransferSession> _pendingOutgoingTransfers =
       <String, _OutgoingTransferSession>{};
-  final Map<String, TransferReceiveSession> _activeReceiveSessions =
-      <String, TransferReceiveSession>{};
 
   final Duration progressResetDelay;
 
@@ -245,46 +268,31 @@ class TransferSessionCoordinator extends ChangeNotifier {
   final TransferSpeedTracker _speedTracker = TransferSpeedTracker();
   int _uploadSentBytes = 0;
   int _uploadTotalBytes = 0;
-  int _downloadReceivedBytes = 0;
-  int _downloadTotalBytes = 0;
   TransferSessionNotice? _pendingNotice;
   bool _disposed = false;
 
   bool get isSendingTransfer => _isSendingTransfer;
   bool get isUploading =>
       _uploadTotalBytes > 0 && _uploadSentBytes < _uploadTotalBytes;
-  bool get isDownloading =>
-      _downloadTotalBytes > 0 && _downloadReceivedBytes < _downloadTotalBytes;
   double get uploadProgress =>
       _uploadTotalBytes == 0 ? 0 : _uploadSentBytes / _uploadTotalBytes;
-  double get downloadProgress => _downloadTotalBytes == 0
-      ? 0
-      : _downloadReceivedBytes / _downloadTotalBytes;
   int get uploadSentBytes => _uploadSentBytes;
   int get uploadTotalBytes => _uploadTotalBytes;
-  int get downloadReceivedBytes => _downloadReceivedBytes;
-  int get downloadTotalBytes => _downloadTotalBytes;
   double get uploadSpeedBytesPerSecond =>
       _speedTracker.uploadSpeedBytesPerSecond;
-  double get downloadSpeedBytesPerSecond =>
-      _speedTracker.downloadSpeedBytesPerSecond;
   Duration? get uploadEta => _estimateEta(
     totalBytes: _uploadTotalBytes,
     transferredBytes: _uploadSentBytes,
     speedBytesPerSecond: uploadSpeedBytesPerSecond,
     isActive: isUploading,
   );
-  Duration? get downloadEta => _estimateEta(
-    totalBytes: _downloadTotalBytes,
-    transferredBytes: _downloadReceivedBytes,
-    speedBytesPerSecond: downloadSpeedBytesPerSecond,
-    isActive: isDownloading,
-  );
   IncomingTransferRequestBoundary get incomingTransferRequestBoundary =>
       _incomingTransferRequestBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary => _sharedDownloadBoundary;
   TransferCachePreparationBoundary get transferCachePreparationBoundary =>
       _transferCachePreparationBoundary;
+  IncomingTransferCompletionBoundary get incomingTransferCompletionBoundary =>
+      _incomingTransferCompletionBoundary;
   RemoteShareAccessSessionBoundary get remoteShareAccessSessionBoundary =>
       _remoteShareAccessSessionBoundary;
 
@@ -334,39 +342,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
         stackTrace: stackTrace,
       );
     };
-  }
-
-  void _updateDownloadProgress({
-    required String requestId,
-    required int receivedBytes,
-    required int totalBytes,
-  }) {
-    _downloadReceivedBytes = receivedBytes;
-    _downloadTotalBytes = totalBytes;
-    _speedTracker.updateDownload(currentBytes: receivedBytes);
-    _notify();
-  }
-
-  void _resetDownloadProgress({int? totalBytes}) {
-    _downloadReceivedBytes = 0;
-    _downloadTotalBytes = totalBytes ?? 0;
-    _speedTracker.resetDownload(currentBytes: 0);
-    _notify();
-  }
-
-  void _registerActiveReceiveSession(
-    String requestId,
-    TransferReceiveSession session,
-  ) {
-    _activeReceiveSessions[requestId] = session;
-  }
-
-  TransferReceiveSession? _removeActiveReceiveSession(String requestId) {
-    return _activeReceiveSessions.remove(requestId);
-  }
-
-  TransferReceiveSession? _activeReceiveSessionForRequest(String requestId) {
-    return _activeReceiveSessions[requestId];
   }
 
   void _registerOutgoingTransfer({
@@ -1037,248 +1012,6 @@ class TransferSessionCoordinator extends ChangeNotifier {
     }
   }
 
-  Future<void> _waitForIncomingTransferResult({
-    required IncomingTransferRequest request,
-    required TransferReceiveSession session,
-    required List<TransferFileManifestItem> acceptedItems,
-    required bool persistToUserDownloads,
-    required bool recordHistory,
-    required bool sendCompletionNotification,
-    String? destinationRelativeRootPrefix,
-    Completer<String?>? previewCompleter,
-  }) async {
-    try {
-      final result = await session.result;
-      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-      _writeSharedDownloadDiagnostic(
-        stage: 'receiver_result',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'success': result.success,
-          'savedPathCount': result.savedPaths.length,
-          'receivedItemCount': result.receivedItems.length,
-          'message': result.message,
-        },
-      );
-      if (result.success) {
-        var savedPaths = result.savedPaths;
-        savedPaths = await _verifyReceivedSavedPaths(savedPaths);
-        final effectiveItems = acceptedItems.isEmpty
-            ? result.receivedItems
-            : acceptedItems;
-        final recordedRelativePaths = effectiveItems
-            .map(
-              (item) => _pathPolicy.buildReceiveRelativePath(
-                item.fileName,
-                destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-              ),
-            )
-            .toList(growable: false);
-        if (persistToUserDownloads &&
-            _transferStorageService.publishesReceivedDownloadsToUserDownloads) {
-          try {
-            savedPaths = await _transferStorageService.publishToUserDownloads(
-              sourcePaths: result.savedPaths,
-              relativePaths: recordedRelativePaths,
-              appFolderName: 'Landa',
-            );
-            savedPaths = await _verifyReceivedSavedPaths(savedPaths);
-          } catch (error) {
-            throw StateError(
-              'Failed to publish files into user downloads: $error',
-            );
-          }
-        }
-
-        final hasReceiveRootPrefix =
-            destinationRelativeRootPrefix != null &&
-            destinationRelativeRootPrefix.isNotEmpty;
-        final rootPath =
-            persistToUserDownloads &&
-                _transferStorageService
-                    .publishesReceivedDownloadsToUserDownloads
-            ? hasReceiveRootPrefix
-                  ? _pathPolicy.sharedParentPath(savedPaths)
-                  : savedPaths.isEmpty
-                  ? result.destinationDirectory
-                  : File(savedPaths.first).parent.path
-            : hasReceiveRootPrefix
-            ? p.join(result.destinationDirectory, destinationRelativeRootPrefix)
-            : result.destinationDirectory;
-
-        if (previewCompleter == null &&
-            request.sharedCacheId.trim().isNotEmpty &&
-            request.senderMacAddress.trim().isNotEmpty &&
-            result.receivedItems.isNotEmpty) {
-          try {
-            await _sharedCacheCatalog.saveReceiverCache(
-              ownerMacAddress: request.senderMacAddress,
-              receiverMacAddress: _localDeviceMac,
-              remoteFolderIdentity: request.sharedCacheId,
-              remoteDisplayName: request.sharedLabel,
-              entries: result.receivedItems
-                  .map(
-                    (item) => SharedFolderIndexEntry(
-                      relativePath: item.fileName,
-                      sizeBytes: item.sizeBytes,
-                      modifiedAtMs: request.createdAt.millisecondsSinceEpoch,
-                      sha256: item.sha256,
-                    ),
-                  )
-                  .toList(growable: false),
-            );
-          } catch (error) {
-            _log('Failed to persist receiver cache: $error');
-          }
-        }
-
-        if (recordHistory) {
-          try {
-            await _downloadHistoryBoundary.recordDownload(
-              id: _fileHashService.buildStableId(
-                'download-history|${request.requestId}|'
-                '${DateTime.now().microsecondsSinceEpoch}',
-              ),
-              requestId: request.requestId,
-              peerName: request.senderName,
-              peerIp: request.senderIp,
-              rootPath: rootPath,
-              savedPaths: savedPaths,
-              fileCount: savedPaths.length,
-              totalBytes: result.totalBytes,
-              status: TransferHistoryStatus.completed,
-              createdAtMs: DateTime.now().millisecondsSinceEpoch,
-            );
-          } catch (error) {
-            _log('Failed to persist transfer history: $error');
-          }
-        }
-
-        if (sendCompletionNotification) {
-          unawaited(
-            _transferStorageService.showAndroidDownloadCompletedNotification(
-              requestId: request.requestId,
-              savedPaths: savedPaths,
-              directoryPath: rootPath,
-            ),
-          );
-        }
-
-        final hashStatus = result.hashVerified ? ' Hash verified.' : '';
-        if (previewCompleter != null) {
-          final previewPath = savedPaths.isEmpty ? null : savedPaths.first;
-          if (!previewCompleter.isCompleted) {
-            previewCompleter.complete(previewPath);
-          }
-          _publishNotice(
-            TransferSessionNotice(
-              infoMessage: previewPath == null
-                  ? 'Preview received but file is unavailable.'
-                  : 'Preview ready: ${p.basename(previewPath)}.$hashStatus',
-              clearError: true,
-            ),
-          );
-        } else {
-          _publishNotice(
-            TransferSessionNotice(
-              infoMessage:
-                  'Received ${savedPaths.length} file(s) from ${request.senderName}. '
-                  'Saved to $rootPath.$hashStatus',
-              clearError: true,
-            ),
-          );
-        }
-
-        _downloadReceivedBytes = _downloadTotalBytes;
-        _speedTracker.updateDownload(currentBytes: _downloadReceivedBytes);
-      } else {
-        if (previewCompleter != null && !previewCompleter.isCompleted) {
-          previewCompleter.complete(null);
-        }
-        _log('Transfer from ${request.senderName} failed: ${result.message}');
-        _publishNotice(
-          TransferSessionNotice(
-            errorMessage: previewCompleter != null
-                ? 'Preview from ${request.senderName} failed: ${result.message}'
-                : 'Transfer from ${request.senderName} failed: ${result.message}',
-          ),
-        );
-        if (sendCompletionNotification) {
-          unawaited(
-            _transferStorageService.showAndroidDownloadFailedNotification(
-              requestId: request.requestId,
-              message: result.message,
-            ),
-          );
-        }
-      }
-    } catch (error, stackTrace) {
-      if (previewCompleter != null && !previewCompleter.isCompleted) {
-        previewCompleter.complete(null);
-      }
-      _writeSharedDownloadDiagnostic(
-        stage: 'receiver_result_failure',
-        requestId: request.requestId,
-        details: <String, Object?>{
-          'senderIp': request.senderIp,
-          'senderName': request.senderName,
-          'sharedCacheId': request.sharedCacheId,
-        },
-        error: error,
-        stackTrace: stackTrace,
-      );
-      final message = previewCompleter != null
-          ? 'Preview from ${request.senderName} failed: $error'
-          : 'Transfer from ${request.senderName} failed: $error';
-      _log('$message\n$stackTrace');
-      _publishNotice(TransferSessionNotice(errorMessage: message));
-      if (sendCompletionNotification) {
-        unawaited(
-          _transferStorageService.showAndroidDownloadFailedNotification(
-            requestId: request.requestId,
-            message: error.toString(),
-          ),
-        );
-      }
-    } finally {
-      _sharedDownloadBoundary.clearPreparation(requestId: request.requestId);
-      _activeReceiveSessions.remove(request.requestId);
-      Future<void>.delayed(progressResetDelay, () {
-        if (_disposed) {
-          return;
-        }
-        _downloadReceivedBytes = 0;
-        _downloadTotalBytes = 0;
-        _speedTracker.clearDownload();
-        _notify();
-      });
-      _notify();
-    }
-  }
-
-  Future<List<String>> _verifyReceivedSavedPaths(List<String> paths) async {
-    if (paths.isEmpty) {
-      throw StateError('Transfer completed without saved files.');
-    }
-    final verified = <String>[];
-    for (final path in paths) {
-      final trimmed = path.trim();
-      if (trimmed.isEmpty) {
-        throw StateError('Transfer completed with an empty saved file path.');
-      }
-      final file = File(trimmed);
-      if (!await file.exists()) {
-        throw StateError('Received file is missing on disk: $trimmed');
-      }
-      final stat = await file.stat();
-      if (stat.type != FileSystemEntityType.file) {
-        throw StateError('Received path is not a file: $trimmed');
-      }
-      verified.add(trimmed);
-    }
-    return List<String>.unmodifiable(verified);
-  }
-
   Future<void> _persistWholeShareTransferHashBackfill({
     required String requestId,
     required SharedFolderCacheRecord cache,
@@ -1450,12 +1183,10 @@ class TransferSessionCoordinator extends ChangeNotifier {
     _remoteShareAccessSessionBoundary.dispose();
     _transferCachePreparationBoundary.removeListener(_notify);
     _transferCachePreparationBoundary.dispose();
+    _incomingTransferCompletionBoundary.removeListener(_notify);
+    _incomingTransferCompletionBoundary.dispose();
     _sharedDownloadBoundary.removeListener(_notify);
     _sharedDownloadBoundary.dispose();
-    for (final session in _activeReceiveSessions.values) {
-      unawaited(session.close());
-    }
-    _activeReceiveSessions.clear();
     super.dispose();
   }
 

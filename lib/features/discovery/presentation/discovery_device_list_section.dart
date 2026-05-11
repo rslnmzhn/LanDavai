@@ -6,6 +6,7 @@ import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_download_boundary.dart';
+import '../../transfer/application/incoming_transfer_completion_boundary.dart';
 import '../../transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../transfer/application/incoming_transfer_request_boundary.dart';
 import '../../transfer/application/remote_share_access_session_boundary.dart';
@@ -23,6 +24,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.transferSessionCoordinator,
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
@@ -39,6 +41,7 @@ class DiscoveryDeviceListSection extends StatelessWidget {
   final TransferSessionCoordinator transferSessionCoordinator;
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
@@ -103,11 +106,13 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
           ],
           if (transferSessionCoordinator.isUploading ||
-              transferSessionCoordinator.isDownloading ||
+              incomingTransferCompletionBoundary.isDownloading ||
               transferCachePreparationBoundary.isPreparingSharedDownload ||
               transferCachePreparationBoundary.isPreparingSharedUpload) ...[
             _TransferProgressCard(
               transferSessionCoordinator: transferSessionCoordinator,
+              incomingTransferCompletionBoundary:
+                  incomingTransferCompletionBoundary,
               transferCachePreparationBoundary:
                   transferCachePreparationBoundary,
             ),
@@ -265,10 +270,12 @@ class _ErrorBanner extends StatelessWidget {
 class _TransferProgressCard extends StatelessWidget {
   const _TransferProgressCard({
     required this.transferSessionCoordinator,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
   });
 
   final TransferSessionCoordinator transferSessionCoordinator;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
 
   @override
@@ -337,13 +344,14 @@ class _TransferProgressCard extends StatelessWidget {
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (transferSessionCoordinator.isDownloading) ...[
+            if (incomingTransferCompletionBoundary.isDownloading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.download'.tr(
                   namedArgs: <String, String>{
                     'percent':
-                        (transferSessionCoordinator.downloadProgress * 100)
+                        (incomingTransferCompletionBoundary.downloadProgress *
+                                100)
                             .toStringAsFixed(0),
                   },
                 ),
@@ -352,9 +360,9 @@ class _TransferProgressCard extends StatelessWidget {
               const SizedBox(height: AppSpacing.xxs),
               Text(
                 _formatRateAndEta(
-                  speedBytesPerSecond:
-                      transferSessionCoordinator.downloadSpeedBytesPerSecond,
-                  eta: transferSessionCoordinator.downloadEta,
+                  speedBytesPerSecond: incomingTransferCompletionBoundary
+                      .downloadSpeedBytesPerSecond,
+                  eta: incomingTransferCompletionBoundary.downloadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -362,13 +370,13 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: transferSessionCoordinator.downloadProgress,
+                value: incomingTransferCompletionBoundary.downloadProgress,
                 minHeight: 6,
                 color: AppColors.success,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (!transferSessionCoordinator.isDownloading &&
+            if (!incomingTransferCompletionBoundary.isDownloading &&
                 transferCachePreparationBoundary.isPreparingSharedDownload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(

@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -20,18 +19,6 @@ typedef IncomingTransferDiagnosticLoggerFactory =
     TransferRuntimeDiagnosticCallback Function({
       required String requestId,
       required Map<String, Object?> baseDetails,
-    });
-
-typedef IncomingTransferResultWaiter =
-    Future<void> Function({
-      required IncomingTransferRequest request,
-      required TransferReceiveSession session,
-      required List<TransferFileManifestItem> acceptedItems,
-      required bool persistToUserDownloads,
-      required bool recordHistory,
-      required bool sendCompletionNotification,
-      String? destinationRelativeRootPrefix,
-      Completer<String?>? previewCompleter,
     });
 
 IncomingTransferRequest mapIncomingTransferRequestEvent(

@@ -70,6 +70,8 @@ class _DiscoveryPageEntryState extends State<DiscoveryPageEntry> {
           pageDependencies.remoteShareAccessSessionBoundary,
       remoteFilePreviewTransferBoundary:
           pageDependencies.remoteFilePreviewTransferBoundary,
+      incomingTransferCompletionBoundary:
+          pageDependencies.incomingTransferCompletionBoundary,
       transferCachePreparationBoundary:
           pageDependencies.transferCachePreparationBoundary,
       sharedDownloadBoundary: pageDependencies.sharedDownloadBoundary,

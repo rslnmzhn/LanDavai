@@ -59,6 +59,7 @@ import '../../features/share_target/application/share_receive_boundary.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/shared_download_boundary.dart';
+import '../../features/transfer/application/incoming_transfer_completion_boundary.dart';
 import '../../features/transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../features/transfer/application/incoming_transfer_request_boundary.dart';
 import '../../features/transfer/application/remote_file_preview_transfer_boundary.dart';
@@ -88,6 +89,7 @@ class DiscoveryPageDependencies {
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
     required this.remoteFilePreviewTransferBoundary,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
@@ -113,6 +115,7 @@ class DiscoveryPageDependencies {
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
@@ -443,6 +446,8 @@ class DiscoveryCompositionFactory {
       remoteShareAccessSessionBoundary:
           transferSessionCoordinator.remoteShareAccessSessionBoundary,
       remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
+      incomingTransferCompletionBoundary:
+          transferSessionCoordinator.incomingTransferCompletionBoundary,
       transferCachePreparationBoundary:
           transferSessionCoordinator.transferCachePreparationBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,

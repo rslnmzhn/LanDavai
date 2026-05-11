@@ -37,6 +37,8 @@ Future<void> pumpRemoteBrowser(
             coordinator.remoteFilePreviewTransferBoundaryForTests,
         remoteShareAccessSessionBoundary:
             coordinator.remoteShareAccessSessionBoundary,
+        incomingTransferCompletionBoundary:
+            coordinator.incomingTransferCompletionBoundary,
         transferCachePreparationBoundary:
             coordinator.transferCachePreparationBoundary,
         sharedDownloadBoundary: coordinator.sharedDownloadBoundary,

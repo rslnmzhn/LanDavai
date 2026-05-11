@@ -17,6 +17,7 @@ import '../../files/presentation/file_explorer/local_file_viewer.dart';
 import '../../transfer/application/remote_share_access_session_boundary.dart';
 import '../../transfer/application/remote_share_access_session_models.dart';
 import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
+import '../../transfer/application/incoming_transfer_completion_boundary.dart';
 import '../../transfer/application/shared_download_boundary.dart';
 import '../../transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
@@ -31,6 +32,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
     required this.transferSessionCoordinator,
     required this.remoteFilePreviewTransferBoundary,
     required this.remoteShareAccessSessionBoundary,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
     SharedDownloadBoundary? sharedDownloadBoundary,
     required this.useStandardAppDownloadFolder,
@@ -43,6 +45,7 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
   final TransferSessionCoordinator transferSessionCoordinator;
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   SharedDownloadBoundary get sharedDownloadBoundary =>
       _sharedDownloadBoundary ??
@@ -367,7 +370,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                 if (widget
                         .transferCachePreparationBoundary
                         .isPreparingSharedDownload ||
-                    widget.transferSessionCoordinator.isDownloading)
+                    widget.incomingTransferCompletionBoundary.isDownloading)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(
                       AppSpacing.md,
@@ -376,7 +379,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       0,
                     ),
                     child: _SharedDownloadStatusCard(
-                      coordinator: widget.transferSessionCoordinator,
+                      incomingTransferCompletionBoundary:
+                          widget.incomingTransferCompletionBoundary,
                       transferCachePreparationBoundary:
                           widget.transferCachePreparationBoundary,
                     ),
@@ -988,18 +992,18 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
 
 class _SharedDownloadStatusCard extends StatelessWidget {
   const _SharedDownloadStatusCard({
-    required this.coordinator,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
   });
 
-  final TransferSessionCoordinator coordinator;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
 
   @override
   Widget build(BuildContext context) {
     final preparation =
         transferCachePreparationBoundary.sharedDownloadPreparationState;
-    final isDownloading = coordinator.isDownloading;
+    final isDownloading = incomingTransferCompletionBoundary.isDownloading;
     final title = isDownloading
         ? 'remote_download.status_downloading'.tr()
         : 'remote_download.status_preparing'.tr();
@@ -1045,16 +1049,19 @@ class _SharedDownloadStatusCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           if (isDownloading) ...[
             LinearProgressIndicator(
-              value: coordinator.downloadProgress.clamp(0, 1),
+              value: incomingTransferCompletionBoundary.downloadProgress.clamp(
+                0,
+                1,
+              ),
               minHeight: 6,
               color: AppColors.success,
               backgroundColor: AppColors.mutedBorder,
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              '${(coordinator.downloadProgress * 100).toStringAsFixed(0)}% • '
-              '${_formatBytes(coordinator.downloadReceivedBytes)} / '
-              '${_formatBytes(coordinator.downloadTotalBytes)}',
+              '${(incomingTransferCompletionBoundary.downloadProgress * 100).toStringAsFixed(0)}% • '
+              '${_formatBytes(incomingTransferCompletionBoundary.downloadReceivedBytes)} / '
+              '${_formatBytes(incomingTransferCompletionBoundary.downloadTotalBytes)}',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),

@@ -423,6 +423,70 @@ void main() {
       },
     );
 
+    test('keeps incoming transfer completion on boundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/incoming_transfer_completion_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class IncomingTransferCompletionBoundary extends ChangeNotifier',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must own incoming receive completion state as a ChangeNotifier boundary.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required DownloadHistoryBoundary downloadHistoryBoundary',
+        ),
+        isTrue,
+        reason:
+            'DownloadHistoryBoundary must be injected into the incoming completion boundary, not duplicated or absorbed.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferCachePreparationBoundary cachePreparationBoundary',
+        ),
+        isTrue,
+        reason:
+            'Incoming completion must consume the existing cache-preparation boundary instead of duplicating preparation state.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must expose incoming completion progress/state directly to presentation.',
+      );
+
+      for (final symbol in <String>[
+        '_incomingCompletion',
+        '_receivedFiles',
+        '_activeReceiveSessions',
+        '_downloadReceivedBytes',
+        '_downloadTotalBytes',
+        '_waitForIncomingTransferResult(',
+        '_verifyReceivedSavedPaths(',
+        '_downloadHistoryBoundary',
+        'recordDownload(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not retain incoming completion residue "$symbol".',
+        );
+      }
+    });
+
     test(
       'keeps shared-download queue and preparation state on SharedDownloadBoundary',
       () {

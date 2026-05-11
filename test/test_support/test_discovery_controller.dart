@@ -49,6 +49,7 @@ import 'package:landa/features/share_target/application/share_receive_boundary.d
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
 import 'package:landa/features/transfer/application/shared_download_boundary.dart';
+import 'package:landa/features/transfer/application/incoming_transfer_completion_boundary.dart';
 import 'package:landa/features/transfer/application/transfer_cache_preparation_boundary.dart';
 import 'package:landa/features/transfer/application/incoming_transfer_request_boundary.dart';
 import 'package:landa/features/transfer/application/remote_file_preview_transfer_boundary.dart';
@@ -81,6 +82,7 @@ class TestDiscoveryControllerHarness {
     required this.incomingTransferRequestBoundary,
     required this.remoteShareAccessSessionBoundary,
     required this.remoteFilePreviewTransferBoundary,
+    required this.incomingTransferCompletionBoundary,
     required this.transferCachePreparationBoundary,
     required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
@@ -107,6 +109,7 @@ class TestDiscoveryControllerHarness {
   final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
   final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
   final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
   final TransferCachePreparationBoundary transferCachePreparationBoundary;
   final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
@@ -136,6 +139,7 @@ class TestDiscoveryControllerHarness {
         incomingTransferRequestBoundary: incomingTransferRequestBoundary,
         remoteShareAccessSessionBoundary: remoteShareAccessSessionBoundary,
         remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
+        incomingTransferCompletionBoundary: incomingTransferCompletionBoundary,
         transferCachePreparationBoundary: transferCachePreparationBoundary,
         sharedDownloadBoundary: sharedDownloadBoundary,
         downloadHistoryBoundary: downloadHistoryBoundary,
@@ -409,6 +413,8 @@ class TestDiscoveryControllerHarness {
       remoteShareAccessSessionBoundary:
           transferSessionCoordinator.remoteShareAccessSessionBoundary,
       remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
+      incomingTransferCompletionBoundary:
+          transferSessionCoordinator.incomingTransferCompletionBoundary,
       transferCachePreparationBoundary:
           transferSessionCoordinator.transferCachePreparationBoundary,
       sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,

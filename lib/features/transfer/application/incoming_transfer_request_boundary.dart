@@ -11,6 +11,7 @@ import '../../discovery/data/lan_protocol_events.dart';
 import '../data/file_transfer_service.dart';
 import '../data/transfer_storage_service.dart';
 import '../domain/transfer_request.dart';
+import 'incoming_transfer_completion_models.dart';
 import 'incoming_transfer_request_helpers.dart';
 import 'remote_file_preview_transfer_boundary.dart';
 import 'shared_download_boundary.dart';
