@@ -29,6 +29,7 @@ import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
 import '../../transfer/application/shared_cache_owner_contracts.dart';
+import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/file_hash_service.dart';
 import '../../transfer/data/file_transfer_service.dart';
@@ -217,7 +218,6 @@ class DiscoveryController extends ChangeNotifier {
           fileTransferService: fileTransferService,
           transferStorageService: transferStorageService,
           downloadHistoryBoundary: _downloadHistoryBoundary,
-          previewCacheOwner: previewCacheOwner,
           appNotificationService: appNotificationService,
           settingsProvider: () => _settingsStore.settings,
           localNameProvider: () => _localName,
@@ -227,6 +227,20 @@ class DiscoveryController extends ChangeNotifier {
           resolveRemoteOwnerMac:
               ({required String ownerIp, required String cacheId}) =>
                   _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
+          remoteFilePreviewTransferBoundary: RemoteFilePreviewTransferBoundary(
+            lanDiscoveryService: lanDiscoveryService,
+            fileHashService: fileHashService,
+            previewCacheOwner: previewCacheOwner,
+            settingsProvider: () => _settingsStore.settings,
+            localNameProvider: () => _localName,
+            localDeviceMacProvider: () => _localDeviceMac,
+            resolveRemoteOwnerMac:
+                ({required String ownerIp, required String cacheId}) =>
+                    _resolveRemoteOwnerMac(ownerIp: ownerIp, cacheId: cacheId),
+            publishNotice: (notice) {
+              _transferSessionCoordinator.publishBoundaryNotice(notice);
+            },
+          ),
         );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
     _configuredDiscoveryTargetsStore.addListener(
@@ -1194,11 +1208,12 @@ class DiscoveryController extends ChangeNotifier {
       if (selectedPaths.isEmpty) {
         return;
       }
-      await _transferSessionCoordinator.sendFilesToDevice(
-        targetIp: target.ip,
-        targetName: target.displayName,
-        selectedPaths: selectedPaths,
-      );
+      await _transferSessionCoordinator.outgoingTransferSendBoundary
+          .sendFilesToDevice(
+            targetIp: target.ip,
+            targetName: target.displayName,
+            selectedPaths: selectedPaths,
+          );
     } catch (error) {
       _errorMessage = 'Failed to send transfer request: $error';
       _log(_errorMessage!);
@@ -1453,7 +1468,8 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onTransferRequest(TransferRequestEvent event) {
-    _transferSessionCoordinator.handleTransferRequestEvent(event);
+    _transferSessionCoordinator.incomingTransferRequestBoundary
+        .handleTransferRequestEvent(event);
   }
 
   void _onFriendRequest(FriendRequestEvent event) {
@@ -1638,7 +1654,8 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onTransferDecision(TransferDecisionEvent event) {
-    _transferSessionCoordinator.handleTransferDecisionEvent(event);
+    _transferSessionCoordinator.outgoingTransferSendBoundary
+        .handleTransferDecisionEvent(event);
   }
 
   Future<void> openHistoryPath(String path) async {
@@ -1833,11 +1850,13 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onShareAccessRequest(ShareAccessRequestEvent event) {
-    _transferSessionCoordinator.handleShareAccessRequestEvent(event);
+    _transferSessionCoordinator.remoteShareAccessSessionBoundary
+        .handleRequestEvent(event);
   }
 
   void _onShareAccessResponse(ShareAccessResponseEvent event) {
-    _transferSessionCoordinator.handleShareAccessResponseEvent(event);
+    _transferSessionCoordinator.remoteShareAccessSessionBoundary
+        .handleResponseEvent(event);
   }
 
   Future<void> _handleShareQuery(ShareQueryEvent event) async {
@@ -2027,11 +2046,13 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onDownloadRequest(DownloadRequestEvent event) {
-    _transferSessionCoordinator.handleDownloadRequestEvent(event);
+    _transferSessionCoordinator.sharedDownloadBoundary
+        .handleDownloadRequestEvent(event);
   }
 
   void _onDownloadResponse(DownloadResponseEvent event) {
-    _transferSessionCoordinator.handleDownloadResponseEvent(event);
+    _transferSessionCoordinator.sharedDownloadBoundary
+        .handleDownloadResponseEvent(event);
   }
 
   void _handleNetworkScopeChanged() {

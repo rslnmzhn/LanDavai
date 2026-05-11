@@ -298,6 +298,421 @@ void main() {
         );
       },
     );
+
+    test('keeps transfer path policy outside TransferSessionCoordinator', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const policyPath =
+          'lib/features/transfer/application/transfer_path_policy.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(policyPath, 'class TransferPathPolicy'),
+        isTrue,
+        reason:
+            '$policyPath must remain the explicit boundary for transfer path normalization and receive-path derivation.',
+      );
+
+      for (final symbol in <String>[
+        '_sanitizeTransferRelativePath(',
+        '_sanitizeTransferRelativePathPart(',
+        '_buildReceiveRelativePath(',
+        '_resolveReceiveRootPrefix(',
+        '_sharedParentPath(',
+        '_normalizeTransferPathForMatch(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not re-own transfer path policy method "$symbol".',
+        );
+      }
+    });
+
+    test('keeps remote file preview transfer on RemoteFilePreviewTransferBoundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/remote_file_preview_transfer_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class RemoteFilePreviewTransferBoundary',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must remain the explicit owner for remote file preview request/session state.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(boundaryPath, 'extends ChangeNotifier'),
+        isFalse,
+        reason:
+            '$boundaryPath is a command/session boundary and must not become UI state.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must wire remote file preview transfer as an explicit boundary.',
+      );
+
+      for (final symbol in <String>[
+        '_pendingRemotePreviewsByKey',
+        '_previewResultCompletersByRequestId',
+        '_PendingRemotePreviewIntent',
+        'consumePendingRemotePreview(',
+        'purgeExpiredPendingRemotePreviews(',
+        'cleanupPreviewCacheBySettings(',
+        'buildCompressedPreviewFilesForCache(',
+        'requestRemoteFilePreview(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not re-own remote file preview seam "$symbol".',
+        );
+      }
+    });
+
+    test(
+      'keeps incoming transfer request queue on IncomingTransferRequestBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/incoming_transfer_request_boundary.dart';
+        const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class IncomingTransferRequestBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the explicit ChangeNotifier owner for incoming transfer request queue truth.',
+        );
+        expect(
+          sourceTree.fileContainsLiteral(
+            compositionPath,
+            'IncomingTransferRequestBoundary incomingTransferRequestBoundary;',
+          ),
+          isTrue,
+          reason:
+              '$compositionPath must expose the incoming transfer request boundary directly to presentation.',
+        );
+
+        for (final symbol in <String>[
+          'final List<IncomingTransferRequest>',
+          'List<IncomingTransferRequest> get incomingRequests',
+          '_incomingTransferRequests',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not own incoming transfer request queue residue "$symbol".',
+          );
+        }
+      },
+    );
+
+    test('keeps incoming transfer completion on boundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/incoming_transfer_completion_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class IncomingTransferCompletionBoundary extends ChangeNotifier',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must own incoming receive completion state as a ChangeNotifier boundary.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required DownloadHistoryBoundary downloadHistoryBoundary',
+        ),
+        isTrue,
+        reason:
+            'DownloadHistoryBoundary must be injected into the incoming completion boundary, not duplicated or absorbed.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferCachePreparationBoundary cachePreparationBoundary',
+        ),
+        isTrue,
+        reason:
+            'Incoming completion must consume the existing cache-preparation boundary instead of duplicating preparation state.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must expose incoming completion progress/state directly to presentation.',
+      );
+
+      for (final symbol in <String>[
+        '_incomingCompletion',
+        '_receivedFiles',
+        '_activeReceiveSessions',
+        '_downloadReceivedBytes',
+        '_downloadTotalBytes',
+        '_waitForIncomingTransferResult(',
+        '_verifyReceivedSavedPaths(',
+        '_downloadHistoryBoundary',
+        'recordDownload(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not retain incoming completion residue "$symbol".',
+        );
+      }
+    });
+
+    test(
+      'keeps shared-download queue and preparation state on SharedDownloadBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/shared_download_boundary.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class SharedDownloadBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the canonical ChangeNotifier owner for shared-download request/preparation truth.',
+        );
+
+        for (final symbol in <String>[
+          'final List<IncomingSharedDownloadRequest>',
+          'List<IncomingSharedDownloadRequest> get incomingSharedDownloadRequests',
+          '_incomingSharedDownloadRequests',
+          'SharedDownloadPreparationState? _sharedDownloadPreparationState',
+          'SharedUploadPreparationState? _sharedUploadPreparationState',
+          '_preparedTransferFilesByScopeKey',
+          '_preparedTransferScopeCacheHits',
+          'preparedTransferScopeCacheEntryCount',
+          'preparedTransferScopeCacheHits',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not retain duplicate shared-download queue/preparation state "$symbol".',
+          );
+        }
+      },
+    );
+
+    test('keeps transfer cache preparation on TransferCachePreparationBoundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/transfer_cache_preparation_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class TransferCachePreparationBoundary extends ChangeNotifier',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must remain the explicit ChangeNotifier owner for transfer cache preparation truth.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'TransferCachePreparationBoundary transferCachePreparationBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must expose transfer cache preparation progress directly to presentation.',
+      );
+
+      for (final symbol in <String>[
+        '_cachePreparation',
+        '_preparedCache',
+        '_downloadPreparationState',
+        '_uploadPreparationState',
+        '_buildTransferFilesForCache',
+        '_buildWholeShareDirectStartSendPlan',
+        '_prepareWholeShareDirectStartContinuationBatch',
+        '_resolveWholeShareDirectStartSourceFile',
+        '_resolveCacheFilePath',
+        '_TransferHashPreparationMode',
+        '_PreparedTransferFile',
+        '_WholeShareDirectStartSendPlan',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not retain transfer cache preparation residue "$symbol".',
+        );
+      }
+    });
+
+    test('keeps outgoing transfer send on OutgoingTransferSendBoundary', () {
+      const coordinatorPath =
+          'lib/features/transfer/application/transfer_session_coordinator.dart';
+      const boundaryPath =
+          'lib/features/transfer/application/outgoing_transfer_send_boundary.dart';
+      const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'class OutgoingTransferSendBoundary extends ChangeNotifier',
+        ),
+        isTrue,
+        reason:
+            '$boundaryPath must own outgoing transfer send state as a ChangeNotifier boundary.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferCachePreparationBoundary cachePreparationBoundary',
+        ),
+        isTrue,
+        reason:
+            'Outgoing send must consume the existing cache-preparation boundary instead of duplicating preparation truth.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          boundaryPath,
+          'required TransferSpeedTracker speedTracker',
+        ),
+        isTrue,
+        reason:
+            'Outgoing send must inject TransferSpeedTracker instead of duplicating speed tracking implementation.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(
+          compositionPath,
+          'OutgoingTransferSendBoundary outgoingTransferSendBoundary;',
+        ),
+        isTrue,
+        reason:
+            '$compositionPath must expose outgoing send progress directly to presentation.',
+      );
+
+      for (final symbol in <String>[
+        '_pendingOutgoingTransfers',
+        '_activeOutgoing',
+        '_outgoingSend',
+        '_sendProgress',
+        '_isSendingTransfer',
+        '_uploadSentBytes',
+        '_uploadTotalBytes',
+        'bool get isSendingTransfer',
+        'bool get isUploading',
+        'double get uploadProgress',
+        'int get uploadSentBytes',
+        'int get uploadTotalBytes',
+        'double get uploadSpeedBytesPerSecond',
+        'Duration? get uploadEta',
+        'sendFilesToDevice(',
+        '_sendApprovedTransfer(',
+        '_sendDirectSharedDownload(',
+        '_buildUploadProgressEmitter(',
+        '_cleanupTemporaryOutgoingFiles(',
+        '_hydrateTransferSourceFilesWithHashes(',
+        '_persistWholeShareTransferHashBackfill(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+          isFalse,
+          reason:
+              '$coordinatorPath must not retain outgoing send residue "$symbol".',
+        );
+      }
+
+      final measuredCoordinatorLines = sourceTree.readLineCount(
+        coordinatorPath,
+      );
+      expect(
+        measuredCoordinatorLines,
+        lessThan(400),
+        reason:
+            '$coordinatorPath must stay under 400 lines after outgoing send extraction.',
+      );
+    });
+
+    test(
+      'keeps remote-share access session state on RemoteShareAccessSessionBoundary',
+      () {
+        const coordinatorPath =
+            'lib/features/transfer/application/transfer_session_coordinator.dart';
+        const boundaryPath =
+            'lib/features/transfer/application/remote_share_access_session_boundary.dart';
+        const compositionPath = 'lib/app/discovery/discovery_composition.dart';
+
+        expect(
+          sourceTree.fileContainsLiteral(
+            boundaryPath,
+            'class RemoteShareAccessSessionBoundary extends ChangeNotifier',
+          ),
+          isTrue,
+          reason:
+              '$boundaryPath must remain the explicit ChangeNotifier owner for remote-share access session truth.',
+        );
+        expect(
+          sourceTree.fileContainsLiteral(
+            compositionPath,
+            'RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;',
+          ),
+          isTrue,
+          reason:
+              '$compositionPath must expose the remote-share access session boundary directly to presentation.',
+        );
+
+        for (final symbol in <String>[
+          '_incomingRemoteShareAccessRequests',
+          '_activeRemoteShareAccessSessions',
+          '_pendingRemoteShareAccessByRequestId',
+          '_remoteShareAccessState',
+          'incomingRemoteShareAccessRequests',
+          'remoteShareAccessState',
+          'clearRemoteShareAccessState',
+          'requestRemoteShareAccess',
+          'respondToIncomingRemoteShareAccessRequest',
+          'handleShareAccessResponseEvent',
+          'handleShareAccessRequestEvent',
+          '_waitForRemoteShareAccessSnapshot',
+          '_PendingRemoteShareAccessIntent',
+        ]) {
+          expect(
+            sourceTree.fileContainsLiteral(coordinatorPath, symbol),
+            isFalse,
+            reason:
+                '$coordinatorPath must not retain remote-share access session residue "$symbol".',
+          );
+        }
+      },
+    );
   });
 }
 
@@ -367,6 +782,14 @@ class _SourceTree {
 
   bool fileContainsRegex(String relativePath, RegExp pattern) {
     return pattern.hasMatch(_readFile(relativePath));
+  }
+
+  int readLineCount(String relativePath) {
+    final text = _readFile(relativePath);
+    if (text.isEmpty) {
+      return 0;
+    }
+    return text.split('\n').length;
   }
 
   String describeMatches({

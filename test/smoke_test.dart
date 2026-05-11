@@ -123,6 +123,18 @@ Future<void> _pumpDiscoveryPage(
         sharedCacheIndexStore: harness.sharedCacheIndexStore,
         previewCacheOwner: harness.previewCacheOwner,
         transferSessionCoordinator: harness.transferSessionCoordinator,
+        incomingTransferRequestBoundary:
+            harness.incomingTransferRequestBoundary,
+        remoteShareAccessSessionBoundary:
+            harness.remoteShareAccessSessionBoundary,
+        remoteFilePreviewTransferBoundary:
+            harness.remoteFilePreviewTransferBoundary,
+        incomingTransferCompletionBoundary:
+            harness.incomingTransferCompletionBoundary,
+        transferCachePreparationBoundary:
+            harness.transferCachePreparationBoundary,
+        outgoingTransferSendBoundary: harness.outgoingTransferSendBoundary,
+        sharedDownloadBoundary: harness.sharedDownloadBoundary,
         downloadHistoryBoundary: harness.downloadHistoryBoundary,
         clipboardHistoryStore: harness.clipboardHistoryStore,
         remoteClipboardProjectionStore: harness.remoteClipboardProjectionStore,

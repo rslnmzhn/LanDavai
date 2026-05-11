@@ -31,6 +31,9 @@ import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
+import 'package:landa/features/transfer/application/shared_download_boundary.dart';
+import 'package:landa/features/transfer/application/remote_file_preview_transfer_boundary.dart';
+import 'package:landa/features/transfer/application/remote_share_access_session_models.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -132,7 +135,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-1',
             requesterIp: '192.168.1.40',
@@ -146,12 +149,16 @@ void main() {
           ),
         );
 
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
+        );
         unawaited(
-          coordinator.respondToIncomingSharedDownloadRequest(
-            requestId: 'download-request-1',
-            approved: true,
-          ),
+          coordinator.sharedDownloadBoundary
+              .respondToIncomingSharedDownloadRequest(
+                requestId: 'download-request-1',
+                approved: true,
+              ),
         );
 
         for (var i = 0; i < 40; i += 1) {
@@ -203,7 +210,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-2',
             requesterIp: '192.168.1.40',
@@ -216,12 +223,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
+        );
         unawaited(
-          coordinator.respondToIncomingSharedDownloadRequest(
-            requestId: 'download-request-2',
-            approved: true,
-          ),
+          coordinator.sharedDownloadBoundary
+              .respondToIncomingSharedDownloadRequest(
+                requestId: 'download-request-2',
+                approved: true,
+              ),
         );
         for (var i = 0; i < 40; i += 1) {
           if (lanDiscoveryService.transferRequests.isNotEmpty) {
@@ -231,7 +242,7 @@ void main() {
         }
         expect(lanDiscoveryService.transferRequests, hasLength(1));
 
-        coordinator.handleTransferDecisionEvent(
+        coordinator.outgoingTransferSendBoundary.handleTransferDecisionEvent(
           TransferDecisionEvent(
             requestId: lanDiscoveryService.transferRequests.single.requestId,
             approved: true,
@@ -285,7 +296,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-download-1',
             requesterIp: '192.168.1.40',
@@ -299,12 +310,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
+        );
         unawaited(
-          coordinator.respondToIncomingSharedDownloadRequest(
-            requestId: 'direct-download-1',
-            approved: true,
-          ),
+          coordinator.sharedDownloadBoundary
+              .respondToIncomingSharedDownloadRequest(
+                requestId: 'direct-download-1',
+                approved: true,
+              ),
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
@@ -370,7 +385,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-large-folder-1',
             requesterIp: '192.168.1.40',
@@ -384,12 +399,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-large-folder-1',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-large-folder-1',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(fileTransferService.sendFilesCalls, 1);
@@ -444,7 +463,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-1',
             requesterIp: '192.168.1.40',
@@ -458,12 +477,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-1',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-1',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(fileTransferService.sendFilesCalls, 1);
@@ -531,7 +554,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-no-hash-barrier',
             requesterIp: '192.168.1.40',
@@ -546,10 +569,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-no-hash-barrier',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-no-hash-barrier',
+              approved: true,
+            );
         for (var index = 0; index < 200; index += 1) {
           if (fileTransferService.resolvedBatches.length == 2) {
             break;
@@ -627,7 +651,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-cached-hash-reuse',
             requesterIp: '192.168.1.40',
@@ -642,10 +666,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-cached-hash-reuse',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-cached-hash-reuse',
+              approved: true,
+            );
         for (var index = 0; index < 200; index += 1) {
           if (fileTransferService.resolvedBatches.length == 2) {
             break;
@@ -711,7 +736,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-first-batch',
             requesterIp: '192.168.1.40',
@@ -726,10 +751,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-first-batch',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-first-batch',
+              approved: true,
+            );
         for (var index = 0; index < 200; index += 1) {
           if (fileTransferService.resolvedBatches.length == 2) {
             break;
@@ -791,7 +817,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-batch-continuation',
             requesterIp: '192.168.1.40',
@@ -806,10 +832,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-batch-continuation',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-batch-continuation',
+              approved: true,
+            );
         for (var index = 0; index < 200; index += 1) {
           if (fileTransferService.resolvedBatches.length == 2) {
             break;
@@ -886,7 +913,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-logs',
             requesterIp: '192.168.1.40',
@@ -901,10 +928,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-logs',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-logs',
+              approved: true,
+            );
         for (var index = 0; index < 20; index += 1) {
           if (fileTransferService.sendFilesCalls > 0) {
             break;
@@ -915,7 +943,9 @@ void main() {
         var logContents = '';
         for (var index = 0; index < 20; index += 1) {
           final logFile = await diagnosticStore.resolveLogFile();
-          logContents = logFile == null ? '' : await logFile.readAsString();
+          logContents = logFile == null || !await logFile.exists()
+              ? ''
+              : await logFile.readAsString();
           if (logContents.contains(
             '"stage":"sender_whole_share_session_complete"',
           )) {
@@ -1038,7 +1068,7 @@ void main() {
           notifyCount += 1;
         });
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-progress-throttled',
             requesterIp: '192.168.1.40',
@@ -1053,10 +1083,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-progress-throttled',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-progress-throttled',
+              approved: true,
+            );
 
         for (var index = 0; index < 200; index += 1) {
           if (fileTransferService.completed) {
@@ -1069,8 +1100,14 @@ void main() {
         expect(fileTransferService.progressEventCount, 120);
         expect(fileTransferService.sawResolveBatch, isTrue);
         expect(fileTransferService.completed, isTrue);
-        expect(coordinator.uploadSentBytes, coordinator.uploadTotalBytes);
-        expect(coordinator.uploadTotalBytes, greaterThan(0));
+        expect(
+          coordinator.outgoingTransferSendBoundary.uploadSentBytes,
+          coordinator.outgoingTransferSendBoundary.uploadTotalBytes,
+        );
+        expect(
+          coordinator.outgoingTransferSendBoundary.uploadTotalBytes,
+          greaterThan(0),
+        );
         expect(notifyCount, lessThan(60));
 
         var entries = const <Map<String, Object?>>[];
@@ -1164,7 +1201,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-backfill-run-1',
             requesterIp: '192.168.1.40',
@@ -1178,10 +1215,11 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-backfill-run-1',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-backfill-run-1',
+              approved: true,
+            );
 
         for (var index = 0; index < 100; index += 1) {
           final entries = await sharedCacheIndexStore.readIndexEntries(cache);
@@ -1204,7 +1242,7 @@ void main() {
           isTrue,
         );
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'direct-whole-share-backfill-run-2',
             requesterIp: '192.168.1.40',
@@ -1218,10 +1256,11 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'direct-whole-share-backfill-run-2',
-          approved: true,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'direct-whole-share-backfill-run-2',
+              approved: true,
+            );
 
         var entries = const <Map<String, Object?>>[];
         for (var index = 0; index < 100; index += 1) {
@@ -1285,7 +1324,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'sender-approval-1',
             requesterIp: '192.168.1.55',
@@ -1301,8 +1340,14 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        final request = coordinator.incomingSharedDownloadRequests.single;
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
+        );
+        final request = coordinator
+            .sharedDownloadBoundary
+            .incomingSharedDownloadRequests
+            .single;
         expect(request.requesterName, 'Remote peer');
         expect(request.sharedLabel, 'Shared docs');
         expect(request.selectedRelativePaths, <String>['a.txt']);
@@ -1345,7 +1390,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'sender-friend-auto-download-1',
             requesterIp: '192.168.1.55',
@@ -1361,7 +1406,10 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 40));
 
-        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.downloadResponses, isEmpty);
         expect(lanDiscoveryService.transferRequests, isEmpty);
         expect(fileTransferService.sendFilesCalls, 1);
@@ -1395,7 +1443,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'sender-reject-1',
             requesterIp: '192.168.1.55',
@@ -1409,12 +1457,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'sender-reject-1',
-          approved: false,
-        );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'sender-reject-1',
+              approved: false,
+            );
 
-        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.downloadResponses, hasLength(1));
         expect(lanDiscoveryService.downloadResponses.single.approved, isFalse);
         expect(lanDiscoveryService.transferRequests, isEmpty);
@@ -1449,7 +1501,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'sender-approve-1',
             requesterIp: '192.168.1.55',
@@ -1463,7 +1515,7 @@ void main() {
           ),
         );
 
-        final approveFuture = coordinator
+        final approveFuture = coordinator.sharedDownloadBoundary
             .respondToIncomingSharedDownloadRequest(
               requestId: 'sender-approve-1',
               approved: true,
@@ -1471,7 +1523,10 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(
-          coordinator.sharedUploadPreparationState?.stage,
+          coordinator
+              .transferCachePreparationBoundary
+              .sharedUploadPreparationState
+              ?.stage,
           SharedUploadPreparationStage.resolvingSelection,
         );
         expect(lanDiscoveryService.transferRequests, isEmpty);
@@ -1485,7 +1540,10 @@ void main() {
         }
 
         expect(
-          coordinator.sharedUploadPreparationState?.stage,
+          coordinator
+              .transferCachePreparationBoundary
+              .sharedUploadPreparationState
+              ?.stage,
           SharedUploadPreparationStage.waitingForRequester,
         );
         expect(lanDiscoveryService.transferRequests, hasLength(1));
@@ -1525,7 +1583,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-cache-1',
             requesterIp: '192.168.1.40',
@@ -1538,11 +1596,15 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-cache-1',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-cache-1',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
@@ -1554,7 +1616,7 @@ void main() {
           hasLength(2),
         );
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-cache-2',
             requesterIp: '192.168.1.40',
@@ -1567,16 +1629,18 @@ void main() {
             observedAt: DateTime(2026, 1, 2),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-cache-2',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-cache-2',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
       },
     );
 
@@ -1615,7 +1679,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-root-1',
             requesterIp: '192.168.1.40',
@@ -1628,18 +1692,20 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-root-1',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-root-1',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-root-2',
             requesterIp: '192.168.1.40',
@@ -1652,16 +1718,18 @@ void main() {
             observedAt: DateTime(2026, 1, 2),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-root-2',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-root-2',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
       },
     );
 
@@ -1700,7 +1768,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-prefix-1',
             requesterIp: '192.168.1.40',
@@ -1713,18 +1781,20 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-prefix-1',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-prefix-1',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-prefix-2',
             requesterIp: '192.168.1.40',
@@ -1737,16 +1807,18 @@ void main() {
             observedAt: DateTime(2026, 1, 2),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-prefix-2',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-prefix-2',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 2);
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 1);
 
         await File(p.join(ownerRoot.path, 'docs', 'c.txt')).writeAsString('c');
         cache = await sharedCacheCatalog.refreshOwnerFolderSubdirectoryEntries(
@@ -1756,7 +1828,7 @@ void main() {
         final changedFingerprint = await sharedCacheIndexStore
             .readTreeFingerprint(cache, relativeFolderPath: 'docs');
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-prefix-3',
             requesterIp: '192.168.1.40',
@@ -1769,17 +1841,19 @@ void main() {
             observedAt: DateTime(2026, 1, 3),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-prefix-3',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-prefix-3',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(changedFingerprint.itemCount, 3);
         expect(fileHashService.computeCalls, greaterThan(2));
-        expect(coordinator.preparedTransferScopeCacheHits, 1);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 2);
       },
     );
 
@@ -1836,7 +1910,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-mixed-case-folder',
             requesterIp: '192.168.1.40',
@@ -1849,12 +1923,16 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-mixed-case-folder',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-mixed-case-folder',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(lanDiscoveryService.downloadResponses, isEmpty);
@@ -1898,7 +1976,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'preview-request-1',
             requesterIp: '192.168.1.40',
@@ -1913,9 +1991,10 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
-        expect(coordinator.incomingSharedDownloadRequests, isEmpty);
-        expect(coordinator.preparedTransferScopeCacheHits, 0);
-        expect(coordinator.preparedTransferScopeCacheEntryCount, 0);
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          isEmpty,
+        );
       },
     );
 
@@ -1969,7 +2048,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleDownloadRequestEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: 'download-request-changed',
             requesterIp: '192.168.1.40',
@@ -1982,11 +2061,15 @@ void main() {
             observedAt: DateTime(2026),
           ),
         );
-        expect(coordinator.incomingSharedDownloadRequests, hasLength(1));
-        await coordinator.respondToIncomingSharedDownloadRequest(
-          requestId: 'download-request-changed',
-          approved: true,
+        expect(
+          coordinator.sharedDownloadBoundary.incomingSharedDownloadRequests,
+          hasLength(1),
         );
+        await coordinator.sharedDownloadBoundary
+            .respondToIncomingSharedDownloadRequest(
+              requestId: 'download-request-changed',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 30));
 
         expect(fileHashService.computeCalls, 1);
@@ -2011,7 +2094,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-1',
             senderIp: '192.168.1.40',
@@ -2031,8 +2114,18 @@ void main() {
         );
 
         final notice = coordinator.takePendingNotice();
-        expect(coordinator.incomingRequests, hasLength(1));
-        expect(coordinator.incomingRequests.single.requestId, 'transfer-1');
+        expect(
+          coordinator.incomingTransferRequestBoundary.incomingRequests,
+          hasLength(1),
+        );
+        expect(
+          coordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests
+              .single
+              .requestId,
+          'transfer-1',
+        );
         expect(
           notice?.infoMessage,
           'Incoming transfer request from Remote peer.',
@@ -2079,7 +2172,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-2',
             senderIp: '192.168.1.40',
@@ -2098,10 +2191,8 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-2',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(requestId: 'transfer-2', approved: true);
         await _waitForDownloadHistoryRecords(
           boundary: downloadHistoryBoundary,
           expectedCount: 1,
@@ -2114,7 +2205,10 @@ void main() {
         );
         final history = downloadHistoryBoundary.records;
 
-        expect(coordinator.incomingRequests, isEmpty);
+        expect(
+          coordinator.incomingTransferRequestBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.transferDecisions, hasLength(1));
         expect(lanDiscoveryService.transferDecisions.single.approved, isTrue);
         expect(receiverCaches, hasLength(1));
@@ -2158,7 +2252,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-history-real-file',
             senderIp: '192.168.1.40',
@@ -2177,10 +2271,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-history-real-file',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(
+              requestId: 'transfer-history-real-file',
+              approved: true,
+            );
         await _waitForDownloadHistoryRecords(
           boundary: downloadHistoryBoundary,
           expectedCount: 1,
@@ -2229,7 +2324,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: 'transfer-ghost-file',
             senderIp: '192.168.1.40',
@@ -2248,10 +2343,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToTransferRequest(
-          requestId: 'transfer-ghost-file',
-          approved: true,
-        );
+        await coordinator.incomingTransferRequestBoundary
+            .respondToTransferRequest(
+              requestId: 'transfer-ghost-file',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         final notice = coordinator.takePendingNotice();
@@ -2298,7 +2394,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -2312,7 +2408,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 0);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -2383,7 +2479,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -2492,23 +2588,24 @@ void main() {
         addTearDown(requesterCoordinator.dispose);
         addTearDown(senderCoordinator.dispose);
 
-        await requesterCoordinator.requestDownloadFromRemoteFiles(
-          ownerIp: '192.168.1.40',
-          ownerName: 'Sender device',
-          selectedRelativePathsByCache: <String, Set<String>>{
-            cache.cacheId: <String>{indexedRelativePath},
-          },
-          sharedLabelsByCache: <String, String>{
-            cache.cacheId: cache.displayName,
-          },
-          preferDirectStart: true,
-          useStandardAppDownloadFolder: true,
-        );
+        await requesterCoordinator.sharedDownloadBoundary
+            .requestDownloadFromRemoteFiles(
+              ownerIp: '192.168.1.40',
+              ownerName: 'Sender device',
+              selectedRelativePathsByCache: <String, Set<String>>{
+                cache.cacheId: <String>{indexedRelativePath},
+              },
+              sharedLabelsByCache: <String, String>{
+                cache.cacheId: cache.displayName,
+              },
+              preferDirectStart: true,
+              useStandardAppDownloadFolder: true,
+            );
 
         expect(requesterLanDiscoveryService.downloadRequests, hasLength(1));
         final sentRequest =
             requesterLanDiscoveryService.downloadRequests.single;
-        senderCoordinator.handleDownloadRequestEvent(
+        senderCoordinator.sharedDownloadBoundary.handleDownloadRequestEvent(
           DownloadRequestEvent(
             requestId: sentRequest.requestId,
             requesterIp: '192.168.1.88',
@@ -2524,7 +2621,12 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 60));
 
-        expect(senderCoordinator.incomingSharedDownloadRequests, isEmpty);
+        expect(
+          senderCoordinator
+              .sharedDownloadBoundary
+              .incomingSharedDownloadRequests,
+          isEmpty,
+        );
         expect(senderSendService.sendFilesCalls, 1);
         expect(
           senderSendService.lastFiles.map((file) => file.fileName),
@@ -2596,7 +2698,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -2665,7 +2767,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -2682,7 +2784,7 @@ void main() {
         expect(fileTransferService.lastArmTimeoutImmediately, isFalse);
         expect(fileTransferService.armTimeoutCalls, 0);
 
-        coordinator.handleDownloadResponseEvent(
+        coordinator.sharedDownloadBoundary.handleDownloadResponseEvent(
           DownloadResponseEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             responderIp: '192.168.1.40',
@@ -2716,7 +2818,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -2827,7 +2929,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestRemoteShareAccess(
+        await coordinator.remoteShareAccessSessionBoundary.requestAccess(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
         );
@@ -2945,15 +3047,13 @@ void main() {
         addTearDown(requesterCoordinator.dispose);
         addTearDown(senderCoordinator.dispose);
 
-        await requesterCoordinator.requestRemoteShareAccess(
-          ownerIp: '192.168.1.40',
-          ownerName: 'Sender device',
-        );
+        await requesterCoordinator.remoteShareAccessSessionBoundary
+            .requestAccess(ownerIp: '192.168.1.40', ownerName: 'Sender device');
         expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
 
         final sentRequest =
             requesterLanDiscoveryService.shareAccessRequests.single;
-        senderCoordinator.handleShareAccessRequestEvent(
+        senderCoordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: sentRequest.requestId,
             requesterIp: '192.168.1.88',
@@ -2965,7 +3065,10 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 60));
 
-        expect(senderCoordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(
+          senderCoordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(senderLanDiscoveryService.shareAccessResponses, hasLength(1));
         expect(
           senderLanDiscoveryService.shareAccessResponses.single.approved,
@@ -2975,16 +3078,17 @@ void main() {
 
         final sentResponse =
             senderLanDiscoveryService.shareAccessResponses.single;
-        requesterCoordinator.handleShareAccessResponseEvent(
-          ShareAccessResponseEvent(
-            requestId: sentResponse.requestId,
-            responderIp: '192.168.1.40',
-            responderName: sentResponse.responderName,
-            approved: sentResponse.approved,
-            observedAt: DateTime(2026, 1, 3),
-            message: sentResponse.message,
-          ),
-        );
+        requesterCoordinator.remoteShareAccessSessionBoundary
+            .handleResponseEvent(
+              ShareAccessResponseEvent(
+                requestId: sentResponse.requestId,
+                responderIp: '192.168.1.40',
+                responderName: sentResponse.responderName,
+                approved: sentResponse.approved,
+                observedAt: DateTime(2026, 1, 3),
+                message: sentResponse.message,
+              ),
+            );
 
         final snapshotSourcePath =
             senderSendService.lastFiles.single.sourcePath;
@@ -3081,15 +3185,13 @@ void main() {
         addTearDown(requesterCoordinator.dispose);
         addTearDown(senderCoordinator.dispose);
 
-        await requesterCoordinator.requestRemoteShareAccess(
-          ownerIp: '192.168.1.40',
-          ownerName: 'Sender device',
-        );
+        await requesterCoordinator.remoteShareAccessSessionBoundary
+            .requestAccess(ownerIp: '192.168.1.40', ownerName: 'Sender device');
         expect(requesterLanDiscoveryService.shareAccessRequests, hasLength(1));
 
         final sentRequest =
             requesterLanDiscoveryService.shareAccessRequests.single;
-        senderCoordinator.handleShareAccessRequestEvent(
+        senderCoordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: sentRequest.requestId,
             requesterIp: '192.168.1.88',
@@ -3102,7 +3204,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
         expect(
-          senderCoordinator.incomingRemoteShareAccessRequests,
+          senderCoordinator.remoteShareAccessSessionBoundary.incomingRequests,
           hasLength(1),
         );
         expect(senderLanDiscoveryService.shareAccessResponses, isEmpty);
@@ -3139,13 +3241,13 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestRemoteShareAccess(
+        await coordinator.remoteShareAccessSessionBoundary.requestAccess(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
         );
         final request = lanDiscoveryService.shareAccessRequests.single;
 
-        coordinator.handleShareAccessResponseEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleResponseEvent(
           ShareAccessResponseEvent(
             requestId: request.requestId,
             responderIp: '192.168.1.40',
@@ -3159,7 +3261,7 @@ void main() {
 
         expect(fileTransferService.closeCalls, 1);
         expect(
-          coordinator.remoteShareAccessState?.stage,
+          coordinator.remoteShareAccessSessionBoundary.state?.stage,
           RemoteShareAccessStage.rejected,
         );
       },
@@ -3198,7 +3300,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-1',
             requesterIp: '192.168.1.40',
@@ -3208,12 +3310,13 @@ void main() {
             observedAt: DateTime(2026, 1, 3),
           ),
         );
-        expect(coordinator.incomingRemoteShareAccessRequests, hasLength(1));
-
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-1',
-          approved: true,
+        expect(
+          coordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          hasLength(1),
         );
+
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(requestId: 'access-1', approved: true);
         await Future<void>.delayed(const Duration(milliseconds: 40));
 
         expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
@@ -3261,7 +3364,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-friend-1',
             requesterIp: '192.168.1.40',
@@ -3276,7 +3379,10 @@ void main() {
           expectedCount: 1,
         );
 
-        expect(coordinator.incomingRemoteShareAccessRequests, isEmpty);
+        expect(
+          coordinator.remoteShareAccessSessionBoundary.incomingRequests,
+          isEmpty,
+        );
         expect(lanDiscoveryService.shareAccessResponses, hasLength(1));
         expect(
           lanDiscoveryService.shareAccessResponses.single.approved,
@@ -3328,7 +3434,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-atomic',
             requesterIp: '192.168.1.40',
@@ -3339,10 +3445,11 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-atomic',
-          approved: true,
-        );
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(
+              requestId: 'access-atomic',
+              approved: true,
+            );
         await Future<void>.delayed(const Duration(milliseconds: 40));
 
         expect(fileTransferService.sendFilesCalls, 1);
@@ -3442,7 +3549,7 @@ void main() {
         addTearDown(coordinator.dispose);
         addTearDown(receiveSession.close);
 
-        coordinator.handleShareAccessRequestEvent(
+        coordinator.remoteShareAccessSessionBoundary.handleRequestEvent(
           ShareAccessRequestEvent(
             requestId: 'access-e2e',
             requesterIp: InternetAddress.loopbackIPv4.address,
@@ -3453,10 +3560,8 @@ void main() {
           ),
         );
 
-        await coordinator.respondToIncomingRemoteShareAccessRequest(
-          requestId: 'access-e2e',
-          approved: true,
-        );
+        await coordinator.remoteShareAccessSessionBoundary
+            .respondToIncomingRequest(requestId: 'access-e2e', approved: true);
 
         final result = await receiveSession.result.timeout(
           const Duration(seconds: 5),
@@ -3544,7 +3649,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3554,13 +3659,24 @@ void main() {
           useStandardAppDownloadFolder: true,
         );
 
-        expect(coordinator.isPreparingSharedDownload, isTrue);
         expect(
-          coordinator.sharedDownloadPreparationState?.stage,
+          coordinator
+              .transferCachePreparationBoundary
+              .isPreparingSharedDownload,
+          isTrue,
+        );
+        expect(
+          coordinator
+              .transferCachePreparationBoundary
+              .sharedDownloadPreparationState
+              ?.stage,
           SharedDownloadPreparationStage.waitingForRemote,
         );
         expect(
-          coordinator.sharedDownloadPreparationState?.message,
+          coordinator
+              .transferCachePreparationBoundary
+              .sharedDownloadPreparationState
+              ?.message,
           'Ждём, пока Remote peer начнёт передачу...',
         );
       },
@@ -3608,7 +3724,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3622,7 +3738,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 1);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3675,7 +3791,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3735,7 +3851,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3749,7 +3865,7 @@ void main() {
         expect(transferStorageService.pickDesktopDownloadDirectoryCalls, 0);
         expect(lanDiscoveryService.downloadRequests, hasLength(1));
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3804,7 +3920,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3813,7 +3929,7 @@ void main() {
           useStandardAppDownloadFolder: true,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -3904,7 +4020,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -3919,7 +4035,7 @@ void main() {
           containsAll(<String>['docs/a.txt', 'docs/sub/b.txt']),
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4003,7 +4119,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: const <String, Set<String>>{},
@@ -4045,7 +4161,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -4060,7 +4176,7 @@ void main() {
           isEmpty,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4145,7 +4261,7 @@ void main() {
         );
         addTearDown(coordinator.dispose);
 
-        await coordinator.requestDownloadFromRemoteFiles(
+        await coordinator.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: '192.168.1.40',
           ownerName: 'Remote peer',
           selectedRelativePathsByCache: <String, Set<String>>{
@@ -4154,7 +4270,7 @@ void main() {
           useStandardAppDownloadFolder: false,
         );
 
-        coordinator.handleTransferRequestEvent(
+        coordinator.incomingTransferRequestBoundary.handleTransferRequestEvent(
           TransferRequestEvent(
             requestId: lanDiscoveryService.downloadRequests.single.requestId,
             senderIp: '192.168.1.40',
@@ -4245,7 +4361,27 @@ void main() {
       );
       final videoLinkShareService = VideoLinkShareService();
       late final DiscoveryController controller;
-      final transferSessionCoordinator = TransferSessionCoordinator(
+      late final TransferSessionCoordinator transferSessionCoordinator;
+      late final RemoteFilePreviewTransferBoundary
+      remoteFilePreviewTransferBoundary;
+      remoteFilePreviewTransferBoundary = RemoteFilePreviewTransferBoundary(
+        lanDiscoveryService: lanDiscoveryService,
+        fileHashService: fileHashService,
+        previewCacheOwner: previewCacheOwner,
+        settingsProvider: () => settingsStore.settings,
+        localNameProvider: () => controller.localName,
+        localDeviceMacProvider: () => controller.localDeviceMac,
+        resolveRemoteOwnerMac:
+            ({required String ownerIp, required String cacheId}) =>
+                remoteShareBrowser.ownerMacForCache(
+                  ownerIp: ownerIp,
+                  cacheId: cacheId,
+                ),
+        publishNotice: (notice) {
+          transferSessionCoordinator.publishBoundaryNotice(notice);
+        },
+      );
+      transferSessionCoordinator = TransferSessionCoordinator(
         lanDiscoveryService: lanDiscoveryService,
         sharedCacheCatalog: sharedCacheCatalog,
         sharedCacheIndexStore: sharedCacheIndexStore,
@@ -4253,7 +4389,6 @@ void main() {
         fileTransferService: FileTransferService(),
         transferStorageService: TransferStorageService(),
         downloadHistoryBoundary: downloadHistoryBoundary,
-        previewCacheOwner: previewCacheOwner,
         appNotificationService: AppNotificationService.instance,
         settingsProvider: () => settingsStore.settings,
         localNameProvider: () => controller.localName,
@@ -4266,6 +4401,7 @@ void main() {
                   ownerIp: ownerIp,
                   cacheId: cacheId,
                 ),
+        remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
       );
       final remoteShareMediaProjectionBoundary =
           RemoteShareMediaProjectionBoundary(
@@ -4339,9 +4475,18 @@ void main() {
         );
         await Future<void>.delayed(const Duration(milliseconds: 20));
 
-        expect(transferSessionCoordinator.incomingRequests, hasLength(1));
         expect(
-          transferSessionCoordinator.incomingRequests.single.requestId,
+          transferSessionCoordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests,
+          hasLength(1),
+        );
+        expect(
+          transferSessionCoordinator
+              .incomingTransferRequestBoundary
+              .incomingRequests
+              .single
+              .requestId,
           'transfer-3',
         );
         expect(
@@ -4409,7 +4554,24 @@ TransferSessionCoordinator _buildCoordinator({
   String? Function({required String ownerIp, required String cacheId})?
   resolveRemoteOwnerMac,
 }) {
-  return TransferSessionCoordinator(
+  late final TransferSessionCoordinator coordinator;
+  final previewBoundary = RemoteFilePreviewTransferBoundary(
+    lanDiscoveryService: lanDiscoveryService,
+    fileHashService: fileHashService,
+    previewCacheOwner: previewCacheOwner,
+    settingsProvider: () => AppSettings.defaults,
+    localNameProvider: () => localName,
+    localDeviceMacProvider: () => localDeviceMac,
+    resolveRemoteOwnerMac:
+        resolveRemoteOwnerMac ??
+        ({required String ownerIp, required String cacheId}) {
+          return null;
+        },
+    publishNotice: (notice) {
+      coordinator.publishBoundaryNotice(notice);
+    },
+  );
+  coordinator = TransferSessionCoordinator(
     lanDiscoveryService: lanDiscoveryService,
     sharedCacheCatalog: sharedCacheCatalog,
     sharedCacheIndexStore: sharedCacheIndexStore,
@@ -4419,7 +4581,6 @@ TransferSessionCoordinator _buildCoordinator({
         transferStorageService ??
         RecordingTransferStorageService(rootDirectory: rootDirectory),
     downloadHistoryBoundary: downloadHistoryBoundary,
-    previewCacheOwner: previewCacheOwner,
     appNotificationService: AppNotificationService.instance,
     settingsProvider: () => AppSettings.defaults,
     localNameProvider: () => localName,
@@ -4431,8 +4592,10 @@ TransferSessionCoordinator _buildCoordinator({
           return null;
         },
     applyRemoteShareAccessSnapshot: applyRemoteShareAccessSnapshot,
+    remoteFilePreviewTransferBoundary: previewBoundary,
     sharedDownloadDiagnosticLogStore: sharedDownloadDiagnosticLogStore,
   );
+  return coordinator;
 }
 
 Future<void> _waitForDownloadHistoryRecords({

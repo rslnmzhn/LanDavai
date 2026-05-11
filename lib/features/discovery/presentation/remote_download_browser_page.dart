@@ -14,6 +14,12 @@ import '../../files/presentation/file_explorer/file_explorer_models.dart';
 import '../../files/presentation/file_explorer/file_explorer_tail_widgets.dart';
 import '../../files/presentation/file_explorer/file_explorer_widgets.dart';
 import '../../files/presentation/file_explorer/local_file_viewer.dart';
+import '../../transfer/application/remote_share_access_session_boundary.dart';
+import '../../transfer/application/remote_share_access_session_models.dart';
+import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
+import '../../transfer/application/incoming_transfer_completion_boundary.dart';
+import '../../transfer/application/shared_download_boundary.dart';
+import '../../transfer/application/transfer_cache_preparation_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../application/discovery_read_model.dart';
 import '../application/remote_share_browser.dart';
@@ -24,14 +30,27 @@ class RemoteDownloadBrowserPage extends StatefulWidget {
     required this.remoteShareBrowser,
     required this.previewCacheOwner,
     required this.transferSessionCoordinator,
+    required this.remoteFilePreviewTransferBoundary,
+    required this.remoteShareAccessSessionBoundary,
+    required this.incomingTransferCompletionBoundary,
+    required this.transferCachePreparationBoundary,
+    SharedDownloadBoundary? sharedDownloadBoundary,
     required this.useStandardAppDownloadFolder,
     super.key,
-  });
+  }) : _sharedDownloadBoundary = sharedDownloadBoundary;
 
   final DiscoveryReadModel readModel;
   final RemoteShareBrowser remoteShareBrowser;
   final PreviewCacheOwner previewCacheOwner;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  SharedDownloadBoundary get sharedDownloadBoundary =>
+      _sharedDownloadBoundary ??
+      transferSessionCoordinator.sharedDownloadBoundary;
+  final SharedDownloadBoundary? _sharedDownloadBoundary;
   final bool useStandardAppDownloadFolder;
 
   @override
@@ -137,7 +156,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       _activeFilterKey = initialFilterKey;
       unawaited(_ensureOwnerForFilter(_activeFilterKey));
     }
-    widget.transferSessionCoordinator.logSharedDownloadDebug(
+    widget.sharedDownloadBoundary.logSharedDownloadDebug(
       stage: 'browser_opened',
       requestId: 'browser',
       details: <String, Object?>{
@@ -259,7 +278,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       animation: Listenable.merge(<Listenable>[
         _browser,
         widget.readModel,
-        widget.transferSessionCoordinator,
+        widget.incomingTransferCompletionBoundary,
+        widget.transferCachePreparationBoundary,
+        widget.sharedDownloadBoundary,
         ..._ownersByFilterKey.values,
       ]),
       builder: (context, _) {
@@ -321,9 +342,8 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       _RemoteShareAccessActionRow(
                         deviceLabel: _rootLabelForActiveFilter,
                         activeOwnerIp: _activeFilterKey,
-                        accessState: widget
-                            .transferSessionCoordinator
-                            .remoteShareAccessState,
+                        accessState:
+                            widget.remoteShareAccessSessionBoundary.state,
                         onRequestAccess: _canRequestAccess
                             ? _requestAccessForActiveDevice
                             : null,
@@ -350,9 +370,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                     ),
                   ),
                 if (widget
-                        .transferSessionCoordinator
+                        .transferCachePreparationBoundary
                         .isPreparingSharedDownload ||
-                    widget.transferSessionCoordinator.isDownloading)
+                    widget.incomingTransferCompletionBoundary.isDownloading)
                   Padding(
                     padding: const EdgeInsets.fromLTRB(
                       AppSpacing.md,
@@ -361,7 +381,10 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                       0,
                     ),
                     child: _SharedDownloadStatusCard(
-                      coordinator: widget.transferSessionCoordinator,
+                      incomingTransferCompletionBoundary:
+                          widget.incomingTransferCompletionBoundary,
+                      transferCachePreparationBoundary:
+                          widget.transferCachePreparationBoundary,
                     ),
                   ),
                 Expanded(
@@ -629,14 +652,12 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     setState(() {
       _activeFilterKey = nextKey;
     });
-    widget.transferSessionCoordinator.logSharedDownloadDebug(
+    widget.sharedDownloadBoundary.logSharedDownloadDebug(
       stage: 'browser_device_selected',
       requestId: 'browser',
       details: <String, Object?>{'ownerIp': nextKey},
     );
-    widget.transferSessionCoordinator.clearRemoteShareAccessState(
-      ownerIp: nextKey,
-    );
+    widget.remoteShareAccessSessionBoundary.clearState(ownerIp: nextKey);
     _syncSearchController();
   }
 
@@ -645,7 +666,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     if (ownerIp.isEmpty) {
       return;
     }
-    widget.transferSessionCoordinator.logSharedDownloadDebug(
+    widget.sharedDownloadBoundary.logSharedDownloadDebug(
       stage: 'browser_request_access_tapped',
       requestId: 'browser',
       details: <String, Object?>{
@@ -653,7 +674,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
         'ownerName': _rootLabelForActiveFilter,
       },
     );
-    await widget.transferSessionCoordinator.requestRemoteShareAccess(
+    await widget.remoteShareAccessSessionBoundary.requestAccess(
       ownerIp: ownerIp,
       ownerName: _rootLabelForActiveFilter,
     );
@@ -778,7 +799,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       _previewingToken = token;
     });
     try {
-      final previewPath = await widget.transferSessionCoordinator
+      final previewPath = await widget.remoteFilePreviewTransferBoundary
           .requestRemoteFilePreview(
             ownerIp: file.ownerIp,
             ownerName: file.ownerName,
@@ -841,7 +862,7 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
     });
     try {
       for (final batch in requests.values) {
-        await widget.transferSessionCoordinator.requestDownloadFromRemoteFiles(
+        await widget.sharedDownloadBoundary.requestDownloadFromRemoteFiles(
           ownerIp: batch.ownerIp,
           ownerName: batch.ownerName,
           selectedRelativePathsByCache: batch.selectedRelativePathsByCache,
@@ -972,14 +993,19 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
 }
 
 class _SharedDownloadStatusCard extends StatelessWidget {
-  const _SharedDownloadStatusCard({required this.coordinator});
+  const _SharedDownloadStatusCard({
+    required this.incomingTransferCompletionBoundary,
+    required this.transferCachePreparationBoundary,
+  });
 
-  final TransferSessionCoordinator coordinator;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
 
   @override
   Widget build(BuildContext context) {
-    final preparation = coordinator.sharedDownloadPreparationState;
-    final isDownloading = coordinator.isDownloading;
+    final preparation =
+        transferCachePreparationBoundary.sharedDownloadPreparationState;
+    final isDownloading = incomingTransferCompletionBoundary.isDownloading;
     final title = isDownloading
         ? 'remote_download.status_downloading'.tr()
         : 'remote_download.status_preparing'.tr();
@@ -1025,16 +1051,19 @@ class _SharedDownloadStatusCard extends StatelessWidget {
           const SizedBox(height: AppSpacing.sm),
           if (isDownloading) ...[
             LinearProgressIndicator(
-              value: coordinator.downloadProgress.clamp(0, 1),
+              value: incomingTransferCompletionBoundary.downloadProgress.clamp(
+                0,
+                1,
+              ),
               minHeight: 6,
               color: AppColors.success,
               backgroundColor: AppColors.mutedBorder,
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              '${(coordinator.downloadProgress * 100).toStringAsFixed(0)}% • '
-              '${_formatBytes(coordinator.downloadReceivedBytes)} / '
-              '${_formatBytes(coordinator.downloadTotalBytes)}',
+              '${(incomingTransferCompletionBoundary.downloadProgress * 100).toStringAsFixed(0)}% • '
+              '${_formatBytes(incomingTransferCompletionBoundary.downloadReceivedBytes)} / '
+              '${_formatBytes(incomingTransferCompletionBoundary.downloadTotalBytes)}',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),

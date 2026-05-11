@@ -13,6 +13,8 @@ test_*.err
 .svn/
 .swiftpm/
 migrate_working_dir/
+result.md
+docs/antipattern/
 
 # IntelliJ related
 *.iml

@@ -48,6 +48,12 @@ import 'package:landa/features/settings/data/app_settings_repository.dart';
 import 'package:landa/features/share_target/application/share_receive_boundary.dart';
 import 'package:landa/features/transfer/application/shared_cache_catalog.dart';
 import 'package:landa/features/transfer/application/shared_cache_index_store.dart';
+import 'package:landa/features/transfer/application/shared_download_boundary.dart';
+import 'package:landa/features/transfer/application/incoming_transfer_completion_boundary.dart';
+import 'package:landa/features/transfer/application/transfer_cache_preparation_boundary.dart';
+import 'package:landa/features/transfer/application/incoming_transfer_request_boundary.dart';
+import 'package:landa/features/transfer/application/remote_file_preview_transfer_boundary.dart';
+import 'package:landa/features/transfer/application/remote_share_access_session_boundary.dart';
 import 'package:landa/features/transfer/application/transfer_session_coordinator.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
@@ -73,6 +79,13 @@ class TestDiscoveryControllerHarness {
     required this.sharedCacheCatalog,
     required this.sharedCacheIndexStore,
     required this.transferSessionCoordinator,
+    required this.incomingTransferRequestBoundary,
+    required this.remoteShareAccessSessionBoundary,
+    required this.remoteFilePreviewTransferBoundary,
+    required this.incomingTransferCompletionBoundary,
+    required this.transferCachePreparationBoundary,
+    required this.outgoingTransferSendBoundary,
+    required this.sharedDownloadBoundary,
     required this.downloadHistoryBoundary,
     required this.clipboardHistoryStore,
     required this.remoteClipboardProjectionStore,
@@ -94,6 +107,13 @@ class TestDiscoveryControllerHarness {
   final SharedCacheCatalog sharedCacheCatalog;
   final SharedCacheIndexStore sharedCacheIndexStore;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final RemoteFilePreviewTransferBoundary remoteFilePreviewTransferBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
+  final SharedDownloadBoundary sharedDownloadBoundary;
   final DownloadHistoryBoundary downloadHistoryBoundary;
   final ClipboardHistoryStore clipboardHistoryStore;
   final RemoteClipboardProjectionStore remoteClipboardProjectionStore;
@@ -118,6 +138,13 @@ class TestDiscoveryControllerHarness {
         sharedCacheIndexStore: sharedCacheIndexStore,
         previewCacheOwner: previewCacheOwner,
         transferSessionCoordinator: transferSessionCoordinator,
+        incomingTransferRequestBoundary: incomingTransferRequestBoundary,
+        remoteShareAccessSessionBoundary: remoteShareAccessSessionBoundary,
+        remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
+        incomingTransferCompletionBoundary: incomingTransferCompletionBoundary,
+        transferCachePreparationBoundary: transferCachePreparationBoundary,
+        outgoingTransferSendBoundary: outgoingTransferSendBoundary,
+        sharedDownloadBoundary: sharedDownloadBoundary,
         downloadHistoryBoundary: downloadHistoryBoundary,
         clipboardHistoryStore: clipboardHistoryStore,
         remoteClipboardProjectionStore: remoteClipboardProjectionStore,
@@ -242,7 +269,27 @@ class TestDiscoveryControllerHarness {
         );
     final videoLinkShareService = VideoLinkShareService();
     late final TrackingDiscoveryController controller;
-    final transferSessionCoordinator = TransferSessionCoordinator(
+    late final TransferSessionCoordinator transferSessionCoordinator;
+    late final RemoteFilePreviewTransferBoundary
+    remoteFilePreviewTransferBoundary;
+    remoteFilePreviewTransferBoundary = RemoteFilePreviewTransferBoundary(
+      lanDiscoveryService: lanDiscoveryService,
+      fileHashService: fileHashService,
+      previewCacheOwner: previewCacheOwner,
+      settingsProvider: () => settingsStore.settings,
+      localNameProvider: () => controller.localName,
+      localDeviceMacProvider: () => controller.localDeviceMac,
+      resolveRemoteOwnerMac:
+          ({required String ownerIp, required String cacheId}) =>
+              remoteShareBrowser.ownerMacForCache(
+                ownerIp: ownerIp,
+                cacheId: cacheId,
+              ),
+      publishNotice: (notice) {
+        transferSessionCoordinator.publishBoundaryNotice(notice);
+      },
+    );
+    transferSessionCoordinator = TransferSessionCoordinator(
       lanDiscoveryService: lanDiscoveryService,
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
@@ -250,7 +297,6 @@ class TestDiscoveryControllerHarness {
       fileTransferService: fileTransferService,
       transferStorageService: transferStorageService,
       downloadHistoryBoundary: downloadHistoryBoundary,
-      previewCacheOwner: previewCacheOwner,
       appNotificationService: AppNotificationService.instance,
       settingsProvider: () => settingsStore.settings,
       localNameProvider: () => controller.localName,
@@ -263,6 +309,7 @@ class TestDiscoveryControllerHarness {
                 ownerIp: ownerIp,
                 cacheId: cacheId,
               ),
+      remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
     );
     final resolvedPathOpener = pathOpener ?? PathOpener();
     controller = TrackingDiscoveryController(
@@ -364,6 +411,18 @@ class TestDiscoveryControllerHarness {
       sharedCacheCatalog: sharedCacheCatalog,
       sharedCacheIndexStore: sharedCacheIndexStore,
       transferSessionCoordinator: transferSessionCoordinator,
+      incomingTransferRequestBoundary:
+          transferSessionCoordinator.incomingTransferRequestBoundary,
+      remoteShareAccessSessionBoundary:
+          transferSessionCoordinator.remoteShareAccessSessionBoundary,
+      remoteFilePreviewTransferBoundary: remoteFilePreviewTransferBoundary,
+      incomingTransferCompletionBoundary:
+          transferSessionCoordinator.incomingTransferCompletionBoundary,
+      transferCachePreparationBoundary:
+          transferSessionCoordinator.transferCachePreparationBoundary,
+      outgoingTransferSendBoundary:
+          transferSessionCoordinator.outgoingTransferSendBoundary,
+      sharedDownloadBoundary: transferSessionCoordinator.sharedDownloadBoundary,
       downloadHistoryBoundary: downloadHistoryBoundary,
       clipboardHistoryStore: clipboardHistoryStore,
       remoteClipboardProjectionStore: remoteClipboardProjectionStore,
@@ -383,6 +442,7 @@ class TestDiscoveryControllerHarness {
     }
     appUpdateBoundary.dispose();
     shareReceiveBoundary.dispose();
+    remoteFilePreviewTransferBoundary.dispose();
     remoteShareBrowser.dispose();
     previewCacheOwner.dispose();
     await databaseHarness.dispose();

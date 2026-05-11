@@ -5,6 +5,11 @@ import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../../settings/domain/app_settings.dart';
+import '../../transfer/application/shared_download_boundary.dart';
+import '../../transfer/application/incoming_transfer_completion_boundary.dart';
+import '../../transfer/application/transfer_cache_preparation_boundary.dart';
+import '../../transfer/application/incoming_transfer_request_boundary.dart';
+import '../../transfer/application/remote_share_access_session_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/domain/transfer_request.dart';
 import '../application/discovery_read_model.dart';
@@ -17,18 +22,33 @@ class DiscoveryDeviceListSection extends StatelessWidget {
     required this.errorMessage,
     required this.isManualRefreshInProgress,
     required this.transferSessionCoordinator,
+    required this.incomingTransferRequestBoundary,
+    required this.remoteShareAccessSessionBoundary,
+    required this.incomingTransferCompletionBoundary,
+    required this.transferCachePreparationBoundary,
+    required this.outgoingTransferSendBoundary,
+    SharedDownloadBoundary? sharedDownloadBoundary,
     required this.onRefresh,
     required this.onSelectDeviceByIp,
     required this.onOpenDeviceActionsMenu,
     this.padding = const EdgeInsets.all(AppSpacing.md),
     super.key,
-  });
+  }) : _sharedDownloadBoundary = sharedDownloadBoundary;
 
   final DiscoveryReadModel readModel;
   final List<DiscoveredDevice> devices;
   final String? errorMessage;
   final bool isManualRefreshInProgress;
   final TransferSessionCoordinator transferSessionCoordinator;
+  final IncomingTransferRequestBoundary incomingTransferRequestBoundary;
+  final RemoteShareAccessSessionBoundary remoteShareAccessSessionBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
+  SharedDownloadBoundary get sharedDownloadBoundary =>
+      _sharedDownloadBoundary ??
+      transferSessionCoordinator.sharedDownloadBoundary;
+  final SharedDownloadBoundary? _sharedDownloadBoundary;
   final Future<void> Function() onRefresh;
   final void Function(String ip) onSelectDeviceByIp;
   final Future<void> Function(DiscoveredDevice device, Offset? globalPosition)
@@ -47,14 +67,25 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             _ErrorBanner(message: errorMessage!),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator
+          if (incomingTransferRequestBoundary.incomingRequests.isNotEmpty) ...[
+            _IncomingTransferRequestsCard(
+              requests: incomingTransferRequestBoundary.incomingRequests,
+              onRespond: ({required requestId, required approved}) {
+                return incomingTransferRequestBoundary.respondToTransferRequest(
+                  requestId: requestId,
+                  approved: approved,
+                );
+              },
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
+          if (sharedDownloadBoundary
               .incomingSharedDownloadRequests
               .isNotEmpty) ...[
             _IncomingSharedDownloadRequestsCard(
-              requests:
-                  transferSessionCoordinator.incomingSharedDownloadRequests,
+              requests: sharedDownloadBoundary.incomingSharedDownloadRequests,
               onRespond: ({required requestId, required approved}) {
-                return transferSessionCoordinator
+                return sharedDownloadBoundary
                     .respondToIncomingSharedDownloadRequest(
                       requestId: requestId,
                       approved: approved,
@@ -63,15 +94,12 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator
-              .incomingRemoteShareAccessRequests
-              .isNotEmpty) ...[
+          if (remoteShareAccessSessionBoundary.incomingRequests.isNotEmpty) ...[
             _IncomingRemoteShareAccessRequestsCard(
-              requests:
-                  transferSessionCoordinator.incomingRemoteShareAccessRequests,
+              requests: remoteShareAccessSessionBoundary.incomingRequests,
               onRespond: ({required requestId, required approved}) {
-                return transferSessionCoordinator
-                    .respondToIncomingRemoteShareAccessRequest(
+                return remoteShareAccessSessionBoundary
+                    .respondToIncomingRequest(
                       requestId: requestId,
                       approved: approved,
                     );
@@ -79,12 +107,16 @@ class DiscoveryDeviceListSection extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
-          if (transferSessionCoordinator.isUploading ||
-              transferSessionCoordinator.isDownloading ||
-              transferSessionCoordinator.isPreparingSharedDownload ||
-              transferSessionCoordinator.isPreparingSharedUpload) ...[
+          if (outgoingTransferSendBoundary.isUploading ||
+              incomingTransferCompletionBoundary.isDownloading ||
+              transferCachePreparationBoundary.isPreparingSharedDownload ||
+              transferCachePreparationBoundary.isPreparingSharedUpload) ...[
             _TransferProgressCard(
-              transferSessionCoordinator: transferSessionCoordinator,
+              outgoingTransferSendBoundary: outgoingTransferSendBoundary,
+              incomingTransferCompletionBoundary:
+                  incomingTransferCompletionBoundary,
+              transferCachePreparationBoundary:
+                  transferCachePreparationBoundary,
             ),
             const SizedBox(height: AppSpacing.sm),
           ],
@@ -238,9 +270,15 @@ class _ErrorBanner extends StatelessWidget {
 }
 
 class _TransferProgressCard extends StatelessWidget {
-  const _TransferProgressCard({required this.transferSessionCoordinator});
+  const _TransferProgressCard({
+    required this.outgoingTransferSendBoundary,
+    required this.incomingTransferCompletionBoundary,
+    required this.transferCachePreparationBoundary,
+  });
 
-  final TransferSessionCoordinator transferSessionCoordinator;
+  final OutgoingTransferSendBoundary outgoingTransferSendBoundary;
+  final IncomingTransferCompletionBoundary incomingTransferCompletionBoundary;
+  final TransferCachePreparationBoundary transferCachePreparationBoundary;
 
   @override
   Widget build(BuildContext context) {
@@ -254,13 +292,14 @@ class _TransferProgressCard extends StatelessWidget {
               'discovery.transfer.title'.tr(),
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            if (transferSessionCoordinator.isUploading) ...[
+            if (outgoingTransferSendBoundary.isUploading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.upload'.tr(
                   namedArgs: <String, String>{
-                    'percent': (transferSessionCoordinator.uploadProgress * 100)
-                        .toStringAsFixed(0),
+                    'percent':
+                        (outgoingTransferSendBoundary.uploadProgress * 100)
+                            .toStringAsFixed(0),
                   },
                 ),
                 style: Theme.of(context).textTheme.bodySmall,
@@ -269,8 +308,8 @@ class _TransferProgressCard extends StatelessWidget {
               Text(
                 _formatRateAndEta(
                   speedBytesPerSecond:
-                      transferSessionCoordinator.uploadSpeedBytesPerSecond,
-                  eta: transferSessionCoordinator.uploadEta,
+                      outgoingTransferSendBoundary.uploadSpeedBytesPerSecond,
+                  eta: outgoingTransferSendBoundary.uploadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -278,14 +317,14 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: transferSessionCoordinator.uploadProgress,
+                value: outgoingTransferSendBoundary.uploadProgress,
                 minHeight: 6,
                 color: AppColors.brandPrimary,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (!transferSessionCoordinator.isUploading &&
-                transferSessionCoordinator.isPreparingSharedUpload) ...[
+            if (!outgoingTransferSendBoundary.isUploading &&
+                transferCachePreparationBoundary.isPreparingSharedUpload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.preparing_upload'.tr(),
@@ -293,7 +332,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
-                transferSessionCoordinator
+                transferCachePreparationBoundary
                         .sharedUploadPreparationState
                         ?.message ??
                     'discovery.transfer.preparing_upload_default'.tr(),
@@ -308,13 +347,14 @@ class _TransferProgressCard extends StatelessWidget {
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (transferSessionCoordinator.isDownloading) ...[
+            if (incomingTransferCompletionBoundary.isDownloading) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.download'.tr(
                   namedArgs: <String, String>{
                     'percent':
-                        (transferSessionCoordinator.downloadProgress * 100)
+                        (incomingTransferCompletionBoundary.downloadProgress *
+                                100)
                             .toStringAsFixed(0),
                   },
                 ),
@@ -323,9 +363,9 @@ class _TransferProgressCard extends StatelessWidget {
               const SizedBox(height: AppSpacing.xxs),
               Text(
                 _formatRateAndEta(
-                  speedBytesPerSecond:
-                      transferSessionCoordinator.downloadSpeedBytesPerSecond,
-                  eta: transferSessionCoordinator.downloadEta,
+                  speedBytesPerSecond: incomingTransferCompletionBoundary
+                      .downloadSpeedBytesPerSecond,
+                  eta: incomingTransferCompletionBoundary.downloadEta,
                 ),
                 style: Theme.of(
                   context,
@@ -333,14 +373,14 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               LinearProgressIndicator(
-                value: transferSessionCoordinator.downloadProgress,
+                value: incomingTransferCompletionBoundary.downloadProgress,
                 minHeight: 6,
                 color: AppColors.success,
                 backgroundColor: AppColors.mutedBorder,
               ),
             ],
-            if (!transferSessionCoordinator.isDownloading &&
-                transferSessionCoordinator.isPreparingSharedDownload) ...[
+            if (!incomingTransferCompletionBoundary.isDownloading &&
+                transferCachePreparationBoundary.isPreparingSharedDownload) ...[
               const SizedBox(height: AppSpacing.sm),
               Text(
                 'discovery.transfer.preparing_download'.tr(),
@@ -348,7 +388,7 @@ class _TransferProgressCard extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.xxs),
               Text(
-                transferSessionCoordinator
+                transferCachePreparationBoundary
                         .sharedDownloadPreparationState
                         ?.message ??
                     'discovery.transfer.preparing_download_default'.tr(),
@@ -463,6 +503,47 @@ class _IncomingSharedDownloadRequestsCard extends StatelessWidget {
   }
 }
 
+class _IncomingTransferRequestsCard extends StatelessWidget {
+  const _IncomingTransferRequestsCard({
+    required this.requests,
+    required this.onRespond,
+  });
+
+  final List<IncomingTransferRequest> requests;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'discovery.incoming_transfer_requests.title'.tr(),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            for (var index = 0; index < requests.length; index += 1) ...[
+              _IncomingTransferRequestTile(
+                request: requests[index],
+                onRespond: onRespond,
+              ),
+              if (index != requests.length - 1)
+                const SizedBox(height: AppSpacing.sm),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _IncomingRemoteShareAccessRequestsCard extends StatelessWidget {
   const _IncomingRemoteShareAccessRequestsCard({
     required this.requests,
@@ -550,6 +631,73 @@ class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
                 child: Text('common.send'.tr()),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              OutlinedButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: false),
+                child: Text('common.reject'.tr()),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IncomingTransferRequestTile extends StatelessWidget {
+  const _IncomingTransferRequestTile({
+    required this.request,
+    required this.onRespond,
+  });
+
+  final IncomingTransferRequest request;
+  final Future<void> Function({
+    required String requestId,
+    required bool approved,
+  })
+  onRespond;
+
+  @override
+  Widget build(BuildContext context) {
+    final fileCount = request.items.length;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceSoft,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.mutedBorder),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'discovery.incoming_transfer_requests.message'.tr(
+              namedArgs: <String, String>{
+                'sender': request.senderName,
+                'count': '$fileCount',
+              },
+            ),
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'discovery.incoming_transfer_requests.source'.tr(
+              namedArgs: <String, String>{'label': request.sharedLabel},
+            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              FilledButton(
+                onPressed: () =>
+                    onRespond(requestId: request.requestId, approved: true),
+                child: Text('common.accept'.tr()),
               ),
               const SizedBox(width: AppSpacing.sm),
               OutlinedButton(

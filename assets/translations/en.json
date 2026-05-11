@@ -154,6 +154,11 @@
       "kind_mixed": "files and folders",
       "and_more": "{summary} and {count} more"
     },
+    "incoming_transfer_requests": {
+      "title": "Incoming transfer requests",
+      "message": "Device \"{sender}\" wants to send {count} file(s).",
+      "source": "Source: {label}"
+    },
     "incoming_access_requests": {
       "title": "Shared access requests",
       "message": "Device \"{requester}\" wants access to your shared files.",
