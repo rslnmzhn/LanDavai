@@ -15,6 +15,8 @@ test_*.err
 migrate_working_dir/
 result.md
 docs/antipattern/
+docs/context/
+docs/PR_Cycle*.md
 
 # IntelliJ related
 *.iml
