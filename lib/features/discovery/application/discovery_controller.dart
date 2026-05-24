@@ -37,8 +37,10 @@ import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'configured_discovery_targets_store.dart';
 import 'device_registry.dart';
+import 'discovery_lifecycle_timers.dart';
 import 'internet_peer_endpoint_store.dart';
 import 'local_peer_identity_store.dart';
+import 'discovery_presence_expiry_policy.dart';
 import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
 import '../data/lan_discovery_service.dart';
@@ -184,8 +186,6 @@ class DiscoveryController extends ChangeNotifier {
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
        _pathOpener = pathOpener,
-       _appPresenceTtl = appPresenceTtl,
-       _nearbyAvailabilityTtl = nearbyAvailabilityTtl,
        _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
        _androidResumeRestartDelay = androidResumeRestartDelay,
        _isAndroid = isAndroidProvider ?? (() => Platform.isAndroid),
@@ -193,6 +193,10 @@ class DiscoveryController extends ChangeNotifier {
        _nearbyTransferAvailabilityStore =
            nearbyTransferAvailabilityStore ??
            NearbyTransferAvailabilityStore() {
+    _presenceExpiryPolicy = DiscoveryPresenceExpiryPolicy(
+      appPresenceTtl: appPresenceTtl,
+      nearbyAvailabilityTtl: nearbyAvailabilityTtl,
+    );
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
         DownloadHistoryBoundary(
@@ -281,12 +285,12 @@ class DiscoveryController extends ChangeNotifier {
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
-  final Duration _appPresenceTtl;
-  final Duration _nearbyAvailabilityTtl;
   final Duration _presenceExpiryCheckInterval;
   final Duration _androidResumeRestartDelay;
   final bool Function() _isAndroid;
   final DateTime Function() _now;
+  final DiscoveryLifecycleTimers _lifecycleTimers = DiscoveryLifecycleTimers();
+  late final DiscoveryPresenceExpiryPolicy _presenceExpiryPolicy;
   final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
@@ -300,9 +304,6 @@ class DiscoveryController extends ChangeNotifier {
   final Map<String, _PendingOutgoingFriendRequest>
   _pendingOutgoingFriendRequestsByRequestId =
       <String, _PendingOutgoingFriendRequest>{};
-  Timer? _scanTimer;
-  Timer? _clipboardPollTimer;
-  Timer? _presenceExpiryTimer;
   bool _started = false;
   bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
@@ -1816,12 +1817,10 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _startClipboardPolling() {
-    _clipboardPollTimer?.cancel();
-    _clipboardPollTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_captureClipboardSnapshot()),
+    _lifecycleTimers.startClipboardPolling(
+      interval: const Duration(seconds: 2),
+      onTick: () => unawaited(_captureClipboardSnapshot()),
     );
-    unawaited(_captureClipboardSnapshot());
   }
 
   Future<void> _captureClipboardSnapshot() async {
@@ -2245,10 +2244,9 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _restartAutoRefreshTimer() {
-    _scanTimer?.cancel();
-    _scanTimer = Timer.periodic(
-      _activeAutoRefreshInterval,
-      (_) => unawaited(_refresh(isManual: false)),
+    _lifecycleTimers.restartAutoRefresh(
+      interval: _activeAutoRefreshInterval,
+      onTick: () => unawaited(_refresh(isManual: false)),
     );
     _log(
       'Auto-refresh timer restarted. '
@@ -2258,10 +2256,9 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _restartPresenceExpiryTimer() {
-    _presenceExpiryTimer?.cancel();
-    _presenceExpiryTimer = Timer.periodic(
-      _presenceExpiryCheckInterval,
-      (_) => _expireStalePresence(),
+    _lifecycleTimers.restartPresenceExpiry(
+      interval: _presenceExpiryCheckInterval,
+      onTick: _expireStalePresence,
     );
   }
 
@@ -2274,50 +2271,21 @@ class DiscoveryController extends ChangeNotifier {
     var changed = false;
 
     _devicesByIp.forEach((ip, device) {
-      var nextDevice = device;
-      final appPresenceObservedAt = nextDevice.appPresenceObservedAt;
-      final nearbyAvailabilityObservedAt =
-          nextDevice.nearbyAvailabilityObservedAt;
+      final expiry = _presenceExpiryPolicy.expire(
+        now: observedNow,
+        device: device,
+      );
+      final nextDevice = expiry.device;
 
-      if (nextDevice.isNearbyTransferAvailable &&
-          (nearbyAvailabilityObservedAt == null ||
-              observedNow.difference(nearbyAvailabilityObservedAt) >
-                  _nearbyAvailabilityTtl)) {
-        nextDevice = nextDevice.copyWith(
-          isNearbyTransferAvailable: false,
-          nearbyTransferPort: null,
-          nearbyAvailabilityObservedAt: null,
-        );
-      }
-
-      if (nextDevice.isAppDetected &&
-          (appPresenceObservedAt == null ||
-              observedNow.difference(appPresenceObservedAt) >
-                  _appPresenceTtl)) {
-        final hadFreshReachabilitySignal =
-            appPresenceObservedAt != null &&
-            nextDevice.lastSeen.isAfter(appPresenceObservedAt);
-        nextDevice = nextDevice.copyWith(
-          isAppDetected: false,
-          appPresenceObservedAt: null,
-          isNearbyTransferAvailable: false,
-          nearbyTransferPort: null,
-          nearbyAvailabilityObservedAt: null,
-          isReachable: hadFreshReachabilitySignal
-              ? nextDevice.isReachable
-              : false,
-        );
-      }
-
-      if (!nextDevice.isAppDetected && !nextDevice.isReachable) {
+      if (expiry.shouldRemove) {
         staleIps.add(ip);
-        if (!identical(nextDevice, device)) {
+        if (expiry.changed) {
           changed = true;
         }
         return;
       }
 
-      if (!identical(nextDevice, device)) {
+      if (expiry.changed) {
         _devicesByIp[ip] = nextDevice;
         changed = true;
       }
@@ -2379,9 +2347,7 @@ class DiscoveryController extends ChangeNotifier {
     }
     _isDisposed = true;
     _started = false;
-    _scanTimer?.cancel();
-    _clipboardPollTimer?.cancel();
-    _presenceExpiryTimer?.cancel();
+    _lifecycleTimers.cancelAll();
     _discoveryNetworkScopeStore.removeListener(_handleNetworkScopeChanged);
     _configuredDiscoveryTargetsStore.removeListener(
       _handleConfiguredDiscoveryTargetsChanged,

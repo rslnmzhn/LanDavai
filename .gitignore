@@ -16,6 +16,7 @@ migrate_working_dir/
 result.md
 docs/antipattern/
 docs/context/
+docs/complexity/
 docs/PR_Cycle*.md
 
 # IntelliJ related
