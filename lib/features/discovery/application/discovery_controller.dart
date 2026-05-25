@@ -22,6 +22,7 @@ import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../files/application/preview_cache_owner.dart';
 import 'remote_share_media_projection_boundary.dart';
 import 'remote_share_browser.dart';
+import 'remote_share_packet_route_adapter.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
@@ -45,7 +46,6 @@ import 'discovery_presence_expiry_policy.dart';
 import 'trusted_lan_peer_store.dart';
 import '../data/device_alias_repository.dart';
 import '../data/lan_discovery_service.dart';
-import '../data/lan_packet_codec.dart';
 import '../data/lan_protocol_events.dart';
 import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
@@ -173,7 +173,6 @@ class DiscoveryController extends ChangeNotifier {
        _remoteShareBrowser = remoteShareBrowser,
        _remoteShareMediaProjectionBoundary = remoteShareMediaProjectionBoundary,
        _sharedCacheCatalog = sharedCacheCatalog,
-       _sharedCacheIndexStore = sharedCacheIndexStore,
        _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
        _pathOpener = pathOpener,
@@ -232,6 +231,19 @@ class DiscoveryController extends ChangeNotifier {
       localDeviceMacProvider: () => _localDeviceMac,
       isTrustedMac: (normalizedMac) =>
           _trustedLanPeerStore.isTrustedMac(normalizedMac),
+      log: _log,
+    );
+    _remoteSharePacketRouteAdapter = RemoteSharePacketRouteAdapter(
+      lanDiscoveryService: lanDiscoveryService,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sharedCacheIndexStore: sharedCacheIndexStore,
+      remoteShareBrowser: remoteShareBrowser,
+      remoteShareMediaProjectionBoundary: remoteShareMediaProjectionBoundary,
+      localNameProvider: () => _localName,
+      localDeviceMacProvider: () => _localDeviceMac,
+      ownerCachesProvider: () => _ownerCachesSnapshot,
+      loadOwnerCaches: _loadOwnerCaches,
+      hasSharedStorageAccess: _hasAndroidSharedStorageAccess,
       log: _log,
     );
     _transferSessionCoordinator =
@@ -303,7 +315,6 @@ class DiscoveryController extends ChangeNotifier {
   final RemoteShareBrowser _remoteShareBrowser;
   final RemoteShareMediaProjectionBoundary _remoteShareMediaProjectionBoundary;
   final SharedCacheCatalog _sharedCacheCatalog;
-  final SharedCacheIndexStore _sharedCacheIndexStore;
   final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
@@ -321,6 +332,7 @@ class DiscoveryController extends ChangeNotifier {
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
   late final ClipboardPacketRouteAdapter _clipboardPacketRouteAdapter;
+  late final RemoteSharePacketRouteAdapter _remoteSharePacketRouteAdapter;
   late final TransferSessionCoordinator _transferSessionCoordinator;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
@@ -1648,7 +1660,10 @@ class DiscoveryController extends ChangeNotifier {
 
   void _onShareQuery(ShareQueryEvent event) {
     unawaited(
-      _handleShareQuery(event).catchError((Object error, StackTrace stack) {
+      _remoteSharePacketRouteAdapter.handleShareQuery(event).catchError((
+        Object error,
+        StackTrace stack,
+      ) {
         _log('Unhandled share query error from ${event.requesterIp}: $error');
         _log(stack.toString());
       }),
@@ -1663,78 +1678,6 @@ class DiscoveryController extends ChangeNotifier {
   void _onShareAccessResponse(ShareAccessResponseEvent event) {
     _transferSessionCoordinator.remoteShareAccessSessionBoundary
         .handleResponseEvent(event);
-  }
-
-  Future<void> _handleShareQuery(ShareQueryEvent event) async {
-    try {
-      final requesterAddress = InternetAddress.tryParse(event.requesterIp);
-      if (requesterAddress == null ||
-          requesterAddress.type != InternetAddressType.IPv4 ||
-          requesterAddress.address == '0.0.0.0') {
-        _log(
-          'Ignoring share query with invalid requester IP: ${event.requesterIp}',
-        );
-        return;
-      }
-
-      final removedCacheIds = <String>[];
-      final canPruneUnavailableCaches =
-          !Platform.isAndroid || await _hasAndroidSharedStorageAccess();
-      if (canPruneUnavailableCaches) {
-        removedCacheIds.addAll(
-          await _sharedCacheCatalog.pruneUnavailableOwnerCaches(
-            ownerMacAddress: _localDeviceMac,
-          ),
-        );
-      } else {
-        _log(
-          'Skipping owner cache pruning: Android shared storage access is not granted.',
-        );
-      }
-      await _loadOwnerCaches();
-
-      final catalog = <SharedCatalogEntryItem>[];
-      for (final cache in _ownerCachesSnapshot) {
-        final entries = await _sharedCacheIndexStore.readIndexEntries(cache);
-        final files = entries
-            .map(
-              (entry) => SharedCatalogFileItem(
-                relativePath: entry.relativePath,
-                sizeBytes: entry.sizeBytes,
-                thumbnailId: entry.thumbnailId,
-              ),
-            )
-            .toList(growable: false);
-        final totalBytes = entries.fold<int>(
-          0,
-          (sum, entry) => sum + entry.sizeBytes,
-        );
-        catalog.add(
-          SharedCatalogEntryItem(
-            cacheId: cache.cacheId,
-            displayName: cache.displayName,
-            itemCount: entries.length,
-            totalBytes: totalBytes,
-            files: files,
-          ),
-        );
-      }
-
-      await _lanDiscoveryService.sendShareCatalog(
-        targetIp: event.requesterIp,
-        requestId: event.requestId,
-        ownerName: _localName,
-        ownerMacAddress: _localDeviceMac,
-        entries: catalog,
-        removedCacheIds: removedCacheIds,
-      );
-      _log(
-        'Share catalog sent to ${event.requesterIp}. '
-        'entries=${catalog.length} removed=${removedCacheIds.length}',
-      );
-    } catch (error) {
-      _log('Failed to answer share query from ${event.requesterIp}: $error');
-    }
   }
 
   void _onShareCatalog(ShareCatalogEvent event) {
@@ -1770,48 +1713,15 @@ class DiscoveryController extends ChangeNotifier {
                 lastSeen: event.observedAt,
               );
 
-      if (ownerMac != null) {
-        final activeCacheIds = event.entries
-            .map((entry) => entry.cacheId)
-            .where((id) => id.trim().isNotEmpty)
-            .toSet();
-        final removedLocal = await _sharedCacheCatalog
-            .pruneReceiverCachesForOwner(
-              ownerMacAddress: ownerMac,
-              receiverMacAddress: _localDeviceMac,
-              activeCacheIds: activeCacheIds,
-            );
-        if (removedLocal.isNotEmpty) {
-          _log(
-            'Pruned ${removedLocal.length} stale receiver cache(s) '
-            'for owner ${event.ownerIp}',
-          );
-          _infoMessage =
-              'Remote shares updated: removed ${removedLocal.length} stale cache(s).';
-        } else if (event.removedCacheIds.isNotEmpty) {
-          _log(
-            'Owner ${event.ownerIp} reported '
-            '${event.removedCacheIds.length} removed cache(s).',
-          );
-        }
-      }
-
-      await _remoteShareBrowser.applyRemoteCatalog(
+      final result = await _remoteSharePacketRouteAdapter.handleShareCatalog(
         event: event,
         ownerDisplayName: aliasName ?? event.ownerName,
-        ownerMacAddress: ownerMac ?? event.ownerMacAddress,
+        ownerMacAddress: ownerMac,
       );
-      unawaited(
-        _remoteShareMediaProjectionBoundary
-            .syncRemoteThumbnails(event: event, requesterName: _localName)
-            .catchError((Object error, StackTrace stack) {
-              _log(
-                'Unhandled remote share media projection error '
-                'from ${event.ownerIp}: $error',
-              );
-              _log(stack.toString());
-            }),
-      );
+      if (result.removedLocalCacheCount > 0) {
+        _infoMessage =
+            'Remote shares updated: removed ${result.removedLocalCacheCount} stale cache(s).';
+      }
       notifyListeners();
     } catch (error, stackTrace) {
       _errorMessage = 'Failed to process remote share list: $error';
