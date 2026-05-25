@@ -55,6 +55,7 @@ import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';
 import 'discovery_network_scope_store.dart';
 import 'shared_folder_indexing_command.dart';
+import 'selected_file_share_command.dart';
 
 enum DiscoveryFlowState { idle, discovering }
 
@@ -282,6 +283,15 @@ class DiscoveryController extends ChangeNotifier {
             },
           ),
         );
+    _selectedFileShareCommand = SelectedFileShareCommand(
+      pickFilePaths: _pickFilePaths,
+      sharedCacheCatalog: sharedCacheCatalog,
+      sendFilesToDevice: _transferSessionCoordinator
+          .outgoingTransferSendBoundary
+          .sendFilesToDevice,
+      localDeviceMacProvider: () => _localDeviceMac,
+      log: _log,
+    );
     _discoveryNetworkScopeStore.addListener(_handleNetworkScopeChanged);
     _configuredDiscoveryTargetsStore.addListener(
       _handleConfiguredDiscoveryTargetsChanged,
@@ -336,6 +346,7 @@ class DiscoveryController extends ChangeNotifier {
   late final ClipboardPacketRouteAdapter _clipboardPacketRouteAdapter;
   late final RemoteSharePacketRouteAdapter _remoteSharePacketRouteAdapter;
   late final TransferSessionCoordinator _transferSessionCoordinator;
+  late final SelectedFileShareCommand _selectedFileShareCommand;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
       <String, DiscoveredDevice>{};
@@ -831,28 +842,11 @@ class DiscoveryController extends ChangeNotifier {
     _isAddingShare = true;
     notifyListeners();
     try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withData: false,
-      );
-      final paths =
-          result?.paths.whereType<String>().toList(growable: false) ??
-          <String>[];
-      if (paths.isEmpty) {
-        return;
+      final result = await _selectedFileShareCommand.addSharedFiles();
+      if (!result.cancelled) {
+        await _loadOwnerCaches();
+        _applySelectedFileShareResult(result);
       }
-
-      await _sharedCacheCatalog.buildOwnerSelectionCache(
-        ownerMacAddress: _localDeviceMac,
-        filePaths: paths,
-        displayName: 'Selected files',
-      );
-      await _loadOwnerCaches();
-      _infoMessage = 'Shared files added.';
-      _errorMessage = null;
-    } catch (error) {
-      _errorMessage = 'Failed to add shared files: $error';
-      _log(_errorMessage!);
     } finally {
       _isAddingShare = false;
       notifyListeners();
@@ -860,35 +854,11 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> sendFilesToSelectedDevice() async {
-    final target = selectedDevice;
-    if (target == null) {
-      _errorMessage = 'Select a target device first.';
-      notifyListeners();
-      return;
-    }
-
-    try {
-      final pick = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        withData: false,
-      );
-      final selectedPaths =
-          pick?.paths.whereType<String>().toList(growable: false) ?? <String>[];
-      if (selectedPaths.isEmpty) {
-        return;
-      }
-      await _transferSessionCoordinator.outgoingTransferSendBoundary
-          .sendFilesToDevice(
-            targetIp: target.ip,
-            targetName: target.displayName,
-            selectedPaths: selectedPaths,
-          );
-    } catch (error) {
-      _errorMessage = 'Failed to send transfer request: $error';
-      _log(_errorMessage!);
-    } finally {
-      notifyListeners();
-    }
+    final result = await _selectedFileShareCommand.sendFilesToDevice(
+      selectedDevice,
+    );
+    _applySelectedFileShareResult(result);
+    notifyListeners();
   }
 
   Future<void> _refresh({
@@ -1437,6 +1407,25 @@ class DiscoveryController extends ChangeNotifier {
     _sharedFolderIndexingProgress = state.progress;
     _sharedFolderIndexingVisualProgress = state.visualProgress;
     notifyListeners();
+  }
+
+  Future<List<String>> _pickFilePaths() async {
+    final pick = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      withData: false,
+    );
+    return pick?.paths.whereType<String>().toList(growable: false) ??
+        <String>[];
+  }
+
+  void _applySelectedFileShareResult(SelectedFileShareCommandResult result) {
+    if (result.cancelled) {
+      return;
+    }
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
+    }
   }
 
   Future<void> _setFriendStatus({
