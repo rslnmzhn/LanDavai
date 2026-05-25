@@ -37,6 +37,7 @@ import '../../transfer/domain/shared_folder_cache.dart';
 import 'configured_discovery_targets_store.dart';
 import 'clipboard_packet_route_adapter.dart';
 import 'discovery_device_presence_projector.dart';
+import 'discovery_friend_request_router.dart';
 import 'device_registry.dart';
 import 'discovery_internet_friend_command_adapter.dart';
 import 'discovery_lifecycle_timers.dart';
@@ -54,38 +55,6 @@ import '../domain/friend_peer.dart';
 import 'discovery_network_scope_store.dart';
 
 enum DiscoveryFlowState { idle, discovering }
-
-class IncomingFriendRequest {
-  const IncomingFriendRequest({
-    required this.requestId,
-    required this.senderIp,
-    required this.senderName,
-    required this.senderMacAddress,
-    required this.createdAt,
-  });
-
-  final String requestId;
-  final String senderIp;
-  final String senderName;
-  final String senderMacAddress;
-  final DateTime createdAt;
-}
-
-class _PendingOutgoingFriendRequest {
-  const _PendingOutgoingFriendRequest({
-    required this.requestId,
-    required this.targetIp,
-    required this.targetName,
-    required this.targetMacAddress,
-    required this.createdAt,
-  });
-
-  final String requestId;
-  final String targetIp;
-  final String targetName;
-  final String targetMacAddress;
-  final DateTime createdAt;
-}
 
 class ShareableVideoFile {
   const ShareableVideoFile({
@@ -211,6 +180,21 @@ class DiscoveryController extends ChangeNotifier {
       lanDiscoveryService: lanDiscoveryService,
       log: _log,
     );
+    _friendRequestRouter = DiscoveryFriendRequestRouter(
+      lanDiscoveryService: lanDiscoveryService,
+      fileHashService: fileHashService,
+      localNameProvider: () => _localName,
+      localDeviceMacProvider: () => _localDeviceMac,
+      isTrustedMac: (macAddress) =>
+          _trustedLanPeerStore.isTrustedMac(macAddress),
+      deviceByIp: (ip) => _devicesByIp[ip],
+      rememberVisibleFriendPeer: _rememberVisibleFriendPeer,
+      setFriendStatus: _setFriendStatus,
+      showFriendRequestNotification: (requesterName) => _appNotificationService
+          .showFriendRequestNotification(requesterName: requesterName),
+      log: _log,
+      nowProvider: _now,
+    );
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
         DownloadHistoryBoundary(
@@ -296,7 +280,6 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
-  static const Duration _pendingFriendRequestTtl = Duration(minutes: 2);
   static const Duration _sharedFolderIndexingUiTickInterval = Duration(
     milliseconds: 120,
   );
@@ -332,6 +315,7 @@ class DiscoveryController extends ChangeNotifier {
   late final DiscoverySettingsCommandAdapter _settingsCommandAdapter;
   late final DiscoveryInternetFriendCommandAdapter
   _internetFriendCommandAdapter;
+  late final DiscoveryFriendRequestRouter _friendRequestRouter;
   final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
@@ -342,11 +326,6 @@ class DiscoveryController extends ChangeNotifier {
 
   final Map<String, DiscoveredDevice> _devicesByIp =
       <String, DiscoveredDevice>{};
-  final List<IncomingFriendRequest> _incomingFriendRequests =
-      <IncomingFriendRequest>[];
-  final Map<String, _PendingOutgoingFriendRequest>
-  _pendingOutgoingFriendRequestsByRequestId =
-      <String, _PendingOutgoingFriendRequest>{};
   bool _started = false;
   bool _isDiscoveryServiceRunning = false;
   bool _isAppInForeground = true;
@@ -392,7 +371,7 @@ class DiscoveryController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get infoMessage => _infoMessage;
   List<IncomingFriendRequest> get incomingFriendRequests =>
-      List<IncomingFriendRequest>.unmodifiable(_incomingFriendRequests);
+      _friendRequestRouter.incomingFriendRequests;
   String get selectedNetworkScopeId =>
       _discoveryNetworkScopeStore.selectedScopeId;
   List<String> get configuredDiscoveryTargets =>
@@ -449,14 +428,7 @@ class DiscoveryController extends ChangeNotifier {
       _devicesByIp.values.where((d) => d.isAppDetected).length;
 
   bool hasPendingFriendRequestForDevice(DiscoveredDevice device) {
-    _purgeExpiredPendingFriendRequests();
-    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
-    if (mac == null) {
-      return false;
-    }
-    return _pendingOutgoingFriendRequestsByRequestId.values.any(
-      (pending) => pending.targetMacAddress == mac,
-    );
+    return _friendRequestRouter.hasPendingFriendRequestForDevice(device);
   }
 
   Future<void> start() async {
@@ -664,116 +636,33 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> sendFriendRequest(DiscoveredDevice device) async {
-    if (!device.isAppDetected) {
-      _errorMessage = 'Friend request is available only for Landa devices.';
-      notifyListeners();
-      return;
-    }
-
-    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
-    if (mac == null) {
-      _errorMessage = 'Cannot send friend request until MAC address is known.';
-      notifyListeners();
-      return;
-    }
-
-    if (_trustedLanPeerStore.isTrustedMac(mac)) {
-      _infoMessage = '${device.displayName} is already in your friends list.';
-      notifyListeners();
-      return;
-    }
-
-    _purgeExpiredPendingFriendRequests();
-    final alreadyPending = _pendingOutgoingFriendRequestsByRequestId.values.any(
-      (pending) => pending.targetMacAddress == mac,
-    );
-    if (alreadyPending) {
-      _infoMessage = 'Friend request already sent to ${device.displayName}.';
-      notifyListeners();
-      return;
-    }
-
-    final requestId = _fileHashService.buildStableId(
-      'friend-request|${DateTime.now().microsecondsSinceEpoch}|$mac|$_localDeviceMac',
-    );
-
     _isFriendMutationInProgress = true;
     notifyListeners();
-    try {
-      await _lanDiscoveryService.sendFriendRequest(
-        targetIp: device.ip,
-        requestId: requestId,
-        requesterName: _localName,
-        requesterMacAddress: _localDeviceMac,
-      );
-      _pendingOutgoingFriendRequestsByRequestId[requestId] =
-          _PendingOutgoingFriendRequest(
-            requestId: requestId,
-            targetIp: device.ip,
-            targetName: device.displayName,
-            targetMacAddress: mac,
-            createdAt: DateTime.now(),
-          );
-      _errorMessage = null;
-      _infoMessage = 'Friend request sent to ${device.displayName}.';
-    } catch (error) {
-      _errorMessage = 'Failed to send friend request: $error';
-      _log(_errorMessage!);
-    } finally {
-      _isFriendMutationInProgress = false;
-      notifyListeners();
+    final result = await _friendRequestRouter.sendFriendRequest(device);
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
     }
+    _isFriendMutationInProgress = false;
+    notifyListeners();
   }
 
   Future<void> respondToFriendRequest({
     required String requestId,
     required bool accept,
   }) async {
-    final index = _incomingFriendRequests.indexWhere(
-      (request) => request.requestId == requestId,
-    );
-    if (index < 0) {
-      return;
-    }
-
-    final request = _incomingFriendRequests[index];
-    _incomingFriendRequests.removeAt(index);
-
     _isFriendMutationInProgress = true;
     notifyListeners();
-
-    try {
-      if (accept) {
-        await _rememberVisibleFriendPeer(
-          ip: request.senderIp,
-          macAddress: request.senderMacAddress,
-          deviceName: request.senderName,
-          observedAt: request.createdAt,
-        );
-        await _setFriendStatus(
-          macAddress: request.senderMacAddress,
-          isFriend: true,
-        );
-        _infoMessage = '${request.senderName} added to friends.';
-      } else {
-        _infoMessage = 'Friend request from ${request.senderName} declined.';
-      }
-
-      await _lanDiscoveryService.sendFriendResponse(
-        targetIp: request.senderIp,
-        requestId: request.requestId,
-        responderName: _localName,
-        responderMacAddress: _localDeviceMac,
-        accepted: accept,
-      );
-      _errorMessage = null;
-    } catch (error) {
-      _errorMessage = 'Failed to process friend request: $error';
-      _log(_errorMessage!);
-    } finally {
-      _isFriendMutationInProgress = false;
-      notifyListeners();
+    final result = await _friendRequestRouter.respondToFriendRequest(
+      requestId: requestId,
+      accept: accept,
+    );
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
     }
+    _isFriendMutationInProgress = false;
+    notifyListeners();
   }
 
   Future<void> removeDeviceFromFriends(DiscoveredDevice device) async {
@@ -1336,141 +1225,35 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onFriendRequest(FriendRequestEvent event) {
-    final normalizedSenderMac = DeviceAliasRepository.normalizeMac(
-      event.requesterMacAddress,
-    );
-    if (normalizedSenderMac == null) {
-      _log(
-        'Ignoring friend request with invalid MAC from ${event.requesterIp}',
-      );
-      return;
+    final result = _friendRequestRouter.handleFriendRequest(event);
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
     }
-
-    if (normalizedSenderMac == _localDeviceMac) {
-      return;
-    }
-
-    final senderDevice = _devicesByIp[event.requesterIp];
-    final senderName = senderDevice?.displayName ?? event.requesterName;
-
-    if (_trustedLanPeerStore.isTrustedMac(normalizedSenderMac)) {
-      unawaited(
-        _rememberVisibleFriendPeer(
-          ip: event.requesterIp,
-          macAddress: normalizedSenderMac,
-          deviceName: senderName,
-          observedAt: event.observedAt,
-        ),
-      );
-      _log('Friend request from known friend $senderName. Auto-accepting.');
+    if (result.shouldNotifyListeners) {
       notifyListeners();
-      unawaited(
-        _lanDiscoveryService.sendFriendResponse(
-          targetIp: event.requesterIp,
-          requestId: event.requestId,
-          responderName: _localName,
-          responderMacAddress: _localDeviceMac,
-          accepted: true,
-        ),
-      );
-      return;
     }
-
-    unawaited(
-      _rememberVisibleFriendPeer(
-        ip: event.requesterIp,
-        macAddress: normalizedSenderMac,
-        deviceName: senderName,
-        observedAt: event.observedAt,
-      ),
-    );
-    _incomingFriendRequests.removeWhere(
-      (request) =>
-          request.requestId == event.requestId ||
-          request.senderMacAddress == normalizedSenderMac,
-    );
-    _incomingFriendRequests.insert(
-      0,
-      IncomingFriendRequest(
-        requestId: event.requestId,
-        senderIp: event.requesterIp,
-        senderName: senderName,
-        senderMacAddress: normalizedSenderMac,
-        createdAt: event.observedAt,
-      ),
-    );
-
-    _infoMessage = 'New friend request from $senderName.';
-    notifyListeners();
-    unawaited(
-      _appNotificationService.showFriendRequestNotification(
-        requesterName: senderName,
-      ),
-    );
   }
 
   void _onFriendResponse(FriendResponseEvent event) {
-    _purgeExpiredPendingFriendRequests();
-    final pending = _pendingOutgoingFriendRequestsByRequestId.remove(
-      event.requestId,
-    );
-    if (pending == null) {
-      return;
-    }
-
-    final responderMac = DeviceAliasRepository.normalizeMac(
-      event.responderMacAddress,
-    );
-    final responderName = event.responderName.trim().isEmpty
-        ? pending.targetName
-        : event.responderName;
-
-    if (!event.accepted) {
-      _infoMessage = '$responderName declined your friend request.';
-      notifyListeners();
-      return;
-    }
-
-    if (responderMac == null) {
-      _errorMessage = 'Friend request accepted, but responder MAC is invalid.';
-      notifyListeners();
-      return;
-    }
-
     unawaited(
-      _setFriendAfterAcceptance(
-        responderMac,
-        responderName,
-        responderIp: event.responderIp,
-        observedAt: event.observedAt,
+      _applyFriendResponseResult(
+        _friendRequestRouter.acceptFriendResponse(event),
       ),
     );
   }
 
-  Future<void> _setFriendAfterAcceptance(
-    String responderMac,
-    String responderName, {
-    String? responderIp,
-    DateTime? observedAt,
-  }) async {
-    try {
-      if (responderIp != null) {
-        await _rememberVisibleFriendPeer(
-          ip: responderIp,
-          macAddress: responderMac,
-          deviceName: responderName,
-          observedAt: observedAt ?? DateTime.now(),
-        );
-      }
-      await _setFriendStatus(macAddress: responderMac, isFriend: true);
-      _errorMessage = null;
-      _infoMessage = '$responderName accepted your friend request.';
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to save accepted friend: $error';
-      _log(_errorMessage!);
-      notifyListeners();
+  Future<void> _applyFriendResponseResult(
+    Future<DiscoveryFriendRequestResult> resultFuture,
+  ) async {
+    final result = await resultFuture;
+    if (result.errorMessage == null && result.infoMessage == null) {
+      return;
     }
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
+    }
+    notifyListeners();
   }
 
   Future<void> _rememberVisibleFriendPeer({
@@ -2014,14 +1797,6 @@ class DiscoveryController extends ChangeNotifier {
     return _remoteShareBrowser.ownerMacForCache(
       ownerIp: ownerIp,
       cacheId: cacheId,
-    );
-  }
-
-  void _purgeExpiredPendingFriendRequests() {
-    final now = DateTime.now();
-    _pendingOutgoingFriendRequestsByRequestId.removeWhere(
-      (_, pending) =>
-          now.difference(pending.createdAt) > _pendingFriendRequestTtl,
     );
   }
 
