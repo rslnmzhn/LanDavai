@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
@@ -27,7 +26,6 @@ import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
-import '../../transfer/application/shared_cache_owner_contracts.dart';
 import '../../transfer/application/remote_file_preview_transfer_boundary.dart';
 import '../../transfer/application/transfer_session_coordinator.dart';
 import '../../transfer/data/file_hash_service.dart';
@@ -55,6 +53,7 @@ import '../data/network_host_scanner.dart';
 import '../domain/discovered_device.dart';
 import '../domain/friend_peer.dart';
 import 'discovery_network_scope_store.dart';
+import 'shared_folder_indexing_command.dart';
 
 enum DiscoveryFlowState { idle, discovering }
 
@@ -76,22 +75,6 @@ class ShareableVideoFile {
   final int sizeBytes;
 
   String get fileName => p.basename(relativePath);
-}
-
-class SharedFolderIndexingProgress {
-  const SharedFolderIndexingProgress({
-    required this.processedFiles,
-    required this.totalFiles,
-    required this.currentRelativePath,
-    required this.stage,
-    required this.eta,
-  });
-
-  final int processedFiles;
-  final int totalFiles;
-  final String currentRelativePath;
-  final OwnerCacheProgressStage stage;
-  final Duration? eta;
 }
 
 class DiscoveryController extends ChangeNotifier {
@@ -168,6 +151,17 @@ class DiscoveryController extends ChangeNotifier {
       networkHostScanner: networkHostScanner,
       deviceRegistry: deviceRegistry,
       refreshReconciler: _refreshReconciler,
+    );
+    _sharedFolderIndexingCommand = SharedFolderIndexingCommand(
+      upsertOwnerFolderCache: sharedCacheCatalog.upsertOwnerFolderCache,
+      localDeviceMacProvider: () => _localDeviceMac,
+      settingsProvider: () => _settingsStore.settings,
+      ensureSharedStorageAccess:
+          _ensureAndroidSharedStorageAccessForFolderCache,
+      pickFolderPath: FilePicker.platform.getDirectoryPath,
+      loadOwnerCaches: _loadOwnerCaches,
+      onStateChanged: _applySharedFolderIndexingState,
+      nowProvider: _now,
     );
     _settingsCommandAdapter = DiscoverySettingsCommandAdapter(
       settingsStore: settingsStore,
@@ -289,11 +283,7 @@ class DiscoveryController extends ChangeNotifier {
     );
   }
 
-  static const Duration _sharedFolderIndexingUiTickInterval = Duration(
-    milliseconds: 120,
-  );
   static const Duration defaultAndroidResumeRestartDelay = Duration(seconds: 2);
-  static const double _sharedFolderScanProgressWeight = 0.35;
   static const MethodChannel _androidNetworkChannel = MethodChannel(
     'landa/network',
   );
@@ -322,6 +312,7 @@ class DiscoveryController extends ChangeNotifier {
   late final DiscoveryDevicePresenceProjector _devicePresenceProjector;
   late final DiscoveryRefreshReconciler _refreshReconciler;
   late final DiscoveryRefreshRunner _refreshRunner;
+  late final SharedFolderIndexingCommand _sharedFolderIndexingCommand;
   late final DiscoverySettingsCommandAdapter _settingsCommandAdapter;
   late final DiscoveryInternetFriendCommandAdapter
   _internetFriendCommandAdapter;
@@ -802,163 +793,17 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> addSharedFolder() async {
-    _isAddingShare = true;
-    _sharedFolderIndexingProgress = null;
-    _sharedFolderIndexingVisualProgress = null;
-    notifyListeners();
     try {
-      if (!await _ensureAndroidSharedStorageAccessForFolderCache()) {
-        return;
+      final result = await _sharedFolderIndexingCommand.run();
+      if (!result.cancelled) {
+        _infoMessage = result.infoMessage;
+        _errorMessage = null;
       }
-
-      final folderPath = await FilePicker.platform.getDirectoryPath();
-      if (folderPath == null || folderPath.trim().isEmpty) {
-        return;
-      }
-
-      final indexingStopwatch = Stopwatch()..start();
-      DateTime? lastUiTickAt;
-      _sharedFolderIndexingProgress = const SharedFolderIndexingProgress(
-        processedFiles: 0,
-        totalFiles: 0,
-        currentRelativePath: '',
-        stage: OwnerCacheProgressStage.scanning,
-        eta: null,
-      );
-      _sharedFolderIndexingVisualProgress = 0;
-      notifyListeners();
-
-      final result = await _sharedCacheCatalog.upsertOwnerFolderCache(
-        ownerMacAddress: _localDeviceMac,
-        folderPath: folderPath,
-        parallelWorkers: _resolveRecacheParallelWorkersOverride(),
-        onProgress:
-            ({
-              required int processedFiles,
-              required int totalFiles,
-              required String relativePath,
-              required OwnerCacheProgressStage stage,
-            }) {
-              final safeProcessedFiles = math.max(0, processedFiles);
-              final safeTotalFiles = math.max(0, totalFiles);
-              Duration? eta;
-              double nextVisualProgress;
-              if (stage == OwnerCacheProgressStage.scanning ||
-                  safeTotalFiles <= 0) {
-                nextVisualProgress = _estimateSharedFolderScanProgress(
-                  safeProcessedFiles,
-                );
-              } else {
-                final fileProgress = (safeProcessedFiles / safeTotalFiles)
-                    .clamp(0, 1)
-                    .toDouble();
-                nextVisualProgress =
-                    _sharedFolderScanProgressWeight +
-                    fileProgress * (1 - _sharedFolderScanProgressWeight);
-                eta = _estimateRecacheEta(
-                  elapsed: indexingStopwatch.elapsed,
-                  processedFiles: safeProcessedFiles,
-                  totalFiles: safeTotalFiles,
-                );
-              }
-              final currentVisualProgress =
-                  _sharedFolderIndexingVisualProgress ?? 0;
-              _sharedFolderIndexingVisualProgress = math
-                  .max(currentVisualProgress, nextVisualProgress)
-                  .clamp(0, 1)
-                  .toDouble();
-              final progress = SharedFolderIndexingProgress(
-                processedFiles: safeProcessedFiles,
-                totalFiles: safeTotalFiles,
-                currentRelativePath: relativePath,
-                stage: stage,
-                eta: eta,
-              );
-              _sharedFolderIndexingProgress = progress;
-              final now = DateTime.now();
-              final shouldNotify =
-                  lastUiTickAt == null ||
-                  now.difference(lastUiTickAt!) >=
-                      _sharedFolderIndexingUiTickInterval ||
-                  (safeTotalFiles > 0 && safeProcessedFiles >= safeTotalFiles);
-              if (shouldNotify) {
-                lastUiTickAt = now;
-                notifyListeners();
-              }
-            },
-      );
-      indexingStopwatch.stop();
-      final completedCount = math.max(0, result.record.itemCount);
-      _sharedFolderIndexingProgress = SharedFolderIndexingProgress(
-        processedFiles: completedCount,
-        totalFiles: completedCount,
-        currentRelativePath: '',
-        stage: OwnerCacheProgressStage.indexing,
-        eta: Duration.zero,
-      );
-      _sharedFolderIndexingVisualProgress = 1;
-      notifyListeners();
-      await _loadOwnerCaches();
-      final delta = result.record.itemCount - result.previousItemCount;
-      if (result.created) {
-        _infoMessage =
-            'Shared folder added. Indexed ${result.record.itemCount} file(s).';
-      } else if (delta > 0) {
-        _infoMessage =
-            'Shared folder updated. Found $delta new file(s), '
-            'total ${result.record.itemCount}.';
-      } else {
-        _infoMessage =
-            'Shared folder re-cached. No new files, '
-            'total ${result.record.itemCount}.';
-      }
-      _errorMessage = null;
     } catch (error) {
       _errorMessage = 'Failed to add shared folder: $error';
       _log(_errorMessage!);
-    } finally {
-      _sharedFolderIndexingProgress = null;
-      _sharedFolderIndexingVisualProgress = null;
-      _isAddingShare = false;
-      notifyListeners();
     }
-  }
-
-  double _estimateSharedFolderScanProgress(int discoveredFiles) {
-    if (discoveredFiles <= 0) {
-      return 0;
-    }
-    final normalized = 1 - math.exp(-(discoveredFiles / 3000));
-    final weighted = normalized * _sharedFolderScanProgressWeight;
-    return weighted.clamp(0, _sharedFolderScanProgressWeight).toDouble();
-  }
-
-  Duration? _estimateRecacheEta({
-    required Duration elapsed,
-    required int processedFiles,
-    required int totalFiles,
-  }) {
-    if (processedFiles <= 0 || totalFiles <= processedFiles) {
-      return null;
-    }
-    final elapsedMs = elapsed.inMilliseconds;
-    if (elapsedMs <= 0) {
-      return null;
-    }
-    final remainingFiles = totalFiles - processedFiles;
-    final etaMs = ((elapsedMs * remainingFiles) / processedFiles).round();
-    if (etaMs <= 0) {
-      return Duration.zero;
-    }
-    return Duration(milliseconds: etaMs);
-  }
-
-  int? _resolveRecacheParallelWorkersOverride() {
-    final configured = _currentSettings.recacheParallelWorkers;
-    if (configured <= 0) {
-      return null;
-    }
-    return configured;
+    notifyListeners();
   }
 
   Future<bool> _hasAndroidSharedStorageAccess() async {
@@ -1604,6 +1449,13 @@ class DiscoveryController extends ChangeNotifier {
     } catch (error) {
       _log('Failed to load owner cache list: $error');
     }
+  }
+
+  void _applySharedFolderIndexingState(SharedFolderIndexingState state) {
+    _isAddingShare = state.isAddingShare;
+    _sharedFolderIndexingProgress = state.progress;
+    _sharedFolderIndexingVisualProgress = state.visualProgress;
+    notifyListeners();
   }
 
   Future<void> _setFriendStatus({

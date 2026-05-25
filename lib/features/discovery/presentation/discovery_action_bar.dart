@@ -4,8 +4,8 @@ import 'package:easy_localization/easy_localization.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
-import '../application/discovery_controller.dart';
 import '../application/shared_cache_maintenance_boundary.dart';
+import '../application/shared_folder_indexing_command.dart';
 
 class DiscoveryActionBar extends StatelessWidget {
   const DiscoveryActionBar({
