@@ -6,7 +6,6 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
@@ -21,6 +20,7 @@ import '../../clipboard/data/clipboard_history_repository.dart';
 import '../../files/application/preview_cache_owner.dart';
 import 'remote_share_media_projection_boundary.dart';
 import 'remote_share_browser.dart';
+import 'remote_share_options_command.dart';
 import 'remote_share_packet_route_adapter.dart';
 import 'remote_clipboard_request_command.dart';
 import '../../settings/application/settings_store.dart';
@@ -34,6 +34,7 @@ import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'configured_discovery_targets_store.dart';
+import 'android_shared_storage_access.dart';
 import 'clipboard_packet_route_adapter.dart';
 import 'discovery_device_presence_projector.dart';
 import 'discovery_friend_request_router.dart';
@@ -129,7 +130,6 @@ class DiscoveryController extends ChangeNotifier {
        _remoteShareBrowser = remoteShareBrowser,
        _remoteShareMediaProjectionBoundary = remoteShareMediaProjectionBoundary,
        _sharedCacheCatalog = sharedCacheCatalog,
-       _fileHashService = fileHashService,
        _previewCacheOwner = previewCacheOwner,
        _pathOpener = pathOpener,
        _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
@@ -225,6 +225,19 @@ class DiscoveryController extends ChangeNotifier {
       sendClipboardQuery: lanDiscoveryService.sendClipboardQuery,
       log: _log,
     );
+    _androidSharedStorageAccess = AndroidSharedStorageAccess(
+      isAndroidProvider: isAndroidProvider,
+      log: _log,
+    );
+    _remoteShareOptionsCommand = RemoteShareOptionsCommand(
+      remoteShareBrowser: remoteShareBrowser,
+      fileHashService: fileHashService,
+      sendShareQuery: lanDiscoveryService.sendShareQuery,
+      localDeviceMacProvider: () => _localDeviceMac,
+      localNameProvider: () => _localName,
+      nowProvider: _now,
+      log: _log,
+    );
     _clipboardPacketRouteAdapter = ClipboardPacketRouteAdapter(
       lanDiscoveryService: lanDiscoveryService,
       clipboardHistoryStore: _clipboardHistoryStore,
@@ -305,10 +318,6 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   static const Duration defaultAndroidResumeRestartDelay = Duration(seconds: 2);
-  static const MethodChannel _androidNetworkChannel = MethodChannel(
-    'landa/network',
-  );
-
   final LanDiscoveryService _lanDiscoveryService;
   final DeviceRegistry _deviceRegistry;
   final InternetPeerEndpointStore _internetPeerEndpointStore;
@@ -321,7 +330,6 @@ class DiscoveryController extends ChangeNotifier {
   final RemoteShareBrowser _remoteShareBrowser;
   final RemoteShareMediaProjectionBoundary _remoteShareMediaProjectionBoundary;
   final SharedCacheCatalog _sharedCacheCatalog;
-  final FileHashService _fileHashService;
   final PreviewCacheOwner _previewCacheOwner;
   final PathOpener _pathOpener;
   final Duration _presenceExpiryCheckInterval;
@@ -343,6 +351,8 @@ class DiscoveryController extends ChangeNotifier {
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
   late final RemoteClipboardRequestCommand _remoteClipboardRequestCommand;
+  late final AndroidSharedStorageAccess _androidSharedStorageAccess;
+  late final RemoteShareOptionsCommand _remoteShareOptionsCommand;
   late final ClipboardPacketRouteAdapter _clipboardPacketRouteAdapter;
   late final RemoteSharePacketRouteAdapter _remoteSharePacketRouteAdapter;
   late final TransferSessionCoordinator _transferSessionCoordinator;
@@ -722,37 +732,10 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> loadRemoteShareOptions() async {
-    final targets = devices.where((device) => device.isAppDetected).toList();
-    try {
-      final result = await _remoteShareBrowser.startBrowse(
-        targets: targets,
-        receiverMacAddress: _localDeviceMac,
-        requesterName: _localName,
-        requestId: _fileHashService.buildStableId(
-          'share-query|${DateTime.now().microsecondsSinceEpoch}|$_localDeviceMac',
-        ),
-        sendShareQuery:
-            ({
-              required String targetIp,
-              required String requestId,
-              required String requesterName,
-            }) {
-              return _lanDiscoveryService.sendShareQuery(
-                targetIp: targetIp,
-                requestId: requestId,
-                requesterName: requesterName,
-              );
-            },
-      );
-      if (!result.hadTargets) {
-        _infoMessage = 'No Landa devices available for shared content.';
-      } else if (result.optionCount == 0) {
-        _infoMessage = 'No shared folders/files found on LAN devices.';
-      }
-      _errorMessage = null;
-    } catch (error) {
-      _errorMessage = 'Failed to request remote shares: $error';
-      _log(_errorMessage!);
+    final result = await _remoteShareOptionsCommand.load(devices: devices);
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
     }
     notifyListeners();
   }
@@ -799,43 +782,18 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<bool> _hasAndroidSharedStorageAccess() async {
-    if (!Platform.isAndroid) {
-      return true;
-    }
-
-    try {
-      final granted = await _androidNetworkChannel.invokeMethod<bool>(
-        'canAccessSharedStorage',
-      );
-      return granted ?? false;
-    } catch (error) {
-      _log('Failed to check shared storage permission: $error');
-      return false;
-    }
+    return _androidSharedStorageAccess.hasAccess();
   }
 
   Future<bool> _ensureAndroidSharedStorageAccessForFolderCache() async {
-    if (!Platform.isAndroid) {
-      return true;
+    final granted = await _androidSharedStorageAccess.requestAccess();
+    if (!granted) {
+      _errorMessage =
+          'Android storage access is required. '
+          'Allow "All files access" for Landa in Settings and retry.';
+      notifyListeners();
     }
-    if (await _hasAndroidSharedStorageAccess()) {
-      return true;
-    }
-
-    _errorMessage =
-        'Android storage access is required. '
-        'Allow "All files access" for Landa in Settings and retry.';
-    notifyListeners();
-
-    try {
-      await _androidNetworkChannel.invokeMethod<void>(
-        'requestSharedStorageAccess',
-      );
-    } catch (error) {
-      _log('Failed to request shared storage permission: $error');
-    }
-
-    return _hasAndroidSharedStorageAccess();
+    return granted;
   }
 
   Future<void> addSharedFiles() async {
