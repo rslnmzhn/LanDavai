@@ -22,6 +22,7 @@ import '../../files/application/preview_cache_owner.dart';
 import 'remote_share_media_projection_boundary.dart';
 import 'remote_share_browser.dart';
 import 'remote_share_packet_route_adapter.dart';
+import 'remote_clipboard_request_command.dart';
 import '../../settings/application/settings_store.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
@@ -158,7 +159,7 @@ class DiscoveryController extends ChangeNotifier {
       settingsProvider: () => _settingsStore.settings,
       ensureSharedStorageAccess:
           _ensureAndroidSharedStorageAccessForFolderCache,
-      pickFolderPath: FilePicker.platform.getDirectoryPath,
+      pickFolderPath: () => FilePicker.platform.getDirectoryPath(),
       loadOwnerCaches: _loadOwnerCaches,
       onStateChanged: _applySharedFolderIndexingState,
       nowProvider: _now,
@@ -213,6 +214,16 @@ class DiscoveryController extends ChangeNotifier {
     _remoteClipboardProjectionStore =
         remoteClipboardProjectionStore ??
         RemoteClipboardProjectionStore(fileHashService: fileHashService);
+    _remoteClipboardRequestCommand = RemoteClipboardRequestCommand(
+      remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
+      isTrustedMac: (normalizedMac) =>
+          _trustedLanPeerStore.isTrustedMac(normalizedMac),
+      localDeviceMacProvider: () => _localDeviceMac,
+      localNameProvider: () => _localName,
+      settingsProvider: () => _settingsStore.settings,
+      sendClipboardQuery: lanDiscoveryService.sendClipboardQuery,
+      log: _log,
+    );
     _clipboardPacketRouteAdapter = ClipboardPacketRouteAdapter(
       lanDiscoveryService: lanDiscoveryService,
       clipboardHistoryStore: _clipboardHistoryStore,
@@ -321,6 +332,7 @@ class DiscoveryController extends ChangeNotifier {
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
+  late final RemoteClipboardRequestCommand _remoteClipboardRequestCommand;
   late final ClipboardPacketRouteAdapter _clipboardPacketRouteAdapter;
   late final RemoteSharePacketRouteAdapter _remoteSharePacketRouteAdapter;
   late final TransferSessionCoordinator _transferSessionCoordinator;
@@ -690,43 +702,12 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   Future<void> requestRemoteClipboardHistory(DiscoveredDevice device) async {
-    if (!device.isAppDetected) {
-      _errorMessage = 'Remote clipboard is available only for Landa devices.';
-      notifyListeners();
-      return;
+    final result = await _remoteClipboardRequestCommand.request(device);
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null) {
+      _infoMessage = result.infoMessage;
     }
-
-    final mac = DeviceAliasRepository.normalizeMac(device.macAddress);
-    if (!_trustedLanPeerStore.isTrustedMac(mac)) {
-      _errorMessage =
-          'Remote clipboard is available only for confirmed friends.';
-      notifyListeners();
-      return;
-    }
-
-    final requestId = _remoteClipboardProjectionStore.beginRequest(
-      ownerIp: device.ip,
-      localDeviceMac: _localDeviceMac,
-    );
-    try {
-      await _lanDiscoveryService.sendClipboardQuery(
-        targetIp: device.ip,
-        requestId: requestId,
-        requesterName: _localName,
-        requesterMacAddress: _localDeviceMac,
-        maxEntries: _currentSettings.clipboardHistoryMaxEntries,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-      _errorMessage = null;
-      if (!_remoteClipboardProjectionStore.hasEntriesFor(device.ip)) {
-        _infoMessage = 'Clipboard history from ${device.displayName} is empty.';
-      }
-    } catch (error) {
-      _errorMessage = 'Failed to request remote clipboard: $error';
-      _log(_errorMessage!);
-    } finally {
-      _remoteClipboardProjectionStore.finishRequest(requestId: requestId);
-    }
+    notifyListeners();
   }
 
   Future<void> loadRemoteShareOptions() async {
