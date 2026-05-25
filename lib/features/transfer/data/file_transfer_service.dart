@@ -1,14 +1,13 @@
 import 'dart:async';
-import 'dart:collection';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../domain/transfer_request.dart';
+import 'socket_exact_reader.dart';
+import 'transfer_header_codec.dart';
 
 typedef TransferRuntimeDiagnosticCallback =
     void Function({
@@ -92,7 +91,7 @@ class FileTransferService {
   static const int _headerLengthBytes = 4;
   static const int _maxHeaderBytes = 8 * 1024 * 1024;
   static const int _chunkBytes = 64 * 1024;
-  static const int _manifestCompressionThresholdBytes = 128 * 1024;
+  static const TransferHeaderCodec _transferHeaderCodec = TransferHeaderCodec();
 
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
@@ -304,18 +303,6 @@ class FileTransferService {
                 ),
               )
               .toList(growable: false);
-      final payload = <String, Object?>{
-        'requestId': requestId,
-        'files': effectiveManifestItems
-            .map(
-              (file) => <String, Object>{
-                'name': file.fileName,
-                'size': file.sizeBytes,
-                'sha256': file.sha256,
-              },
-            )
-            .toList(growable: false),
-      };
       final knownHashFileCount = effectiveManifestItems.where((file) {
         return file.sha256.trim().isNotEmpty;
       }).length;
@@ -330,7 +317,9 @@ class FileTransferService {
           'missingHashFileCount': missingHashFileCount,
         },
       );
-      final header = _encodeTransferHeader(payload);
+      final header = _transferHeaderCodec.encode(
+        TransferHeader(requestId: requestId, files: effectiveManifestItems),
+      );
       final headerBytes = header.bytes;
       onDiagnosticEvent?.call(
         stage: 'transfer_header_built',
@@ -516,7 +505,7 @@ class FileTransferService {
     })?
     destinationPathAllocator,
   }) async {
-    final reader = _SocketReader(socket);
+    final reader = SocketExactReader(socket);
     await destinationDirectory.create(recursive: true);
 
     final headerLengthBytes = await reader.readExact(_headerLengthBytes);
@@ -528,17 +517,8 @@ class FileTransferService {
     }
 
     final headerBytes = await reader.readExact(headerLength);
-    final decoded = _decodeTransferHeader(headerBytes);
-    if (decoded is! Map<String, dynamic>) {
-      throw StateError('Invalid transfer header payload.');
-    }
-
-    final headerRequestId = decoded['requestId'] as String?;
-    final headerFiles = decoded['files'];
-    if (headerRequestId == null || headerFiles is! List<dynamic>) {
-      throw StateError('Transfer header is missing required fields.');
-    }
-    if (headerRequestId != requestId) {
+    final header = _transferHeaderCodec.decode(headerBytes);
+    if (header.requestId != requestId) {
       throw StateError('Transfer request mismatch.');
     }
 
@@ -552,13 +532,12 @@ class FileTransferService {
               ),
             )
             .toList(growable: false);
-    final normalizedActual = headerFiles
-        .whereType<Map<String, dynamic>>()
+    final normalizedActual = header.files
         .map(
           (item) => _FileDescriptor(
-            name: item['name'] as String,
-            sizeBytes: (item['size'] as num).toInt(),
-            sha256: item['sha256'] as String,
+            name: item.fileName,
+            sizeBytes: item.sizeBytes,
+            sha256: item.sha256,
           ),
         )
         .toList(growable: false);
@@ -621,7 +600,7 @@ class FileTransferService {
         final hashSink = sha256.startChunkedConversion(digestSink);
         var remaining = file.sizeBytes;
         while (remaining > 0) {
-          final toRead = min(remaining, _chunkBytes);
+          final toRead = remaining < _chunkBytes ? remaining : _chunkBytes;
           final chunk = await reader.readExact(toRead);
           sink.add(chunk);
           hashSink.add(chunk);
@@ -708,42 +687,6 @@ class FileTransferService {
     }
   }
 
-  _EncodedTransferHeader _encodeTransferHeader(Map<String, Object?> payload) {
-    final jsonBytes = utf8.encode(jsonEncode(payload));
-    if (jsonBytes.length < _manifestCompressionThresholdBytes) {
-      return _EncodedTransferHeader(
-        bytes: Uint8List.fromList(jsonBytes),
-        rawBytesLength: jsonBytes.length,
-        compressed: false,
-      );
-    }
-
-    final compressed = gzip.encode(jsonBytes);
-    if (compressed.length >= jsonBytes.length) {
-      return _EncodedTransferHeader(
-        bytes: Uint8List.fromList(jsonBytes),
-        rawBytesLength: jsonBytes.length,
-        compressed: false,
-      );
-    }
-    return _EncodedTransferHeader(
-      bytes: Uint8List.fromList(compressed),
-      rawBytesLength: jsonBytes.length,
-      compressed: true,
-    );
-  }
-
-  Object? _decodeTransferHeader(Uint8List headerBytes) {
-    final decodedBytes = _looksLikeGzip(headerBytes)
-        ? gzip.decode(headerBytes)
-        : headerBytes;
-    return jsonDecode(utf8.decode(decodedBytes));
-  }
-
-  bool _looksLikeGzip(Uint8List bytes) {
-    return bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
-  }
-
   Future<void> _cleanupFailedTransferFiles(List<String> paths) async {
     for (final path in paths) {
       try {
@@ -752,7 +695,9 @@ class FileTransferService {
     }
   }
 
-  Future<String> _allocateTemporaryDestinationPath(String destinationPath) async {
+  Future<String> _allocateTemporaryDestinationPath(
+    String destinationPath,
+  ) async {
     final directory = p.dirname(destinationPath);
     final basename = p.basename(destinationPath);
     var counter = 0;
@@ -899,101 +844,6 @@ class _FileDescriptor {
   final String name;
   final int sizeBytes;
   final String sha256;
-}
-
-class _EncodedTransferHeader {
-  const _EncodedTransferHeader({
-    required this.bytes,
-    required this.rawBytesLength,
-    required this.compressed,
-  });
-
-  final Uint8List bytes;
-  final int rawBytesLength;
-  final bool compressed;
-}
-
-class _SocketReader {
-  _SocketReader(Socket socket) {
-    _subscription = socket.listen(
-      (chunk) {
-        if (chunk.isEmpty) {
-          return;
-        }
-        _chunks.addLast(Uint8List.fromList(chunk));
-        _availableBytes += chunk.length;
-        _signalWaiter();
-      },
-      onError: (Object error) {
-        _error = error;
-        _signalWaiter();
-      },
-      onDone: () {
-        _isDone = true;
-        _signalWaiter();
-      },
-      cancelOnError: true,
-    );
-  }
-
-  final Queue<Uint8List> _chunks = Queue<Uint8List>();
-  late final StreamSubscription<List<int>> _subscription;
-  Completer<void>? _waiter;
-  Object? _error;
-  var _isDone = false;
-  var _availableBytes = 0;
-  var _headOffset = 0;
-
-  Future<Uint8List> readExact(int byteCount) async {
-    if (byteCount < 0) {
-      throw ArgumentError.value(byteCount, 'byteCount', 'Must be >= 0');
-    }
-    if (byteCount == 0) {
-      return Uint8List(0);
-    }
-
-    while (_availableBytes < byteCount) {
-      if (_error != null) {
-        throw StateError('Socket read failed: $_error');
-      }
-      if (_isDone) {
-        throw StateError(
-          'Socket closed before reading $byteCount bytes '
-          '(available=$_availableBytes).',
-        );
-      }
-      _waiter ??= Completer<void>();
-      await _waiter!.future;
-    }
-
-    final out = Uint8List(byteCount);
-    var written = 0;
-    while (written < byteCount) {
-      final head = _chunks.first;
-      final remainingInHead = head.length - _headOffset;
-      final toCopy = min(byteCount - written, remainingInHead);
-      out.setRange(written, written + toCopy, head, _headOffset);
-      written += toCopy;
-      _headOffset += toCopy;
-      _availableBytes -= toCopy;
-
-      if (_headOffset >= head.length) {
-        _chunks.removeFirst();
-        _headOffset = 0;
-      }
-    }
-    return out;
-  }
-
-  void _signalWaiter() {
-    final waiter = _waiter;
-    if (waiter != null && !waiter.isCompleted) {
-      waiter.complete();
-    }
-    _waiter = null;
-  }
-
-  Future<void> close() => _subscription.cancel();
 }
 
 class _DigestSink implements Sink<Digest> {
