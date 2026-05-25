@@ -18,6 +18,7 @@ import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
+import 'shared_download_request_mapper.dart';
 import 'transfer_cache_preparation_boundary.dart';
 import 'transfer_cache_preparation_models.dart';
 import 'transfer_session_coordinator.dart';
@@ -150,7 +151,6 @@ class SharedDownloadBoundary extends ChangeNotifier {
        _settingsProvider = settingsProvider,
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
-       _isTrustedSender = isTrustedSender,
        _resolveRemoteOwnerMac = resolveRemoteOwnerMac,
        _publishNotice = publishNotice,
        _updateDownloadProgress = updateDownloadProgress,
@@ -174,7 +174,10 @@ class SharedDownloadBoundary extends ChangeNotifier {
        _buildTransferFilesForCache = buildTransferFilesForCache,
        _buildWholeShareDirectStartSendPlan = buildWholeShareDirectStartSendPlan,
        _diagnosticLogStore =
-           diagnosticLogStore ?? SharedDownloadDiagnosticLogStore.disabled();
+           diagnosticLogStore ?? SharedDownloadDiagnosticLogStore.disabled(),
+       _requestMapper = SharedDownloadRequestMapper(
+         isTrustedSender: isTrustedSender,
+       );
 
   final LanDiscoveryService _lanDiscoveryService;
   final SharedCacheCatalog _sharedCacheCatalog;
@@ -185,7 +188,6 @@ class SharedDownloadBoundary extends ChangeNotifier {
   final AppSettings Function() _settingsProvider;
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
-  final bool Function(String? normalizedMac) _isTrustedSender;
   final String? Function({required String ownerIp, required String cacheId})
   _resolveRemoteOwnerMac;
   final void Function(TransferSessionNotice notice) _publishNotice;
@@ -273,6 +275,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
   })
   _buildWholeShareDirectStartSendPlan;
   final SharedDownloadDiagnosticLogStore _diagnosticLogStore;
+  final SharedDownloadRequestMapper _requestMapper;
 
   final List<IncomingSharedDownloadRequest> _incomingRequests =
       <IncomingSharedDownloadRequest>[];
@@ -884,26 +887,16 @@ class SharedDownloadBoundary extends ChangeNotifier {
   }
 
   Future<void> _handleDownloadRequest(DownloadRequestEvent event) async {
-    final normalizedRequesterMac = DeviceAliasRepository.normalizeMac(
-      event.requesterMacAddress,
+    final initialDetails = _requestMapper.diagnostics(
+      event: event,
+      normalizedRequesterMac: DeviceAliasRepository.normalizeMac(
+        event.requesterMacAddress,
+      ),
     );
     _writeDiagnostic(
       stage: 'sender_download_request_received',
       requestId: event.requestId,
-      details: <String, Object?>{
-        'requesterIp': event.requesterIp,
-        'requesterName': event.requesterName,
-        'requesterMacAddress':
-            normalizedRequesterMac ?? event.requesterMacAddress,
-        'cacheId': event.cacheId,
-        'selectedFileCount': event.selectedRelativePaths.length,
-        'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
-        'previewMode': event.previewMode,
-        'transferPort': event.transferPort,
-        'requestsWholeShare':
-            event.selectedRelativePaths.isEmpty &&
-            event.selectedFolderPrefixes.isEmpty,
-      },
+      details: initialDetails.received,
     );
     var cache = _findOwnerCacheById(event.cacheId);
     if (cache == null) {
@@ -920,11 +913,9 @@ class SharedDownloadBoundary extends ChangeNotifier {
       return;
     }
 
-    final isPreviewRequest = event.previewMode;
-    final isTrustedFriendRequester =
-        !isPreviewRequest && _isTrustedSender(normalizedRequesterMac);
-    if (!isPreviewRequest &&
-        !isTrustedFriendRequester &&
+    final mapping = _requestMapper.map(event: event, cache: cache);
+    if (!mapping.isPreviewRequest &&
+        !mapping.isTrustedFriendRequester &&
         _settingsProvider().downloadAttemptNotificationsEnabled) {
       unawaited(
         _appNotificationService.showDownloadAttemptNotification(
@@ -934,50 +925,24 @@ class SharedDownloadBoundary extends ChangeNotifier {
         ),
       );
     }
-    if (!isPreviewRequest && !isTrustedFriendRequester) {
+    if (!mapping.isPreviewRequest && !mapping.isTrustedFriendRequester) {
       unawaited(SystemSound.play(SystemSoundType.alert));
     }
 
-    _publishNotice(
-      TransferSessionNotice(
-        infoMessage: isPreviewRequest
-            ? 'Preview request from ${event.requesterName}.'
-            : isTrustedFriendRequester
-            ? 'Trusted friend ${event.requesterName} requested "${cache.displayName}". Auto-approving.'
-            : 'Download request from ${event.requesterName} for "${cache.displayName}".',
-        clearError: true,
-      ),
-    );
+    _publishNotice(mapping.notice);
 
-    if (!isPreviewRequest) {
-      final request = IncomingSharedDownloadRequest(
-        requestId: event.requestId,
-        requesterIp: event.requesterIp,
-        requesterName: event.requesterName,
-        requesterMacAddress: event.requesterMacAddress,
-        sharedCacheId: cache.cacheId,
-        sharedLabel: cache.displayName,
-        selectedRelativePaths: List<String>.from(event.selectedRelativePaths),
-        selectedFolderPrefixes: List<String>.from(event.selectedFolderPrefixes),
-        transferPort: event.transferPort,
-        createdAt: event.observedAt,
-      );
-      if (isTrustedFriendRequester) {
+    final request = mapping.incomingRequest;
+    if (request != null) {
+      if (mapping.isTrustedFriendRequester) {
+        final approvedDetails = _requestMapper.diagnostics(
+          event: event,
+          normalizedRequesterMac: mapping.normalizedRequesterMac,
+          cacheId: cache.cacheId,
+        );
         _writeDiagnostic(
           stage: 'sender_download_request_auto_approved_for_friend',
           requestId: event.requestId,
-          details: <String, Object?>{
-            'requesterIp': event.requesterIp,
-            'requesterName': event.requesterName,
-            'requesterMacAddress':
-                normalizedRequesterMac ?? event.requesterMacAddress,
-            'cacheId': cache.cacheId,
-            'selectedFileCount': event.selectedRelativePaths.length,
-            'selectedFolderPrefixCount': event.selectedFolderPrefixes.length,
-            'requestsWholeShare':
-                event.selectedRelativePaths.isEmpty &&
-                event.selectedFolderPrefixes.isEmpty,
-          },
+          details: approvedDetails.autoApprovedForFriend,
         );
         await _approveIncomingSharedDownloadRequest(request);
         return;
