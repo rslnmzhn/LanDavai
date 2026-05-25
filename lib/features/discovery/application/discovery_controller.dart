@@ -38,6 +38,8 @@ import 'configured_discovery_targets_store.dart';
 import 'clipboard_packet_route_adapter.dart';
 import 'discovery_device_presence_projector.dart';
 import 'discovery_friend_request_router.dart';
+import 'discovery_refresh_reconciler.dart';
+import 'discovery_refresh_runner.dart';
 import 'device_registry.dart';
 import 'discovery_internet_friend_command_adapter.dart';
 import 'discovery_lifecycle_timers.dart';
@@ -129,7 +131,6 @@ class DiscoveryController extends ChangeNotifier {
     bool Function()? isAndroidProvider,
     DateTime Function()? nowProvider,
   }) : _lanDiscoveryService = lanDiscoveryService,
-       _networkHostScanner = networkHostScanner,
        _deviceRegistry = deviceRegistry,
        _internetPeerEndpointStore = internetPeerEndpointStore,
        _trustedLanPeerStore = trustedLanPeerStore,
@@ -159,6 +160,14 @@ class DiscoveryController extends ChangeNotifier {
     );
     _devicePresenceProjector = DiscoveryDevicePresenceProjector(
       deviceRegistry: deviceRegistry,
+    );
+    _refreshReconciler = DiscoveryRefreshReconciler(
+      devicePresenceProjector: _devicePresenceProjector,
+    );
+    _refreshRunner = DiscoveryRefreshRunner(
+      networkHostScanner: networkHostScanner,
+      deviceRegistry: deviceRegistry,
+      refreshReconciler: _refreshReconciler,
     );
     _settingsCommandAdapter = DiscoverySettingsCommandAdapter(
       settingsStore: settingsStore,
@@ -290,7 +299,6 @@ class DiscoveryController extends ChangeNotifier {
   );
 
   final LanDiscoveryService _lanDiscoveryService;
-  final NetworkHostScanner _networkHostScanner;
   final DeviceRegistry _deviceRegistry;
   final InternetPeerEndpointStore _internetPeerEndpointStore;
   final TrustedLanPeerStore _trustedLanPeerStore;
@@ -312,6 +320,8 @@ class DiscoveryController extends ChangeNotifier {
   final DiscoveryLifecycleTimers _lifecycleTimers = DiscoveryLifecycleTimers();
   late final DiscoveryPresenceExpiryPolicy _presenceExpiryPolicy;
   late final DiscoveryDevicePresenceProjector _devicePresenceProjector;
+  late final DiscoveryRefreshReconciler _refreshReconciler;
+  late final DiscoveryRefreshRunner _refreshRunner;
   late final DiscoverySettingsCommandAdapter _settingsCommandAdapter;
   late final DiscoveryInternetFriendCommandAdapter
   _internetFriendCommandAdapter;
@@ -1077,73 +1087,34 @@ class DiscoveryController extends ChangeNotifier {
       }
       await _ensureDiscoveryScopeApplied();
       _log('${isManual ? "Manual" : "Auto"} refresh scan started');
-      final hosts = await _networkHostScanner.scanActiveHosts(
+      final now = DateTime.now();
+      final refreshResult = await _refreshRunner.run(
+        currentDevicesByIp: _devicesByIp,
         localSourceIps: _discoveryNetworkScopeStore.activeLocalIps,
         configuredTargetIps: _configuredDiscoveryTargetsStore.targetSet,
+        observedAt: now,
+        selectedDeviceIp: _selectedDeviceIp,
+        isDisposed: () => _isDisposed,
       );
       if (_isDisposed) {
         return;
       }
-      final now = DateTime.now();
       _log(
-        '${isManual ? "Manual" : "Auto"} refresh scan finished. hosts=${hosts.length}',
+        '${isManual ? "Manual" : "Auto"} refresh scan finished. hosts=${refreshResult.hostCount}',
       );
 
-      final seenMacToIp = <String, String>{};
-      for (final host in hosts.entries) {
-        final normalizedMac = DeviceAliasRepository.normalizeMac(host.value);
-        if (normalizedMac != null) {
-          seenMacToIp[normalizedMac] = host.key;
-        }
-      }
-      if (seenMacToIp.isNotEmpty) {
-        await _deviceRegistry.recordSeenDevices(seenMacToIp);
-        if (_isDisposed) {
-          return;
-        }
-      }
-
-      for (final host in hosts.entries) {
-        final ip = host.key;
-        final existing =
-            _devicesByIp[ip] ?? DiscoveredDevice(ip: ip, lastSeen: now);
-        final normalizedMac = _devicePresenceProjector.resolveStableDeviceMac(
-          ip: ip,
-          observedMac: host.value,
-          existingMac: existing.macAddress,
-        );
-        _devicesByIp[ip] = existing.copyWith(
-          macAddress: normalizedMac ?? existing.macAddress,
-          isReachable: true,
-          lastSeen: now,
-        );
-      }
-
-      final staleIps = <String>[];
-      _devicesByIp.forEach((ip, device) {
-        if (hosts.containsKey(ip)) {
-          return;
-        }
-
-        if (!device.isAppDetected) {
-          staleIps.add(ip);
-          return;
-        }
-
-        _devicesByIp[ip] = device.copyWith(isReachable: false);
-      });
-      for (final staleIp in staleIps) {
-        _devicesByIp.remove(staleIp);
-      }
+      _devicesByIp
+        ..clear()
+        ..addAll(refreshResult.devicesByIp);
       if (_selectedDeviceIp != null &&
-          (!_devicesByIp.containsKey(_selectedDeviceIp) ||
+          (!refreshResult.hasSelectedDevice ||
               !_isDeviceVisibleInSelectedProjection(_selectedDeviceIp!))) {
         _selectedDeviceIp = null;
       }
       _expireStalePresence(now: now, notifyListenersWhenChanged: false);
       _log(
         'Device list updated. total=${_devicesByIp.length} '
-        'appDetected=$appDetectedCount removed=${staleIps.length}',
+        'appDetected=$appDetectedCount removed=${refreshResult.removedIps.length}',
       );
 
       _errorMessage = null;
