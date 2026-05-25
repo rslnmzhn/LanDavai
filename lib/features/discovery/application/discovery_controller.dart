@@ -36,6 +36,7 @@ import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'configured_discovery_targets_store.dart';
 import 'clipboard_packet_route_adapter.dart';
+import 'discovery_device_presence_projector.dart';
 import 'device_registry.dart';
 import 'discovery_internet_friend_command_adapter.dart';
 import 'discovery_lifecycle_timers.dart';
@@ -187,6 +188,9 @@ class DiscoveryController extends ChangeNotifier {
       appPresenceTtl: appPresenceTtl,
       nearbyAvailabilityTtl: nearbyAvailabilityTtl,
     );
+    _devicePresenceProjector = DiscoveryDevicePresenceProjector(
+      deviceRegistry: deviceRegistry,
+    );
     _settingsCommandAdapter = DiscoverySettingsCommandAdapter(
       settingsStore: settingsStore,
       onSettingsChanged: (_) {
@@ -324,6 +328,7 @@ class DiscoveryController extends ChangeNotifier {
   final DateTime Function() _now;
   final DiscoveryLifecycleTimers _lifecycleTimers = DiscoveryLifecycleTimers();
   late final DiscoveryPresenceExpiryPolicy _presenceExpiryPolicy;
+  late final DiscoveryDevicePresenceProjector _devicePresenceProjector;
   late final DiscoverySettingsCommandAdapter _settingsCommandAdapter;
   late final DiscoveryInternetFriendCommandAdapter
   _internetFriendCommandAdapter;
@@ -874,7 +879,7 @@ class DiscoveryController extends ChangeNotifier {
     required DiscoveredDevice device,
     required String alias,
   }) async {
-    final mac = _resolveStableDeviceMac(
+    final mac = _devicePresenceProjector.resolveStableDeviceMac(
       ip: device.ip,
       observedMac: device.macAddress,
       existingMac: device.macAddress,
@@ -1213,7 +1218,7 @@ class DiscoveryController extends ChangeNotifier {
         final ip = host.key;
         final existing =
             _devicesByIp[ip] ?? DiscoveredDevice(ip: ip, lastSeen: now);
-        final normalizedMac = _resolveStableDeviceMac(
+        final normalizedMac = _devicePresenceProjector.resolveStableDeviceMac(
           ip: ip,
           observedMac: host.value,
           existingMac: existing.macAddress,
@@ -1281,39 +1286,14 @@ class DiscoveryController extends ChangeNotifier {
   void _onAppDetected(AppPresenceEvent event) {
     _log('App handshake detected from ${event.ip} (${event.deviceName})');
     final existing = _devicesByIp[event.ip];
-    final normalizedPeerId = _normalizePeerId(event.peerId);
-    final normalizedMac = _resolveStableDeviceMac(
-      ip: event.ip,
-      peerId: normalizedPeerId,
-      observedMac: null,
-      existingMac: existing?.macAddress,
+    final result = _devicePresenceProjector.projectAppPresence(
+      event: event,
+      existing: existing,
+      friends: _internetPeerEndpointStore.peers,
     );
-    final detectedOs = _normalizeOperatingSystemName(event.operatingSystem);
-    final friendName = normalizedPeerId == null
-        ? null
-        : _displayNameForPeerId(normalizedPeerId);
-    final detectedCategory = _resolveDeviceCategory(
-      deviceType: event.deviceType,
-      operatingSystem: detectedOs,
-    );
-    _devicesByIp[event.ip] =
-        (existing ?? DiscoveredDevice(ip: event.ip, lastSeen: event.observedAt))
-            .copyWith(
-              peerId: normalizedPeerId ?? existing?.peerId,
-              deviceName: friendName ?? event.deviceName,
-              operatingSystem: detectedOs ?? existing?.operatingSystem,
-              deviceCategory: detectedCategory,
-              macAddress: normalizedMac ?? existing?.macAddress,
-              isNearbyTransferAvailable: event.nearbyTransferPort != null,
-              nearbyTransferPort: event.nearbyTransferPort,
-              appPresenceObservedAt: event.observedAt,
-              nearbyAvailabilityObservedAt: event.nearbyTransferPort != null
-                  ? event.observedAt
-                  : null,
-              isAppDetected: true,
-              isReachable: true,
-              lastSeen: event.observedAt,
-            );
+    _devicesByIp[event.ip] = result.device;
+    final normalizedMac = result.normalizedMacAddress;
+    final normalizedPeerId = result.normalizedPeerId;
     if (normalizedMac != null && normalizedPeerId != null) {
       final persistedMac = _deviceRegistry.macForPeerId(normalizedPeerId);
       final persistedIpMac = _deviceRegistry.macForIp(event.ip);
@@ -1348,62 +1328,6 @@ class DiscoveryController extends ChangeNotifier {
       }
     }
     notifyListeners();
-  }
-
-  String? _normalizeOperatingSystemName(String? raw) {
-    if (raw == null) {
-      return null;
-    }
-    final value = raw.trim();
-    if (value.isEmpty) {
-      return null;
-    }
-    final lower = value.toLowerCase();
-    if (lower.contains('android')) {
-      return 'Android';
-    }
-    if (lower == 'ios' || lower.contains('iphone') || lower.contains('ipad')) {
-      return 'iOS';
-    }
-    if (lower.contains('windows')) {
-      return 'Windows';
-    }
-    if (lower.contains('mac')) {
-      return 'macOS';
-    }
-    if (lower.contains('linux')) {
-      return 'Linux';
-    }
-    return value;
-  }
-
-  DeviceCategory? _resolveDeviceCategory({
-    required String? deviceType,
-    required String? operatingSystem,
-  }) {
-    final normalizedType = deviceType?.trim().toLowerCase();
-    if (normalizedType == 'phone' ||
-        normalizedType == 'mobile' ||
-        normalizedType == 'tablet') {
-      return DeviceCategory.phone;
-    }
-    if (normalizedType == 'pc' ||
-        normalizedType == 'desktop' ||
-        normalizedType == 'laptop') {
-      return DeviceCategory.pc;
-    }
-
-    final os = operatingSystem?.toLowerCase();
-    if (os == null) {
-      return null;
-    }
-    if (os.contains('android') || os.contains('ios')) {
-      return DeviceCategory.phone;
-    }
-    if (os.contains('windows') || os.contains('linux') || os.contains('mac')) {
-      return DeviceCategory.pc;
-    }
-    return null;
   }
 
   void _onTransferRequest(TransferRequestEvent event) {
@@ -1563,22 +1487,21 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final existing = _devicesByIp[trimmedIp];
+    final projected = _devicePresenceProjector.projectVisibleFriendPeer(
+      ip: trimmedIp,
+      macAddress: normalizedMac,
+      deviceName: deviceName,
+      observedAt: observedAt,
+      existing: existing,
+      peerId: peerId,
+    );
+    if (projected == null) {
+      return;
+    }
+    _devicesByIp[trimmedIp] = projected;
     final normalizedPeerId =
-        _normalizePeerId(peerId) ?? _normalizePeerId(existing?.peerId);
-    final trimmedName = deviceName.trim();
-    _devicesByIp[trimmedIp] =
-        (existing ?? DiscoveredDevice(ip: trimmedIp, lastSeen: observedAt))
-            .copyWith(
-              peerId: normalizedPeerId ?? existing?.peerId,
-              macAddress: normalizedMac,
-              deviceName: trimmedName.isEmpty
-                  ? existing?.deviceName
-                  : trimmedName,
-              appPresenceObservedAt: observedAt,
-              isAppDetected: true,
-              isReachable: true,
-              lastSeen: observedAt,
-            );
+        DiscoveryDevicePresenceProjector.normalizePeerId(peerId) ??
+        DiscoveryDevicePresenceProjector.normalizePeerId(existing?.peerId);
     if (normalizedPeerId != null) {
       await _deviceRegistry.recordPeerIdentity(
         macAddress: normalizedMac,
@@ -1620,7 +1543,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     final existing = _devicesByIp[result.ownerIp];
-    final ownerMac = _resolveStableDeviceMac(
+    final ownerMac = _devicePresenceProjector.resolveStableDeviceMac(
       ip: result.ownerIp,
       observedMac: result.ownerMacAddress,
       existingMac: existing?.macAddress,
@@ -1692,7 +1615,7 @@ class DiscoveryController extends ChangeNotifier {
   Future<void> _handleShareCatalog(ShareCatalogEvent event) async {
     try {
       final existing = _devicesByIp[event.ownerIp];
-      final ownerMac = _resolveStableDeviceMac(
+      final ownerMac = _devicePresenceProjector.resolveStableDeviceMac(
         ip: event.ownerIp,
         observedMac: event.ownerMacAddress,
         existingMac: existing?.macAddress,
@@ -2084,43 +2007,6 @@ class DiscoveryController extends ChangeNotifier {
     developer.log(message, name: 'DiscoveryController');
   }
 
-  String? _resolveStableDeviceMac({
-    required String ip,
-    String? peerId,
-    required String? observedMac,
-    required String? existingMac,
-  }) {
-    final normalizedObservedMac = DeviceAliasRepository.normalizeMac(
-      observedMac,
-    );
-    if (normalizedObservedMac != null) {
-      return normalizedObservedMac;
-    }
-
-    final normalizedPeerId = _normalizePeerId(peerId);
-    if (normalizedPeerId != null) {
-      final knownMac = _deviceRegistry.macForPeerId(normalizedPeerId);
-      if (knownMac != null) {
-        return knownMac;
-      }
-    }
-
-    final knownMac = _deviceRegistry.macForIp(ip);
-    if (knownMac != null) {
-      return knownMac;
-    }
-
-    return DeviceAliasRepository.normalizeMac(existingMac);
-  }
-
-  String? _normalizePeerId(String? peerId) {
-    final normalized = peerId?.trim();
-    if (normalized == null || normalized.isEmpty) {
-      return null;
-    }
-    return normalized;
-  }
-
   String? _resolveRemoteOwnerMac({
     required String ownerIp,
     required String cacheId,
@@ -2146,14 +2032,5 @@ class DiscoveryController extends ChangeNotifier {
       aliasName: _deviceRegistry.aliasForMac(normalizedMac) ?? device.aliasName,
       isTrusted: _trustedLanPeerStore.isTrustedMac(normalizedMac),
     );
-  }
-
-  String? _displayNameForPeerId(String peerId) {
-    for (final peer in _internetPeerEndpointStore.peers) {
-      if (peer.friendId == peerId) {
-        return peer.displayName;
-      }
-    }
-    return null;
   }
 }
