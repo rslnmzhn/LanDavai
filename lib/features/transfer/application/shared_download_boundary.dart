@@ -1,8 +1,9 @@
 import 'dart:async';
 import 'dart:developer' as developer;
-import 'dart:io';
+import 'dart:io' show Directory;
 
 export 'transfer_cache_preparation_models.dart';
+export 'shared_download_path_resolver.dart' show SharedDownloadReceiveLayout;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -18,15 +19,11 @@ import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
 import 'shared_cache_catalog.dart';
+import 'shared_download_path_resolver.dart';
 import 'shared_download_request_mapper.dart';
 import 'transfer_cache_preparation_boundary.dart';
 import 'transfer_cache_preparation_models.dart';
 import 'transfer_session_coordinator.dart';
-
-enum SharedDownloadReceiveLayout {
-  preserveRelativeStructure,
-  preserveSharedRoot,
-}
 
 class TransferStreamedFileHash {
   const TransferStreamedFileHash({
@@ -175,6 +172,9 @@ class SharedDownloadBoundary extends ChangeNotifier {
        _buildWholeShareDirectStartSendPlan = buildWholeShareDirectStartSendPlan,
        _diagnosticLogStore =
            diagnosticLogStore ?? SharedDownloadDiagnosticLogStore.disabled(),
+       _pathResolver = SharedDownloadPathResolver(
+         transferStorageService: transferStorageService,
+       ),
        _requestMapper = SharedDownloadRequestMapper(
          isTrustedSender: isTrustedSender,
        );
@@ -275,6 +275,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
   })
   _buildWholeShareDirectStartSendPlan;
   final SharedDownloadDiagnosticLogStore _diagnosticLogStore;
+  final SharedDownloadPathResolver _pathResolver;
   final SharedDownloadRequestMapper _requestMapper;
 
   final List<IncomingSharedDownloadRequest> _incomingRequests =
@@ -387,9 +388,10 @@ class SharedDownloadBoundary extends ChangeNotifier {
 
     Directory? destinationDirectory;
     try {
-      destinationDirectory = await _resolveRemoteDownloadDestinationDirectory(
-        useStandardAppDownloadFolder: useStandardAppDownloadFolder,
-      );
+      destinationDirectory = await _pathResolver
+          .resolveRemoteDownloadDestinationDirectory(
+            useStandardAppDownloadFolder: useStandardAppDownloadFolder,
+          );
     } catch (error) {
       _log('Failed to resolve remote download destination: $error');
       _publishNotice(
@@ -432,13 +434,13 @@ class SharedDownloadBoundary extends ChangeNotifier {
             (selectedPaths.isNotEmpty ||
                 folderPrefixes.isNotEmpty ||
                 (requestsWholeShare && sharedLabel.isNotEmpty));
-        final receiveLayout = _resolveSharedDownloadReceiveLayout(
+        final receiveLayout = _pathResolver.resolveReceiveLayout(
           selectedRelativePaths: selectedPaths,
           selectedFolderPrefixes: folderPrefixes,
         );
         final destinationRelativeRootPrefix =
             receiveLayout == SharedDownloadReceiveLayout.preserveSharedRoot
-            ? _resolveReceiveRootPrefix(sharedLabel)
+            ? _pathResolver.resolveReceiveRootPrefix(sharedLabel)
             : null;
         _writeDiagnostic(
           stage: 'download_request_preparing',
@@ -1592,94 +1594,6 @@ class SharedDownloadBoundary extends ChangeNotifier {
           ),
         )
         .toList(growable: false);
-  }
-
-  Future<Directory?> _resolveRemoteDownloadDestinationDirectory({
-    required bool useStandardAppDownloadFolder,
-  }) async {
-    if (_transferStorageService.supportsDesktopDownloadPicker) {
-      if (useStandardAppDownloadFolder) {
-        return _transferStorageService.resolveReceiveDirectory(
-          appFolderName: 'Landa',
-        );
-      }
-      return _transferStorageService.pickDesktopDownloadDirectory();
-    }
-
-    return _transferStorageService.resolveReceiveDirectory(
-      appFolderName: 'Landa',
-    );
-  }
-
-  SharedDownloadReceiveLayout _resolveSharedDownloadReceiveLayout({
-    required List<String> selectedRelativePaths,
-    required List<String> selectedFolderPrefixes,
-  }) {
-    if (selectedRelativePaths.isEmpty && selectedFolderPrefixes.isEmpty) {
-      return SharedDownloadReceiveLayout.preserveSharedRoot;
-    }
-    return SharedDownloadReceiveLayout.preserveRelativeStructure;
-  }
-
-  String? _resolveReceiveRootPrefix(String sharedLabel) {
-    final sanitized = _sanitizeTransferRelativePathPart(sharedLabel.trim());
-    if (sanitized.isEmpty || sanitized == '_') {
-      return null;
-    }
-    return sanitized;
-  }
-
-  String _sanitizeTransferRelativePathPart(String input) {
-    if (input.isEmpty) {
-      return '';
-    }
-
-    var value = input
-        .replaceAll(RegExp(r'[\x00-\x1F]'), '')
-        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-
-    if (Platform.isWindows) {
-      value = value.trimRight();
-      value = value.replaceFirst(RegExp(r'[. ]+$'), '');
-      if (value.isEmpty) {
-        return '_';
-      }
-
-      const reserved = <String>{
-        'con',
-        'prn',
-        'aux',
-        'nul',
-        'com1',
-        'com2',
-        'com3',
-        'com4',
-        'com5',
-        'com6',
-        'com7',
-        'com8',
-        'com9',
-        'lpt1',
-        'lpt2',
-        'lpt3',
-        'lpt4',
-        'lpt5',
-        'lpt6',
-        'lpt7',
-        'lpt8',
-        'lpt9',
-      };
-      final base = value.split('.').first.toLowerCase();
-      if (reserved.contains(base)) {
-        value = '_$value';
-      }
-    }
-
-    if (value.length > 120) {
-      value = value.substring(0, 120);
-    }
-
-    return value.isEmpty ? '_' : value;
   }
 
   String _pendingRemoteDownloadKey({
