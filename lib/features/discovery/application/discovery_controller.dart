@@ -8,7 +8,6 @@ import 'package:crypto/crypto.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
@@ -20,7 +19,6 @@ import '../../clipboard/application/clipboard_history_store.dart';
 import '../../clipboard/application/remote_clipboard_projection_store.dart';
 import '../../clipboard/data/clipboard_capture_service.dart';
 import '../../clipboard/data/clipboard_history_repository.dart';
-import '../../clipboard/domain/clipboard_entry.dart';
 import '../../files/application/preview_cache_owner.dart';
 import 'remote_share_media_projection_boundary.dart';
 import 'remote_share_browser.dart';
@@ -36,8 +34,11 @@ import '../../transfer/data/file_transfer_service.dart';
 import '../../transfer/data/transfer_storage_service.dart';
 import '../../transfer/domain/shared_folder_cache.dart';
 import 'configured_discovery_targets_store.dart';
+import 'clipboard_packet_route_adapter.dart';
 import 'device_registry.dart';
+import 'discovery_internet_friend_command_adapter.dart';
 import 'discovery_lifecycle_timers.dart';
+import 'discovery_settings_command_adapter.dart';
 import 'internet_peer_endpoint_store.dart';
 import 'local_peer_identity_store.dart';
 import 'discovery_presence_expiry_policy.dart';
@@ -122,16 +123,6 @@ class SharedFolderIndexingProgress {
 }
 
 class DiscoveryController extends ChangeNotifier {
-  static const int _maxClipboardImagePreviewBytes = 22 * 1024;
-  static const List<({int longestEdge, int quality})>
-  _clipboardImagePreviewProfiles = <({int longestEdge, int quality})>[
-    (longestEdge: 512, quality: 55),
-    (longestEdge: 420, quality: 50),
-    (longestEdge: 320, quality: 42),
-    (longestEdge: 256, quality: 36),
-    (longestEdge: 192, quality: 30),
-  ];
-
   DiscoveryController({
     required LanDiscoveryService lanDiscoveryService,
     required NetworkHostScanner networkHostScanner,
@@ -197,6 +188,26 @@ class DiscoveryController extends ChangeNotifier {
       appPresenceTtl: appPresenceTtl,
       nearbyAvailabilityTtl: nearbyAvailabilityTtl,
     );
+    _settingsCommandAdapter = DiscoverySettingsCommandAdapter(
+      settingsStore: settingsStore,
+      onSettingsChanged: (_) {
+        _errorMessage = null;
+        _restartAutoRefreshTimer();
+        unawaited(_cleanupPreviewCacheBySettings());
+        unawaited(_trimClipboardHistoryToSettingsLimit());
+        notifyListeners();
+      },
+      onError: (error) {
+        _errorMessage = 'Failed to save app settings: $error';
+        _log(_errorMessage!);
+        notifyListeners();
+      },
+    );
+    _internetFriendCommandAdapter = DiscoveryInternetFriendCommandAdapter(
+      internetPeerEndpointStore: internetPeerEndpointStore,
+      lanDiscoveryService: lanDiscoveryService,
+      log: _log,
+    );
     _downloadHistoryBoundary =
         downloadHistoryBoundary ??
         DownloadHistoryBoundary(
@@ -212,6 +223,17 @@ class DiscoveryController extends ChangeNotifier {
     _remoteClipboardProjectionStore =
         remoteClipboardProjectionStore ??
         RemoteClipboardProjectionStore(fileHashService: fileHashService);
+    _clipboardPacketRouteAdapter = ClipboardPacketRouteAdapter(
+      lanDiscoveryService: lanDiscoveryService,
+      clipboardHistoryStore: _clipboardHistoryStore,
+      remoteClipboardProjectionStore: _remoteClipboardProjectionStore,
+      settingsProvider: () => _settingsStore.settings,
+      localNameProvider: () => _localName,
+      localDeviceMacProvider: () => _localDeviceMac,
+      isTrustedMac: (normalizedMac) =>
+          _trustedLanPeerStore.isTrustedMac(normalizedMac),
+      log: _log,
+    );
     _transferSessionCoordinator =
         transferSessionCoordinator ??
         TransferSessionCoordinator(
@@ -291,10 +313,14 @@ class DiscoveryController extends ChangeNotifier {
   final DateTime Function() _now;
   final DiscoveryLifecycleTimers _lifecycleTimers = DiscoveryLifecycleTimers();
   late final DiscoveryPresenceExpiryPolicy _presenceExpiryPolicy;
+  late final DiscoverySettingsCommandAdapter _settingsCommandAdapter;
+  late final DiscoveryInternetFriendCommandAdapter
+  _internetFriendCommandAdapter;
   final NearbyTransferAvailabilityStore _nearbyTransferAvailabilityStore;
   late final DownloadHistoryBoundary _downloadHistoryBoundary;
   late final ClipboardHistoryStore _clipboardHistoryStore;
   late final RemoteClipboardProjectionStore _remoteClipboardProjectionStore;
+  late final ClipboardPacketRouteAdapter _clipboardPacketRouteAdapter;
   late final TransferSessionCoordinator _transferSessionCoordinator;
 
   final Map<String, DiscoveredDevice> _devicesByIp =
@@ -475,7 +501,7 @@ class DiscoveryController extends ChangeNotifier {
     try {
       _started = true;
       _log('Starting discovery. localName=$_localName localIp=$_localIp');
-      _syncInternetPeers();
+      _internetFriendCommandAdapter.syncInternetPeers();
       await _ensureDiscoveryScopeApplied();
       await _refresh(isManual: false, refreshNetworkScope: false);
       _restartAutoRefreshTimer();
@@ -517,187 +543,87 @@ class DiscoveryController extends ChangeNotifier {
     required String endpoint,
     bool isEnabled = true,
   }) async {
-    final normalizedId = friendId.trim();
-    if (normalizedId.isEmpty) {
-      _errorMessage = 'Friend ID is required.';
-      notifyListeners();
-      return;
-    }
-
-    final parsedEndpoint = _parseEndpoint(endpoint);
-    if (parsedEndpoint == null) {
-      _errorMessage =
-          'Endpoint must be in IPv4:port format, for example 203.0.113.7:40404.';
-      notifyListeners();
-      return;
-    }
-
     _isFriendMutationInProgress = true;
     notifyListeners();
-    try {
-      await _internetPeerEndpointStore.saveEndpoint(
-        friendId: normalizedId,
-        displayName: displayName.trim(),
-        endpointHost: parsedEndpoint.$1,
-        endpointPort: parsedEndpoint.$2,
-        isEnabled: isEnabled,
-      );
-      _syncInternetPeers();
-      _errorMessage = null;
-      _infoMessage = 'Friend saved: $normalizedId';
-    } catch (error) {
-      _errorMessage = 'Failed to save friend: $error';
-      _log(_errorMessage!);
-    } finally {
-      _isFriendMutationInProgress = false;
-      notifyListeners();
-    }
+    final result = await _internetFriendCommandAdapter.saveFriend(
+      friendId: friendId,
+      displayName: displayName,
+      endpoint: endpoint,
+      isEnabled: isEnabled,
+    );
+    _applyFriendCommandResult(result);
   }
 
   Future<void> removeFriend(String friendId) async {
     _isFriendMutationInProgress = true;
     notifyListeners();
-    try {
-      await _internetPeerEndpointStore.removeEndpoint(friendId);
-      _syncInternetPeers();
-      _errorMessage = null;
-      _infoMessage = 'Friend removed: ${friendId.trim()}';
-    } catch (error) {
-      _errorMessage = 'Failed to remove friend: $error';
-      _log(_errorMessage!);
-    } finally {
-      _isFriendMutationInProgress = false;
-      notifyListeners();
-    }
+    final result = await _internetFriendCommandAdapter.removeFriend(friendId);
+    _applyFriendCommandResult(result);
   }
 
   Future<void> setFriendEnabled({
     required String friendId,
     required bool enabled,
   }) async {
-    try {
-      await _internetPeerEndpointStore.setEndpointEnabled(
-        friendId: friendId,
-        isEnabled: enabled,
-      );
-      _syncInternetPeers();
+    final result = await _internetFriendCommandAdapter.setFriendEnabled(
+      friendId: friendId,
+      enabled: enabled,
+    );
+    if (result.isSuccess) {
       _errorMessage = null;
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to update friend: $error';
-      _log(_errorMessage!);
-      notifyListeners();
+    } else {
+      _errorMessage = result.errorMessage;
     }
+    notifyListeners();
   }
 
   Future<void> updateBackgroundScanInterval(
     BackgroundScanIntervalOption interval,
   ) async {
-    if (_currentSettings.backgroundScanInterval == interval) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(backgroundScanInterval: interval),
-    );
+    await _settingsCommandAdapter.updateBackgroundScanInterval(interval);
   }
 
   Future<void> setDownloadAttemptNotificationsEnabled(bool enabled) async {
-    if (_currentSettings.downloadAttemptNotificationsEnabled == enabled) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(downloadAttemptNotificationsEnabled: enabled),
+    await _settingsCommandAdapter.setDownloadAttemptNotificationsEnabled(
+      enabled,
     );
   }
 
   Future<void> setUseStandardAppDownloadFolder(bool enabled) async {
-    if (_currentSettings.useStandardAppDownloadFolder == enabled) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(useStandardAppDownloadFolder: enabled),
-    );
+    await _settingsCommandAdapter.setUseStandardAppDownloadFolder(enabled);
   }
 
   Future<void> setMinimizeToTrayOnClose(bool enabled) async {
-    if (_currentSettings.minimizeToTrayOnClose == enabled) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(minimizeToTrayOnClose: enabled),
-    );
+    await _settingsCommandAdapter.setMinimizeToTrayOnClose(enabled);
   }
 
   Future<void> setLeftHandedMode(bool enabled) async {
-    if (_currentSettings.isLeftHandedMode == enabled) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(isLeftHandedMode: enabled),
-    );
+    await _settingsCommandAdapter.setLeftHandedMode(enabled);
   }
 
   Future<void> setVideoLinkPassword(String value) async {
-    final normalized = value.trim();
-    if (_currentSettings.videoLinkPassword == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(videoLinkPassword: normalized),
-    );
+    await _settingsCommandAdapter.setVideoLinkPassword(value);
   }
 
   Future<void> setPreviewCacheMaxSizeGb(int value) async {
-    final normalized = value < 0 ? 0 : value;
-    if (_currentSettings.previewCacheMaxSizeGb == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(previewCacheMaxSizeGb: normalized),
-    );
+    await _settingsCommandAdapter.setPreviewCacheMaxSizeGb(value);
   }
 
   Future<void> setPreviewCacheMaxAgeDays(int value) async {
-    final normalized = value < 0 ? 0 : value;
-    if (_currentSettings.previewCacheMaxAgeDays == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(previewCacheMaxAgeDays: normalized),
-    );
+    await _settingsCommandAdapter.setPreviewCacheMaxAgeDays(value);
   }
 
   Future<void> setClipboardHistoryMaxEntries(int value) async {
-    final normalized = value < 0 ? 0 : value;
-    if (_currentSettings.clipboardHistoryMaxEntries == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(clipboardHistoryMaxEntries: normalized),
-    );
+    await _settingsCommandAdapter.setClipboardHistoryMaxEntries(value);
     await _trimClipboardHistoryToSettingsLimit();
   }
 
   Future<void> setRecacheParallelWorkers(int value) async {
-    final normalized = value < 0 ? 0 : value;
-    if (_currentSettings.recacheParallelWorkers == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(recacheParallelWorkers: normalized),
-    );
+    await _settingsCommandAdapter.setRecacheParallelWorkers(value);
   }
 
   Future<void> setDebugLogRetainedLines(int value) async {
-    final normalized = value <= 0
-        ? AppSettings.defaults.debugLogRetainedLines
-        : value;
-    if (_currentSettings.debugLogRetainedLines == normalized) {
-      return;
-    }
-    await _persistSettingsViaStore(
-      _currentSettings.copyWith(debugLogRetainedLines: normalized),
-    );
+    await _settingsCommandAdapter.setDebugLogRetainedLines(value);
   }
 
   void setAppForegroundState(bool isForeground) {
@@ -1672,171 +1598,52 @@ class DiscoveryController extends ChangeNotifier {
   }
 
   void _onClipboardQuery(ClipboardQueryEvent event) {
-    unawaited(_handleClipboardQuery(event));
-  }
-
-  Future<void> _handleClipboardQuery(ClipboardQueryEvent event) async {
-    final requesterMac = DeviceAliasRepository.normalizeMac(
-      event.requesterMacAddress,
-    );
-    if (!_trustedLanPeerStore.isTrustedMac(requesterMac)) {
-      _log('Clipboard query from ${event.requesterIp} ignored: not a friend.');
-      return;
-    }
-
-    final safeLimit = event.maxEntries <= 0
-        ? (_currentSettings.clipboardHistoryMaxEntries <= 0
-              ? 120
-              : _currentSettings.clipboardHistoryMaxEntries)
-        : event.maxEntries;
-
-    final sourceEntries = _clipboardHistoryStore.listRecent(limit: safeLimit);
-    final entries = <ClipboardCatalogItem>[];
-    for (final item in sourceEntries) {
-      if (item.type == ClipboardEntryType.text) {
-        final text = item.textValue ?? '';
-        final clipped = text.length > 6000 ? text.substring(0, 6000) : text;
-        entries.add(
-          ClipboardCatalogItem(
-            id: item.id,
-            entryType: item.type.value,
-            createdAtMs: item.createdAt.millisecondsSinceEpoch,
-            textValue: clipped,
-          ),
-        );
-        continue;
-      }
-
-      final imagePath = item.imagePath;
-      if (imagePath == null || imagePath.trim().isEmpty) {
-        continue;
-      }
-      final previewBase64 = await _encodeClipboardImagePreviewBase64(imagePath);
-      if (previewBase64 == null) {
-        continue;
-      }
-      entries.add(
-        ClipboardCatalogItem(
-          id: item.id,
-          entryType: item.type.value,
-          createdAtMs: item.createdAt.millisecondsSinceEpoch,
-          imagePreviewBase64: previewBase64,
-        ),
-      );
-    }
-
-    try {
-      await _lanDiscoveryService.sendClipboardCatalog(
-        targetIp: event.requesterIp,
-        requestId: event.requestId,
-        ownerName: _localName,
-        ownerMacAddress: _localDeviceMac,
-        entries: entries,
-      );
-    } catch (error) {
-      _log('Failed to send clipboard catalog: $error');
-    }
+    unawaited(_clipboardPacketRouteAdapter.handleClipboardQuery(event));
   }
 
   void _onClipboardCatalog(ClipboardCatalogEvent event) {
-    final applied = _remoteClipboardProjectionStore.applyCatalog(event);
-    if (!applied) {
+    final result = _clipboardPacketRouteAdapter.handleClipboardCatalog(event);
+    if (result == null) {
       return;
     }
 
-    final existing = _devicesByIp[event.ownerIp];
+    final existing = _devicesByIp[result.ownerIp];
     final ownerMac = _resolveStableDeviceMac(
-      ip: event.ownerIp,
-      observedMac: event.ownerMacAddress,
+      ip: result.ownerIp,
+      observedMac: result.ownerMacAddress,
       existingMac: existing?.macAddress,
     );
     final aliasName = _deviceRegistry.aliasForMac(ownerMac);
-    _devicesByIp[event.ownerIp] =
+    _devicesByIp[result.ownerIp] =
         (existing ??
-                DiscoveredDevice(ip: event.ownerIp, lastSeen: event.observedAt))
+                DiscoveredDevice(
+                  ip: result.ownerIp,
+                  lastSeen: result.observedAt,
+                ))
             .copyWith(
-              deviceName: event.ownerName,
+              deviceName: result.ownerName,
               isReachable: true,
               isAppDetected: true,
-              appPresenceObservedAt: event.observedAt,
+              appPresenceObservedAt: result.observedAt,
               macAddress: ownerMac ?? existing?.macAddress,
-              lastSeen: event.observedAt,
+              lastSeen: result.observedAt,
             );
 
     _infoMessage =
-        'Clipboard history received from ${aliasName ?? event.ownerName}.';
+        'Clipboard history received from ${aliasName ?? result.ownerName}.';
     _errorMessage = null;
     notifyListeners();
-  }
-
-  Future<String?> _encodeClipboardImagePreviewBase64(String imagePath) async {
-    try {
-      final file = File(imagePath);
-      if (!await file.exists()) {
-        return null;
-      }
-      final bytes = await file.readAsBytes();
-      final decoded = img.decodeImage(bytes);
-      if (decoded == null) {
-        return null;
-      }
-      List<int>? encoded;
-      for (final profile in _clipboardImagePreviewProfiles) {
-        final resized = _resizeClipboardPreviewImage(
-          decoded,
-          longestEdge: profile.longestEdge,
-        );
-        final candidate = img.encodeJpg(resized, quality: profile.quality);
-        encoded = candidate;
-        if (candidate.length <= _maxClipboardImagePreviewBytes) {
-          break;
-        }
-      }
-      if (encoded == null || encoded.isEmpty) {
-        return null;
-      }
-      return base64Encode(encoded);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  img.Image _resizeClipboardPreviewImage(
-    img.Image source, {
-    required int longestEdge,
-  }) {
-    final longest = math.max(source.width, source.height);
-    if (longest <= longestEdge) {
-      return source;
-    }
-    return img.copyResize(
-      source,
-      width: source.width >= source.height ? longestEdge : null,
-      height: source.height > source.width ? longestEdge : null,
-    );
   }
 
   void _startClipboardPolling() {
     _lifecycleTimers.startClipboardPolling(
       interval: const Duration(seconds: 2),
-      onTick: () => unawaited(_captureClipboardSnapshot()),
+      onTick: () => unawaited(_clipboardPacketRouteAdapter.captureSnapshot()),
     );
-  }
-
-  Future<void> _captureClipboardSnapshot() async {
-    try {
-      await _clipboardHistoryStore.captureSnapshot(
-        maxEntries: _currentSettings.clipboardHistoryMaxEntries,
-      );
-    } catch (error) {
-      _log('Clipboard capture failed: $error');
-    }
   }
 
   Future<void> _trimClipboardHistoryToSettingsLimit() async {
-    await _clipboardHistoryStore.trimHistory(
-      _currentSettings.clipboardHistoryMaxEntries,
-    );
+    await _clipboardPacketRouteAdapter.trimHistoryToSettingsLimit();
   }
 
   void _onShareQuery(ShareQueryEvent event) {
@@ -2228,21 +2035,6 @@ class DiscoveryController extends ChangeNotifier {
     }
   }
 
-  Future<void> _persistSettingsViaStore(AppSettings settings) async {
-    try {
-      await _settingsStore.save(settings);
-      _errorMessage = null;
-      _restartAutoRefreshTimer();
-      unawaited(_cleanupPreviewCacheBySettings());
-      unawaited(_trimClipboardHistoryToSettingsLimit());
-      notifyListeners();
-    } catch (error) {
-      _errorMessage = 'Failed to save app settings: $error';
-      _log(_errorMessage!);
-      notifyListeners();
-    }
-  }
-
   void _restartAutoRefreshTimer() {
     _lifecycleTimers.restartAutoRefresh(
       interval: _activeAutoRefreshInterval,
@@ -2369,48 +2161,13 @@ class DiscoveryController extends ChangeNotifier {
     super.dispose();
   }
 
-  void _syncInternetPeers() {
-    final peers = _internetPeerEndpointStore.peers
-        .where((friend) => friend.isEnabled)
-        .map(
-          (friend) => InternetPeerEndpoint(
-            friendId: friend.friendId,
-            host: friend.endpointHost,
-            port: friend.endpointPort,
-          ),
-        )
-        .toList(growable: false);
-    _lanDiscoveryService.updateInternetPeers(peers);
-  }
-
-  (String, int)? _parseEndpoint(String endpoint) {
-    final raw = endpoint.trim();
-    if (raw.isEmpty) {
-      return null;
+  void _applyFriendCommandResult(DiscoveryFriendCommandResult result) {
+    _errorMessage = result.errorMessage;
+    if (result.infoMessage != null && result.infoMessage!.isNotEmpty) {
+      _infoMessage = result.infoMessage;
     }
-
-    final match = RegExp(
-      r'^([0-9]{1,3}(?:\.[0-9]{1,3}){3})(?::([0-9]{1,5}))?$',
-    ).firstMatch(raw);
-    if (match == null) {
-      return null;
-    }
-
-    final host = match.group(1)!;
-    final parts = host.split('.');
-    if (parts.any((part) {
-      final value = int.tryParse(part);
-      return value == null || value < 0 || value > 255;
-    })) {
-      return null;
-    }
-
-    final parsedPort =
-        int.tryParse(match.group(2) ?? '') ?? LanDiscoveryService.discoveryPort;
-    if (parsedPort <= 0 || parsedPort > 65535) {
-      return null;
-    }
-    return (host, parsedPort);
+    _isFriendMutationInProgress = false;
+    notifyListeners();
   }
 
   void _log(String message) {
