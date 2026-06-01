@@ -6,9 +6,11 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'discovery_transport_adapter.dart';
+import 'lan_broadcast_address.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_friend_protocol_handler.dart';
 import 'lan_incoming_packet_dispatcher.dart';
+import 'lan_outgoing_packet_sender.dart';
 import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
@@ -61,6 +63,13 @@ class LanDiscoveryService {
   final LanIncomingPacketDispatcher _incomingPacketDispatcher;
   final int? Function()? _nearbyTransferPortProvider;
   final Duration _presenceHeartbeatInterval;
+  late final LanOutgoingPacketSender _outgoingPacketSender =
+      LanOutgoingPacketSender(
+        transportAdapter: _transportAdapter,
+        resolveTargetIp: _resolveUnicastTargetIp,
+        port: discoveryPort,
+        log: _log,
+      );
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -193,7 +202,7 @@ class LanDiscoveryService {
     required String sharedLabel,
     required List<TransferAnnouncementItem> items,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanTransferRequestPrefix,
       packet: _packetCodec.encodeTransferRequest(
         instanceId: _instanceId,
@@ -217,7 +226,7 @@ class LanDiscoveryService {
     int? transferPort,
     List<String>? acceptedFileNames,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanTransferDecisionPrefix,
       packet: _packetCodec.encodeTransferDecision(
         instanceId: _instanceId,
@@ -238,7 +247,7 @@ class LanDiscoveryService {
     required String requesterName,
     required String requesterMacAddress,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanFriendRequestPrefix,
       packet: _packetCodec.encodeFriendRequest(
         instanceId: _instanceId,
@@ -258,7 +267,7 @@ class LanDiscoveryService {
     required String responderMacAddress,
     required bool accepted,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanFriendResponsePrefix,
       packet: _packetCodec.encodeFriendResponse(
         instanceId: _instanceId,
@@ -277,7 +286,7 @@ class LanDiscoveryService {
     required String requestId,
     required String requesterName,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanShareQueryPrefix,
       packet: _packetCodec.encodeShareQuery(
         instanceId: _instanceId,
@@ -296,7 +305,7 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required int transferPort,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanShareAccessRequestPrefix,
       packet: _packetCodec.encodeShareAccessRequest(
         instanceId: _instanceId,
@@ -317,7 +326,7 @@ class LanDiscoveryService {
     required bool approved,
     String? message,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanShareAccessResponsePrefix,
       packet: _packetCodec.encodeShareAccessResponse(
         instanceId: _instanceId,
@@ -352,7 +361,7 @@ class LanDiscoveryService {
       _log('Skipping $lanShareCatalogPrefix packet: codec rejected payload.');
       return;
     }
-    await _sendOutgoingPackets(
+    await _outgoingPacketSender.sendPackets(
       prefix: lanShareCatalogPrefix,
       packets: packets,
       targetIp: targetIp,
@@ -370,7 +379,7 @@ class LanDiscoveryService {
     int? transferPort,
     bool previewMode = false,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanDownloadRequestPrefix,
       packet: _packetCodec.encodeDownloadRequest(
         instanceId: _instanceId,
@@ -396,7 +405,7 @@ class LanDiscoveryService {
     String? phase,
     String? message,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanDownloadResponsePrefix,
       packet: _packetCodec.encodeDownloadResponse(
         instanceId: _instanceId,
@@ -420,7 +429,7 @@ class LanDiscoveryService {
     if (items.isEmpty) {
       return;
     }
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanThumbnailSyncRequestPrefix,
       packet: _packetCodec.encodeThumbnailSyncRequest(
         instanceId: _instanceId,
@@ -445,7 +454,7 @@ class LanDiscoveryService {
     if (bytes.isEmpty) {
       return;
     }
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanThumbnailPacketPrefix,
       packet: _packetCodec.encodeThumbnailPacket(
         instanceId: _instanceId,
@@ -468,7 +477,7 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required int maxEntries,
   }) async {
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanClipboardQueryPrefix,
       packet: _packetCodec.encodeClipboardQuery(
         instanceId: _instanceId,
@@ -504,7 +513,7 @@ class LanDiscoveryService {
         'entries=${fittedEntries.length}/${entries.length}',
       );
     }
-    await _sendOutgoingPacket(
+    await _outgoingPacketSender.sendPacket(
       prefix: lanClipboardCatalogPrefix,
       packet: _packetCodec.encodeClipboardCatalog(
         instanceId: _instanceId,
@@ -516,48 +525,6 @@ class LanDiscoveryService {
       ),
       targetIp: targetIp,
     );
-  }
-
-  Future<void> _sendOutgoingPacket({
-    required String prefix,
-    required EncodedLanPacket? packet,
-    required String targetIp,
-  }) async {
-    if (packet == null) {
-      _log('Skipping $prefix packet: codec rejected payload.');
-      return;
-    }
-    final targetAddress = _resolveUnicastTargetIp(targetIp);
-    if (targetAddress == null) {
-      _log('Skipping $prefix packet: invalid target IP "$targetIp".');
-      return;
-    }
-    _transportAdapter.send(
-      bytes: packet.bytes,
-      address: targetAddress,
-      port: discoveryPort,
-      context: packet.prefix,
-    );
-  }
-
-  Future<void> _sendOutgoingPackets({
-    required String prefix,
-    required List<EncodedLanPacket> packets,
-    required String targetIp,
-  }) async {
-    final targetAddress = _resolveUnicastTargetIp(targetIp);
-    if (targetAddress == null) {
-      _log('Skipping $prefix packet: invalid target IP "$targetIp".');
-      return;
-    }
-    for (final packet in packets) {
-      _transportAdapter.send(
-        bytes: packet.bytes,
-        address: targetAddress,
-        port: discoveryPort,
-        context: packet.prefix,
-      );
-    }
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
@@ -579,7 +546,7 @@ class LanDiscoveryService {
       context: 'discover-broadcast',
     );
     for (final localIp in localIps) {
-      final broadcast = _toBroadcastAddress(localIp);
+      final broadcast = lanBroadcastAddressFor(localIp);
       if (broadcast != null) {
         _transportAdapter.send(
           bytes: bytes,
@@ -630,14 +597,6 @@ class LanDiscoveryService {
       return null;
     }
     return parsed;
-  }
-
-  InternetAddress? _toBroadcastAddress(String ip) {
-    final parts = ip.split('.');
-    if (parts.length != 4) {
-      return null;
-    }
-    return InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255');
   }
 
   void _log(String message) {
