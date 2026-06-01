@@ -6,20 +6,23 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'discovery_transport_adapter.dart';
+import 'lan_clipboard_packet_sender.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_discovery_target_registry.dart';
+import 'lan_friend_packet_sender.dart';
 import 'lan_friend_protocol_handler.dart';
 import 'lan_incoming_packet_dispatcher.dart';
 import 'lan_internet_peer_endpoint.dart';
 import 'lan_outgoing_packet_sender.dart';
-import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
 import 'lan_presence_announcement_sender.dart';
 import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
 import 'lan_sender_allowlist_policy.dart';
+import 'lan_share_packet_sender.dart';
 import 'lan_share_protocol_handler.dart';
+import 'lan_transfer_packet_sender.dart';
 import 'lan_transfer_protocol_handler.dart';
 
 export 'lan_internet_peer_endpoint.dart';
@@ -67,6 +70,26 @@ class LanDiscoveryService {
         transportAdapter: _transportAdapter,
         packetCodec: _packetCodec,
         discoveryPort: discoveryPort,
+        log: _log,
+      );
+  late final LanTransferPacketSender _transferPacketSender =
+      LanTransferPacketSender(
+        packetCodec: _packetCodec,
+        outgoingPacketSender: _outgoingPacketSender,
+      );
+  late final LanFriendPacketSender _friendPacketSender = LanFriendPacketSender(
+    packetCodec: _packetCodec,
+    outgoingPacketSender: _outgoingPacketSender,
+  );
+  late final LanSharePacketSender _sharePacketSender = LanSharePacketSender(
+    packetCodec: _packetCodec,
+    outgoingPacketSender: _outgoingPacketSender,
+    log: _log,
+  );
+  late final LanClipboardPacketSender _clipboardPacketSender =
+      LanClipboardPacketSender(
+        packetCodec: _packetCodec,
+        outgoingPacketSender: _outgoingPacketSender,
         log: _log,
       );
   Timer? _beaconTimer;
@@ -181,19 +204,15 @@ class LanDiscoveryService {
     required String sharedLabel,
     required List<TransferAnnouncementItem> items,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanTransferRequestPrefix,
-      packet: _packetCodec.encodeTransferRequest(
-        instanceId: _instanceId,
-        requestId: requestId,
-        senderName: senderName,
-        senderMacAddress: senderMacAddress,
-        sharedCacheId: sharedCacheId,
-        sharedLabel: sharedLabel,
-        items: items,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _transferPacketSender.sendTransferRequest(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      senderName: senderName,
+      senderMacAddress: senderMacAddress,
+      sharedCacheId: sharedCacheId,
+      sharedLabel: sharedLabel,
+      items: items,
     );
   }
 
@@ -205,18 +224,14 @@ class LanDiscoveryService {
     int? transferPort,
     List<String>? acceptedFileNames,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanTransferDecisionPrefix,
-      packet: _packetCodec.encodeTransferDecision(
-        instanceId: _instanceId,
-        requestId: requestId,
-        approved: approved,
-        receiverName: receiverName,
-        transferPort: transferPort,
-        acceptedFileNames: acceptedFileNames,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _transferPacketSender.sendTransferDecision(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      approved: approved,
+      receiverName: receiverName,
+      transferPort: transferPort,
+      acceptedFileNames: acceptedFileNames,
     );
   }
 
@@ -226,16 +241,12 @@ class LanDiscoveryService {
     required String requesterName,
     required String requesterMacAddress,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanFriendRequestPrefix,
-      packet: _packetCodec.encodeFriendRequest(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        requesterMacAddress: requesterMacAddress,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _friendPacketSender.sendFriendRequest(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
     );
   }
 
@@ -246,17 +257,13 @@ class LanDiscoveryService {
     required String responderMacAddress,
     required bool accepted,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanFriendResponsePrefix,
-      packet: _packetCodec.encodeFriendResponse(
-        instanceId: _instanceId,
-        requestId: requestId,
-        responderName: responderName,
-        responderMacAddress: responderMacAddress,
-        accepted: accepted,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _friendPacketSender.sendFriendResponse(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      responderName: responderName,
+      responderMacAddress: responderMacAddress,
+      accepted: accepted,
     );
   }
 
@@ -265,15 +272,11 @@ class LanDiscoveryService {
     required String requestId,
     required String requesterName,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanShareQueryPrefix,
-      packet: _packetCodec.encodeShareQuery(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendShareQuery(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
     );
   }
 
@@ -284,17 +287,13 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required int transferPort,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanShareAccessRequestPrefix,
-      packet: _packetCodec.encodeShareAccessRequest(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        requesterMacAddress: requesterMacAddress,
-        transferPort: transferPort,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendShareAccessRequest(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      transferPort: transferPort,
     );
   }
 
@@ -305,17 +304,13 @@ class LanDiscoveryService {
     required bool approved,
     String? message,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanShareAccessResponsePrefix,
-      packet: _packetCodec.encodeShareAccessResponse(
-        instanceId: _instanceId,
-        requestId: requestId,
-        responderName: responderName,
-        approved: approved,
-        message: message,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendShareAccessResponse(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      message: message,
     );
   }
 
@@ -327,23 +322,14 @@ class LanDiscoveryService {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
-    final packets = _packetCodec.encodeShareCatalogChunks(
+    await _sharePacketSender.sendShareCatalog(
       instanceId: _instanceId,
+      targetIp: targetIp,
       requestId: requestId,
       ownerName: ownerName,
       ownerMacAddress: ownerMacAddress,
       entries: entries,
       removedCacheIds: removedCacheIds,
-      createdAtMs: DateTime.now().millisecondsSinceEpoch,
-    );
-    if (packets.isEmpty) {
-      _log('Skipping $lanShareCatalogPrefix packet: codec rejected payload.');
-      return;
-    }
-    await _outgoingPacketSender.sendPackets(
-      prefix: lanShareCatalogPrefix,
-      packets: packets,
-      targetIp: targetIp,
     );
   }
 
@@ -358,21 +344,17 @@ class LanDiscoveryService {
     int? transferPort,
     bool previewMode = false,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanDownloadRequestPrefix,
-      packet: _packetCodec.encodeDownloadRequest(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        requesterMacAddress: requesterMacAddress,
-        cacheId: cacheId,
-        selectedRelativePaths: selectedRelativePaths,
-        selectedFolderPrefixes: selectedFolderPrefixes,
-        transferPort: transferPort,
-        previewMode: previewMode,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendDownloadRequest(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      cacheId: cacheId,
+      selectedRelativePaths: selectedRelativePaths,
+      selectedFolderPrefixes: selectedFolderPrefixes,
+      transferPort: transferPort,
+      previewMode: previewMode,
     );
   }
 
@@ -384,18 +366,14 @@ class LanDiscoveryService {
     String? phase,
     String? message,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanDownloadResponsePrefix,
-      packet: _packetCodec.encodeDownloadResponse(
-        instanceId: _instanceId,
-        requestId: requestId,
-        responderName: responderName,
-        approved: approved,
-        phase: phase,
-        message: message,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendDownloadResponse(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      responderName: responderName,
+      approved: approved,
+      phase: phase,
+      message: message,
     );
   }
 
@@ -405,19 +383,12 @@ class LanDiscoveryService {
     required String requesterName,
     required List<ThumbnailSyncItem> items,
   }) async {
-    if (items.isEmpty) {
-      return;
-    }
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanThumbnailSyncRequestPrefix,
-      packet: _packetCodec.encodeThumbnailSyncRequest(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        items: items,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendThumbnailSyncRequest(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
+      items: items,
     );
   }
 
@@ -430,22 +401,15 @@ class LanDiscoveryService {
     required String thumbnailId,
     required Uint8List bytes,
   }) async {
-    if (bytes.isEmpty) {
-      return;
-    }
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanThumbnailPacketPrefix,
-      packet: _packetCodec.encodeThumbnailPacket(
-        instanceId: _instanceId,
-        requestId: requestId,
-        ownerMacAddress: ownerMacAddress,
-        cacheId: cacheId,
-        relativePath: relativePath,
-        thumbnailId: thumbnailId,
-        bytes: bytes,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _sharePacketSender.sendThumbnailPacket(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      ownerMacAddress: ownerMacAddress,
+      cacheId: cacheId,
+      relativePath: relativePath,
+      thumbnailId: thumbnailId,
+      bytes: bytes,
     );
   }
 
@@ -456,17 +420,13 @@ class LanDiscoveryService {
     required String requesterMacAddress,
     required int maxEntries,
   }) async {
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanClipboardQueryPrefix,
-      packet: _packetCodec.encodeClipboardQuery(
-        instanceId: _instanceId,
-        requestId: requestId,
-        requesterName: requesterName,
-        requesterMacAddress: requesterMacAddress,
-        maxEntries: maxEntries,
-        createdAtMs: DateTime.now().millisecondsSinceEpoch,
-      ),
+    await _clipboardPacketSender.sendClipboardQuery(
+      instanceId: _instanceId,
       targetIp: targetIp,
+      requestId: requestId,
+      requesterName: requesterName,
+      requesterMacAddress: requesterMacAddress,
+      maxEntries: maxEntries,
     );
   }
 
@@ -477,32 +437,13 @@ class LanDiscoveryService {
     required String ownerMacAddress,
     required List<ClipboardCatalogItem> entries,
   }) async {
-    final createdAtMs = DateTime.now().millisecondsSinceEpoch;
-    final fittedEntries = _packetCodec.fitClipboardCatalogEntries(
+    await _clipboardPacketSender.sendClipboardCatalog(
       instanceId: _instanceId,
+      targetIp: targetIp,
       requestId: requestId,
       ownerName: ownerName,
       ownerMacAddress: ownerMacAddress,
       entries: entries,
-      createdAtMs: createdAtMs,
-    );
-    if (fittedEntries.length < entries.length) {
-      _log(
-        'Clipboard catalog trimmed for UDP: '
-        'entries=${fittedEntries.length}/${entries.length}',
-      );
-    }
-    await _outgoingPacketSender.sendPacket(
-      prefix: lanClipboardCatalogPrefix,
-      packet: _packetCodec.encodeClipboardCatalog(
-        instanceId: _instanceId,
-        requestId: requestId,
-        ownerName: ownerName,
-        ownerMacAddress: ownerMacAddress,
-        entries: fittedEntries,
-        createdAtMs: createdAtMs,
-      ),
-      targetIp: targetIp,
     );
   }
 
