@@ -7,6 +7,7 @@ import 'dart:typed_data';
 
 import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_protocol_handler.dart';
+import 'lan_discovery_target_registry.dart';
 import 'lan_friend_protocol_handler.dart';
 import 'lan_incoming_packet_dispatcher.dart';
 import 'lan_internet_peer_endpoint.dart';
@@ -73,11 +74,13 @@ class LanDiscoveryService {
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
   String _localPeerId = '';
-  List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
-  Set<String> _internetPeerIpAllowlist = <String>{};
-  Set<String> _configuredTargetIps = <String>{};
   final LanSenderAllowlistPolicy _senderAllowlistPolicy =
       LanSenderAllowlistPolicy();
+  late final LanDiscoveryTargetRegistry _targetRegistry =
+      LanDiscoveryTargetRegistry(
+        isUsableTargetIp: _senderAllowlistPolicy.isUsablePacketSenderIp,
+        discoveryPort: discoveryPort,
+      );
 
   Future<void> start({
     required String deviceName,
@@ -106,10 +109,7 @@ class LanDiscoveryService {
     }
     _started = true;
     _localPeerId = localPeerId.trim();
-    _configuredTargetIps = configuredTargetIps
-        .map((ip) => _resolveUnicastTargetIp(ip)?.address)
-        .whereType<String>()
-        .toSet();
+    _targetRegistry.updateConfiguredTargetIps(configuredTargetIps);
 
     try {
       await _transportAdapter.start(
@@ -148,29 +148,10 @@ class LanDiscoveryService {
   }
 
   void updateInternetPeers(List<InternetPeerEndpoint> peers) {
-    final normalized = <InternetPeerEndpoint>[];
-    final ipAllow = <String>{};
-    for (final peer in peers) {
-      final host = peer.host.trim();
-      final friendId = peer.friendId.trim();
-      if (host.isEmpty || friendId.isEmpty) {
-        continue;
-      }
-      final port = peer.port <= 0 || peer.port > 65535
-          ? discoveryPort
-          : peer.port;
-      final parsedIp = InternetAddress.tryParse(host);
-      if (parsedIp == null || parsedIp.type != InternetAddressType.IPv4) {
-        continue;
-      }
-      normalized.add(
-        InternetPeerEndpoint(friendId: friendId, host: host, port: port),
-      );
-      ipAllow.add(parsedIp.address);
-    }
-    _internetPeers = normalized;
-    _internetPeerIpAllowlist = ipAllow;
-    _log('Internet peers updated. count=');
+    _targetRegistry.updateInternetPeers(peers);
+    _log(
+      'Internet peers updated. count=${_targetRegistry.internetPeers.length}',
+    );
   }
 
   Future<void> stop() async {
@@ -179,7 +160,7 @@ class LanDiscoveryService {
     _beaconTimer = null;
     await _transportAdapter.stop();
     _started = false;
-    _configuredTargetIps = <String>{};
+    _targetRegistry.clearConfiguredTargetIps();
     _senderAllowlistPolicy.clear();
     _incomingPacketDispatcher.clear();
   }
@@ -531,8 +512,8 @@ class LanDiscoveryService {
       deviceName: deviceName,
       localPeerId: _localPeerId,
       nearbyTransferPort: _nearbyTransferPortProvider?.call(),
-      internetPeers: _internetPeers,
-      configuredTargetIps: _configuredTargetIps,
+      internetPeers: _targetRegistry.internetPeers,
+      configuredTargetIps: _targetRegistry.configuredTargetIps,
     );
   }
 
@@ -592,8 +573,8 @@ class LanDiscoveryService {
       packet: packet,
       senderIp: senderIp,
       localIps: localIps,
-      configuredTargetIps: _configuredTargetIps,
-      internetPeerIpAllowlist: _internetPeerIpAllowlist,
+      configuredTargetIps: _targetRegistry.configuredTargetIps,
+      internetPeerIpAllowlist: _targetRegistry.internetPeerIpAllowlist,
       log: _log,
     )) {
       _log('Ignoring packet from foreign subnet: $senderIp');
