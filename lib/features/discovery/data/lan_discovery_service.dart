@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_friend_protocol_handler.dart';
+import 'lan_incoming_packet_dispatcher.dart';
 import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
@@ -15,7 +16,6 @@ import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
 import 'lan_sender_allowlist_policy.dart';
 import 'lan_share_protocol_handler.dart';
-import 'lan_share_catalog_chunk_reassembler.dart';
 import 'lan_transfer_protocol_handler.dart';
 
 class InternetPeerEndpoint {
@@ -46,26 +46,19 @@ class LanDiscoveryService {
     Duration presenceHeartbeatInterval = defaultPresenceHeartbeatInterval,
   }) : _transportAdapter = transportAdapter ?? UdpDiscoveryTransportAdapter(),
        _packetCodec = packetCodec ?? LanPacketCodec(),
-       _presenceProtocolHandler =
-           presenceProtocolHandler ?? const LanPresenceProtocolHandler(),
-       _transferProtocolHandler =
-           transferProtocolHandler ?? const LanTransferProtocolHandler(),
-       _friendProtocolHandler =
-           friendProtocolHandler ?? const LanFriendProtocolHandler(),
-       _shareProtocolHandler =
-           shareProtocolHandler ?? const LanShareProtocolHandler(),
-       _clipboardProtocolHandler =
-           clipboardProtocolHandler ?? const LanClipboardProtocolHandler(),
+       _incomingPacketDispatcher = LanIncomingPacketDispatcher(
+         presenceProtocolHandler: presenceProtocolHandler,
+         transferProtocolHandler: transferProtocolHandler,
+         friendProtocolHandler: friendProtocolHandler,
+         shareProtocolHandler: shareProtocolHandler,
+         clipboardProtocolHandler: clipboardProtocolHandler,
+       ),
        _nearbyTransferPortProvider = nearbyTransferPortProvider,
        _presenceHeartbeatInterval = presenceHeartbeatInterval;
 
   final DiscoveryTransportAdapter _transportAdapter;
   final LanPacketCodec _packetCodec;
-  final LanPresenceProtocolHandler _presenceProtocolHandler;
-  final LanTransferProtocolHandler _transferProtocolHandler;
-  final LanFriendProtocolHandler _friendProtocolHandler;
-  final LanShareProtocolHandler _shareProtocolHandler;
-  final LanClipboardProtocolHandler _clipboardProtocolHandler;
+  final LanIncomingPacketDispatcher _incomingPacketDispatcher;
   final int? Function()? _nearbyTransferPortProvider;
   final Duration _presenceHeartbeatInterval;
   Timer? _beaconTimer;
@@ -78,8 +71,6 @@ class LanDiscoveryService {
   Set<String> _configuredTargetIps = <String>{};
   final LanSenderAllowlistPolicy _senderAllowlistPolicy =
       LanSenderAllowlistPolicy();
-  final LanShareCatalogChunkReassembler _shareCatalogChunkReassembler =
-      LanShareCatalogChunkReassembler();
 
   Future<void> start({
     required String deviceName,
@@ -183,7 +174,7 @@ class LanDiscoveryService {
     _started = false;
     _configuredTargetIps = <String>{};
     _senderAllowlistPolicy.clear();
-    _shareCatalogChunkReassembler.clear();
+    _incomingPacketDispatcher.clear();
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
@@ -702,15 +693,30 @@ class LanDiscoveryService {
     }
     final observedAt = DateTime.now();
 
-    if (packet is LanDiscoveryPresencePacket) {
-      _senderAllowlistPolicy.markPresenceAllowedSender(senderIp, observedAt);
-      final result = _presenceProtocolHandler.handlePresencePacket(
-        packet: packet,
-        senderIp: senderIp,
-        observedAt: observedAt,
-      );
-      if (result.shouldRespondToDiscover) {
-        _log('Discover request from $senderIp');
+    _incomingPacketDispatcher.dispatch(
+      packet: packet,
+      senderIp: senderIp,
+      observedAt: observedAt,
+      callbacks: LanIncomingPacketCallbacks(
+        onAppDetected: onAppDetected,
+        onTransferRequest: onTransferRequest,
+        onTransferDecision: onTransferDecision,
+        onFriendRequest: onFriendRequest,
+        onFriendResponse: onFriendResponse,
+        onShareQuery: onShareQuery,
+        onShareAccessRequest: onShareAccessRequest,
+        onShareAccessResponse: onShareAccessResponse,
+        onShareCatalog: onShareCatalog,
+        onDownloadRequest: onDownloadRequest,
+        onDownloadResponse: onDownloadResponse,
+        onThumbnailSyncRequest: onThumbnailSyncRequest,
+        onThumbnailPacket: onThumbnailPacket,
+        onClipboardQuery: onClipboardQuery,
+        onClipboardCatalog: onClipboardCatalog,
+      ),
+      onPresencePacketAccepted: () => _senderAllowlistPolicy
+          .markPresenceAllowedSender(senderIp, observedAt),
+      onDiscoveryResponseRequested: () {
         final response = _packetCodec.encodeDiscoveryResponse(
           instanceId: _instanceId,
           deviceName: deviceName,
@@ -723,194 +729,8 @@ class LanDiscoveryService {
           port: datagram.port,
           context: 'discover-response',
         );
-        _log('Discover response sent to $senderIp');
-      }
-      final detectedEvent = result.detectedEvent;
-      if (detectedEvent != null) {
-        _log(
-          'Discover response received from '
-          '$senderIp (${detectedEvent.deviceName})',
-        );
-        onAppDetected(detectedEvent);
-      }
-      return;
-    }
-
-    if (packet is LanTransferRequestPacket) {
-      _log(
-        'Transfer request received from $senderIp '
-        '(requestId=${packet.requestId})',
-      );
-      onTransferRequest?.call(
-        _transferProtocolHandler.handleTransferRequestPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanTransferDecisionPacket) {
-      _log(
-        'Transfer decision received from $senderIp '
-        '(requestId=${packet.requestId}, approved=${packet.approved})',
-      );
-      onTransferDecision?.call(
-        _transferProtocolHandler.handleTransferDecisionPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanFriendRequestPacket) {
-      _log(
-        'Friend request received from $senderIp '
-        '(requestId=${packet.requestId})',
-      );
-      onFriendRequest?.call(
-        _friendProtocolHandler.handleFriendRequestPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanFriendResponsePacket) {
-      _log(
-        'Friend response received from $senderIp '
-        '(requestId=${packet.requestId}, accepted=${packet.accepted})',
-      );
-      onFriendResponse?.call(
-        _friendProtocolHandler.handleFriendResponsePacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanShareQueryPacket) {
-      onShareQuery?.call(
-        _shareProtocolHandler.handleShareQueryPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanShareAccessRequestPacket) {
-      onShareAccessRequest?.call(
-        _shareProtocolHandler.handleShareAccessRequestPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanShareAccessResponsePacket) {
-      onShareAccessResponse?.call(
-        _shareProtocolHandler.handleShareAccessResponsePacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanShareCatalogPacket) {
-      final reassembled = _shareCatalogChunkReassembler.consume(
-        packet: packet,
-        senderIp: senderIp,
-        log: _log,
-      );
-      if (reassembled == null) {
-        return;
-      }
-      onShareCatalog?.call(
-        _shareProtocolHandler.handleShareCatalogPacket(
-          packet: reassembled,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanDownloadRequestPacket) {
-      onDownloadRequest?.call(
-        _shareProtocolHandler.handleDownloadRequestPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanDownloadResponsePacket) {
-      onDownloadResponse?.call(
-        _shareProtocolHandler.handleDownloadResponsePacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanThumbnailSyncRequestPacket) {
-      onThumbnailSyncRequest?.call(
-        _shareProtocolHandler.handleThumbnailSyncRequestPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanThumbnailPacket) {
-      onThumbnailPacket?.call(
-        _shareProtocolHandler.handleThumbnailPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanClipboardQueryPacket) {
-      onClipboardQuery?.call(
-        _clipboardProtocolHandler.handleClipboardQueryPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-      return;
-    }
-
-    if (packet is LanClipboardCatalogPacket) {
-      onClipboardCatalog?.call(
-        _clipboardProtocolHandler.handleClipboardCatalogPacket(
-          packet: packet,
-          senderIp: senderIp,
-          observedAt: observedAt,
-        ),
-      );
-    }
+      },
+      log: _log,
+    );
   }
 }
