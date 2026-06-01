@@ -1,20 +1,24 @@
+import 'lan_clipboard_catalog_packet_fitter.dart';
 import 'lan_outgoing_packet_sender.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
 import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
 
 class LanClipboardPacketSender {
-  const LanClipboardPacketSender({
+  LanClipboardPacketSender({
     required LanPacketCodec packetCodec,
     required LanOutgoingPacketSender outgoingPacketSender,
     required void Function(String message) log,
   }) : _packetCodec = packetCodec,
        _outgoingPacketSender = outgoingPacketSender,
-       _log = log;
+       _clipboardCatalogPacketFitter = LanClipboardCatalogPacketFitter(
+         packetCodec: packetCodec,
+         log: log,
+       );
 
   final LanPacketCodec _packetCodec;
   final LanOutgoingPacketSender _outgoingPacketSender;
-  final void Function(String message) _log;
+  final LanClipboardCatalogPacketFitter _clipboardCatalogPacketFitter;
 
   Future<void> sendClipboardQuery({
     required String instanceId,
@@ -47,7 +51,7 @@ class LanClipboardPacketSender {
     required List<ClipboardCatalogItem> entries,
   }) async {
     final createdAtMs = DateTime.now().millisecondsSinceEpoch;
-    final fittedEntries = _packetCodec.fitClipboardCatalogEntries(
+    final packet = _clipboardCatalogPacketFitter.buildCatalogPacket(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,
@@ -55,22 +59,9 @@ class LanClipboardPacketSender {
       entries: entries,
       createdAtMs: createdAtMs,
     );
-    if (fittedEntries.length < entries.length) {
-      _log(
-        'Clipboard catalog trimmed for UDP: '
-        'entries=${fittedEntries.length}/${entries.length}',
-      );
-    }
     await _outgoingPacketSender.sendPacket(
       prefix: lanClipboardCatalogPrefix,
-      packet: _packetCodec.encodeClipboardCatalog(
-        instanceId: instanceId,
-        requestId: requestId,
-        ownerName: ownerName,
-        ownerMacAddress: ownerMacAddress,
-        entries: fittedEntries,
-        createdAtMs: createdAtMs,
-      ),
+      packet: packet,
       targetIp: targetIp,
     );
   }

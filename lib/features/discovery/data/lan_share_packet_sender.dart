@@ -4,19 +4,23 @@ import 'lan_outgoing_packet_sender.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
 import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
+import 'lan_share_catalog_chunk_encoder.dart';
 
 class LanSharePacketSender {
-  const LanSharePacketSender({
+  LanSharePacketSender({
     required LanPacketCodec packetCodec,
     required LanOutgoingPacketSender outgoingPacketSender,
     required void Function(String message) log,
   }) : _packetCodec = packetCodec,
        _outgoingPacketSender = outgoingPacketSender,
-       _log = log;
+       _shareCatalogChunkEncoder = LanShareCatalogChunkEncoder(
+         packetCodec: packetCodec,
+         log: log,
+       );
 
   final LanPacketCodec _packetCodec;
   final LanOutgoingPacketSender _outgoingPacketSender;
-  final void Function(String message) _log;
+  final LanShareCatalogChunkEncoder _shareCatalogChunkEncoder;
 
   Future<void> sendShareQuery({
     required String instanceId,
@@ -89,7 +93,7 @@ class LanSharePacketSender {
     required List<SharedCatalogEntryItem> entries,
     List<String> removedCacheIds = const <String>[],
   }) async {
-    final packets = _packetCodec.encodeShareCatalogChunks(
+    final packets = _shareCatalogChunkEncoder.buildCatalogPackets(
       instanceId: instanceId,
       requestId: requestId,
       ownerName: ownerName,
@@ -99,7 +103,6 @@ class LanSharePacketSender {
       createdAtMs: DateTime.now().millisecondsSinceEpoch,
     );
     if (packets.isEmpty) {
-      _log('Skipping $lanShareCatalogPrefix packet: codec rejected payload.');
       return;
     }
     await _outgoingPacketSender.sendPackets(
