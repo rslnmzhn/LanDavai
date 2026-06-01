@@ -3,10 +3,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
-import 'package:path/path.dart' as p;
 
 import '../domain/transfer_request.dart';
 import 'socket_exact_reader.dart';
+import 'transfer_destination_path_allocator.dart';
+import 'transfer_failed_file_cleanup.dart';
+import 'transfer_file_integrity.dart';
 import 'transfer_header_codec.dart';
 
 typedef TransferRuntimeDiagnosticCallback =
@@ -92,6 +94,11 @@ class FileTransferService {
   static const int _maxHeaderBytes = 8 * 1024 * 1024;
   static const int _chunkBytes = 64 * 1024;
   static const TransferHeaderCodec _transferHeaderCodec = TransferHeaderCodec();
+  static const TransferDestinationPathAllocator _destinationPathAllocator =
+      TransferDestinationPathAllocator();
+  static const TransferFileIntegrity _fileIntegrity = TransferFileIntegrity();
+  static const TransferFailedFileCleanup _failedFileCleanup =
+      TransferFailedFileCleanup();
 
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
@@ -578,7 +585,7 @@ class FileTransferService {
     try {
       for (final file in normalizedActual) {
         final destinationPath = destinationPathAllocator == null
-            ? await _allocateDestinationPath(
+            ? await _destinationPathAllocator.allocateDestinationPath(
                 destinationDirectory: destinationDirectory,
                 relativePath: file.name,
                 destinationRelativeRootPrefix: destinationRelativeRootPrefix,
@@ -587,9 +594,8 @@ class FileTransferService {
                 destinationDirectory: destinationDirectory,
                 relativePath: file.name,
               );
-        final tempPath = await _allocateTemporaryDestinationPath(
-          destinationPath,
-        );
+        final tempPath = await _destinationPathAllocator
+            .allocateTemporaryDestinationPath(destinationPath);
         inProgressPath = tempPath;
         final destinationFile = File(destinationPath);
         final tempFile = File(tempPath);
@@ -636,7 +642,7 @@ class FileTransferService {
           } catch (_) {}
           throw StateError('SHA-256 mismatch for ${file.name}');
         }
-        await _verifyCompletedFile(
+        await _fileIntegrity.verifyCompletedFile(
           path: tempPath,
           expectedBytes: file.sizeBytes,
           label: file.name,
@@ -646,7 +652,7 @@ class FileTransferService {
         }
         await destinationFile.parent.create(recursive: true);
         final completedFile = await tempFile.rename(destinationPath);
-        await _verifyCompletedFile(
+        await _fileIntegrity.verifyCompletedFile(
           path: completedFile.path,
           expectedBytes: file.sizeBytes,
           label: file.name,
@@ -674,163 +680,13 @@ class FileTransferService {
         hashVerified: allFilesHashVerified,
       );
     } on Object {
-      await _cleanupFailedTransferFiles(savedPaths);
-      if (inProgressPath != null) {
-        try {
-          await File(inProgressPath).delete();
-        } catch (_) {}
-      }
+      await _failedFileCleanup.cleanupSavedFiles(savedPaths);
+      await _failedFileCleanup.cleanupInProgressFile(inProgressPath);
       rethrow;
     } finally {
       await reader.close();
       await socket.close();
     }
-  }
-
-  Future<void> _cleanupFailedTransferFiles(List<String> paths) async {
-    for (final path in paths) {
-      try {
-        await File(path).delete();
-      } catch (_) {}
-    }
-  }
-
-  Future<String> _allocateTemporaryDestinationPath(
-    String destinationPath,
-  ) async {
-    final directory = p.dirname(destinationPath);
-    final basename = p.basename(destinationPath);
-    var counter = 0;
-    while (true) {
-      final suffix = counter == 0 ? '' : '.$counter';
-      final candidate = p.join(directory, '.$basename.landa-part$suffix');
-      if (!await File(candidate).exists() &&
-          !await Directory(candidate).exists()) {
-        return candidate;
-      }
-      counter += 1;
-    }
-  }
-
-  Future<void> _verifyCompletedFile({
-    required String path,
-    required int expectedBytes,
-    required String label,
-  }) async {
-    final file = File(path);
-    if (!await file.exists()) {
-      throw StateError('Received file was not written: $label');
-    }
-    final stat = await file.stat();
-    if (stat.type != FileSystemEntityType.file) {
-      throw StateError('Received path is not a file: $label');
-    }
-    if (stat.size != expectedBytes) {
-      throw StateError(
-        'Received file size mismatch for $label '
-        '(expected $expectedBytes, got ${stat.size}).',
-      );
-    }
-  }
-
-  Future<String> _allocateDestinationPath({
-    required Directory destinationDirectory,
-    required String relativePath,
-    String? destinationRelativeRootPrefix,
-  }) async {
-    final sanitizedRelative = _sanitizeRelativePath(relativePath);
-    final sanitizedPrefix = destinationRelativeRootPrefix == null
-        ? null
-        : _sanitizeRelativePath(destinationRelativeRootPrefix);
-    final sanitized = sanitizedPrefix == null || sanitizedPrefix.isEmpty
-        ? sanitizedRelative
-        : p.join(sanitizedPrefix, sanitizedRelative);
-    final fullPath = p.join(destinationDirectory.path, sanitized);
-    final file = File(fullPath);
-    if (!await file.exists()) {
-      return fullPath;
-    }
-
-    final dir = p.dirname(fullPath);
-    final name = p.basenameWithoutExtension(fullPath);
-    final ext = p.extension(fullPath);
-    var counter = 1;
-    while (true) {
-      final candidate = p.join(dir, '$name ($counter)$ext');
-      if (!await File(candidate).exists()) {
-        return candidate;
-      }
-      counter += 1;
-    }
-  }
-
-  String _sanitizeRelativePath(String input) {
-    final raw = input.replaceAll('\\', '/');
-    final parts = raw
-        .split('/')
-        .map((part) => _sanitizeRelativePathPart(part.trim()))
-        .where((part) => part.isNotEmpty && part != '.' && part != '..')
-        .toList(growable: false);
-    if (parts.isEmpty) {
-      return 'file.bin';
-    }
-    return p.joinAll(parts);
-  }
-
-  String _sanitizeRelativePathPart(String input) {
-    if (input.isEmpty) {
-      return '';
-    }
-
-    // Remove control chars and separators that may be accepted on Unix
-    // but are invalid file name chars on Windows.
-    var value = input
-        .replaceAll(RegExp(r'[\x00-\x1F]'), '')
-        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-
-    if (Platform.isWindows) {
-      value = value.trimRight();
-      value = value.replaceFirst(RegExp(r'[. ]+$'), '');
-      if (value.isEmpty) {
-        return '_';
-      }
-
-      final reserved = <String>{
-        'con',
-        'prn',
-        'aux',
-        'nul',
-        'com1',
-        'com2',
-        'com3',
-        'com4',
-        'com5',
-        'com6',
-        'com7',
-        'com8',
-        'com9',
-        'lpt1',
-        'lpt2',
-        'lpt3',
-        'lpt4',
-        'lpt5',
-        'lpt6',
-        'lpt7',
-        'lpt8',
-        'lpt9',
-      };
-      final base = value.split('.').first.toLowerCase();
-      if (reserved.contains(base)) {
-        value = '_$value';
-      }
-    }
-
-    // Prevent very long path segments.
-    if (value.length > 120) {
-      value = value.substring(0, 120);
-    }
-
-    return value.isEmpty ? '_' : value;
   }
 }
 
