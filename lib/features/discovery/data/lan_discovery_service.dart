@@ -6,31 +6,22 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'discovery_transport_adapter.dart';
-import 'lan_broadcast_address.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_friend_protocol_handler.dart';
 import 'lan_incoming_packet_dispatcher.dart';
+import 'lan_internet_peer_endpoint.dart';
 import 'lan_outgoing_packet_sender.dart';
 import 'lan_packet_codec_common.dart';
 import 'lan_packet_codec_models.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
+import 'lan_presence_announcement_sender.dart';
 import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
 import 'lan_sender_allowlist_policy.dart';
 import 'lan_share_protocol_handler.dart';
 import 'lan_transfer_protocol_handler.dart';
 
-class InternetPeerEndpoint {
-  const InternetPeerEndpoint({
-    required this.friendId,
-    required this.host,
-    required this.port,
-  });
-
-  final String friendId;
-  final String host;
-  final int port;
-}
+export 'lan_internet_peer_endpoint.dart';
 
 class LanDiscoveryService {
   static const int discoveryPort = 40404;
@@ -68,6 +59,13 @@ class LanDiscoveryService {
         transportAdapter: _transportAdapter,
         resolveTargetIp: _resolveUnicastTargetIp,
         port: discoveryPort,
+        log: _log,
+      );
+  late final LanPresenceAnnouncementSender _presenceAnnouncementSender =
+      LanPresenceAnnouncementSender(
+        transportAdapter: _transportAdapter,
+        packetCodec: _packetCodec,
+        discoveryPort: discoveryPort,
         log: _log,
       );
   Timer? _beaconTimer;
@@ -528,63 +526,14 @@ class LanDiscoveryService {
   }
 
   Future<void> _sendDiscoveryPing(String deviceName) async {
-    final nearbyTransferPort = _nearbyTransferPortProvider?.call();
-    final request = _packetCodec.encodeDiscoveryRequest(
+    await _presenceAnnouncementSender.announce(
       instanceId: _instanceId,
       deviceName: deviceName,
       localPeerId: _localPeerId,
-      nearbyTransferPort: nearbyTransferPort,
+      nearbyTransferPort: _nearbyTransferPortProvider?.call(),
+      internetPeers: _internetPeers,
+      configuredTargetIps: _configuredTargetIps,
     );
-    final bytes = utf8.encode(request);
-    final localIps = _transportAdapter.localIps;
-
-    _log('Broadcasting discover packet');
-    _transportAdapter.send(
-      bytes: bytes,
-      address: InternetAddress('255.255.255.255'),
-      port: discoveryPort,
-      context: 'discover-broadcast',
-    );
-    for (final localIp in localIps) {
-      final broadcast = lanBroadcastAddressFor(localIp);
-      if (broadcast != null) {
-        _transportAdapter.send(
-          bytes: bytes,
-          address: broadcast,
-          port: discoveryPort,
-          context: 'discover-subnet',
-        );
-        _log('Discover packet sent to ${broadcast.address}');
-      }
-    }
-
-    for (final peer in _internetPeers) {
-      final address = InternetAddress.tryParse(peer.host);
-      if (address == null || address.type != InternetAddressType.IPv4) {
-        continue;
-      }
-      _transportAdapter.send(
-        bytes: bytes,
-        address: address,
-        port: peer.port,
-        context: 'discover-friend-endpoint',
-      );
-      _log('Discover packet sent to friend endpoint ${peer.host}:${peer.port}');
-    }
-
-    for (final targetIp in _configuredTargetIps) {
-      final address = InternetAddress.tryParse(targetIp);
-      if (address == null || address.type != InternetAddressType.IPv4) {
-        continue;
-      }
-      _transportAdapter.send(
-        bytes: bytes,
-        address: address,
-        port: discoveryPort,
-        context: 'discover-configured-target',
-      );
-      _log('Discover packet sent to configured target $targetIp');
-    }
   }
 
   InternetAddress? _resolveUnicastTargetIp(String rawTargetIp) {
