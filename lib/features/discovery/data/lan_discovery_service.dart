@@ -13,7 +13,9 @@ import 'lan_packet_codec_models.dart';
 import 'lan_packet_codec.dart' show LanPacketCodec;
 import 'lan_presence_protocol_handler.dart';
 import 'lan_protocol_events.dart';
+import 'lan_sender_allowlist_policy.dart';
 import 'lan_share_protocol_handler.dart';
+import 'lan_share_catalog_chunk_reassembler.dart';
 import 'lan_transfer_protocol_handler.dart';
 
 class InternetPeerEndpoint {
@@ -66,8 +68,6 @@ class LanDiscoveryService {
   final LanClipboardProtocolHandler _clipboardProtocolHandler;
   final int? Function()? _nearbyTransferPortProvider;
   final Duration _presenceHeartbeatInterval;
-  static const Duration _presenceAllowedSenderTtl = Duration(seconds: 20);
-  static const Duration _shareCatalogChunkTtl = Duration(seconds: 15);
   Timer? _beaconTimer;
   bool _started = false;
   final String _instanceId =
@@ -76,9 +76,10 @@ class LanDiscoveryService {
   List<InternetPeerEndpoint> _internetPeers = const <InternetPeerEndpoint>[];
   Set<String> _internetPeerIpAllowlist = <String>{};
   Set<String> _configuredTargetIps = <String>{};
-  final Map<String, DateTime> _presenceAllowedSenders = <String, DateTime>{};
-  final Map<String, _PendingShareCatalogChunks> _pendingShareCatalogChunks =
-      <String, _PendingShareCatalogChunks>{};
+  final LanSenderAllowlistPolicy _senderAllowlistPolicy =
+      LanSenderAllowlistPolicy();
+  final LanShareCatalogChunkReassembler _shareCatalogChunkReassembler =
+      LanShareCatalogChunkReassembler();
 
   Future<void> start({
     required String deviceName,
@@ -181,8 +182,8 @@ class LanDiscoveryService {
     await _transportAdapter.stop();
     _started = false;
     _configuredTargetIps = <String>{};
-    _presenceAllowedSenders.clear();
-    _pendingShareCatalogChunks.clear();
+    _senderAllowlistPolicy.clear();
+    _shareCatalogChunkReassembler.clear();
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
@@ -634,23 +635,10 @@ class LanDiscoveryService {
     if (parsed == null || parsed.type != InternetAddressType.IPv4) {
       return null;
     }
-    if (!_isUsablePacketSenderIp(parsed.address)) {
+    if (!_senderAllowlistPolicy.isUsablePacketSenderIp(parsed.address)) {
       return null;
     }
     return parsed;
-  }
-
-  bool _isUsablePacketSenderIp(String ip) {
-    final parsed = InternetAddress.tryParse(ip);
-    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
-      return false;
-    }
-    if (parsed.address == '0.0.0.0' ||
-        parsed.isLoopback ||
-        parsed.isMulticast) {
-      return false;
-    }
-    return parsed.address != '255.255.255.255';
   }
 
   InternetAddress? _toBroadcastAddress(String ip) {
@@ -659,36 +647,6 @@ class LanDiscoveryService {
       return null;
     }
     return InternetAddress('${parts[0]}.${parts[1]}.${parts[2]}.255');
-  }
-
-  bool _isValidIpv4(String ip) {
-    final parts = ip.split('.');
-    if (parts.length != 4) {
-      return false;
-    }
-    for (final part in parts) {
-      final octet = int.tryParse(part);
-      if (octet == null || octet < 0 || octet > 255) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  bool _isSame24Subnet(String ip, String baseIp) {
-    if (!_isValidIpv4(ip) || !_isValidIpv4(baseIp)) {
-      return false;
-    }
-    final a = ip.split('.');
-    final b = baseIp.split('.');
-    return a[0] == b[0] && a[1] == b[1] && a[2] == b[2];
-  }
-
-  bool _isAllowedInternetSender(String senderIp) {
-    if (_internetPeerIpAllowlist.isEmpty) {
-      return false;
-    }
-    return _internetPeerIpAllowlist.contains(senderIp);
   }
 
   void _log(String message) {
@@ -715,7 +673,7 @@ class LanDiscoveryService {
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
   }) {
     final senderIp = datagram.address.address;
-    if (!_isUsablePacketSenderIp(senderIp)) {
+    if (!_senderAllowlistPolicy.isUsablePacketSenderIp(senderIp)) {
       _log('Ignoring packet from invalid sender IP: $senderIp');
       return;
     }
@@ -731,20 +689,13 @@ class LanDiscoveryService {
       return;
     }
 
-    final isAllowedInternetSender = _isAllowedInternetSender(senderIp);
-    final isAllowedConfiguredTargetSender = _configuredTargetIps.contains(
-      senderIp,
-    );
-    final isSenderInLocalSubnet = localIps.any(
-      (localIp) => _isSame24Subnet(senderIp, localIp),
-    );
-    if (!_isAllowedSenderForPacket(
+    if (!_senderAllowlistPolicy.isAllowedSenderForPacket(
       packet: packet,
       senderIp: senderIp,
       localIps: localIps,
-      isSenderInLocalSubnet: isSenderInLocalSubnet,
-      isAllowedInternetSender: isAllowedInternetSender,
-      isAllowedConfiguredTargetSender: isAllowedConfiguredTargetSender,
+      configuredTargetIps: _configuredTargetIps,
+      internetPeerIpAllowlist: _internetPeerIpAllowlist,
+      log: _log,
     )) {
       _log('Ignoring packet from foreign subnet: $senderIp');
       return;
@@ -752,7 +703,7 @@ class LanDiscoveryService {
     final observedAt = DateTime.now();
 
     if (packet is LanDiscoveryPresencePacket) {
-      _markPresenceAllowedSender(senderIp, observedAt);
+      _senderAllowlistPolicy.markPresenceAllowedSender(senderIp, observedAt);
       final result = _presenceProtocolHandler.handlePresencePacket(
         packet: packet,
         senderIp: senderIp,
@@ -879,9 +830,10 @@ class LanDiscoveryService {
     }
 
     if (packet is LanShareCatalogPacket) {
-      final reassembled = _consumeShareCatalogPacket(
+      final reassembled = _shareCatalogChunkReassembler.consume(
         packet: packet,
         senderIp: senderIp,
+        log: _log,
       );
       if (reassembled == null) {
         return;
@@ -960,170 +912,5 @@ class LanDiscoveryService {
         ),
       );
     }
-  }
-
-  bool _isAllowedSenderForPacket({
-    required LanInboundPacket packet,
-    required String senderIp,
-    required Set<String> localIps,
-    required bool isSenderInLocalSubnet,
-    required bool isAllowedInternetSender,
-    required bool isAllowedConfiguredTargetSender,
-  }) {
-    _prunePresenceAllowedSenders();
-    if (localIps.isEmpty ||
-        isSenderInLocalSubnet ||
-        isAllowedInternetSender ||
-        isAllowedConfiguredTargetSender ||
-        _presenceAllowedSenders.containsKey(senderIp)) {
-      return true;
-    }
-
-    if (packet is LanDiscoveryPresencePacket &&
-        packet.prefix == lanDiscoverPrefix) {
-      _log('Allowing discover request from non-local sender: $senderIp');
-      return true;
-    }
-
-    return false;
-  }
-
-  void _markPresenceAllowedSender(String senderIp, DateTime observedAt) {
-    _presenceAllowedSenders[senderIp] = observedAt;
-  }
-
-  void _prunePresenceAllowedSenders([DateTime? now]) {
-    final observedNow = now ?? DateTime.now();
-    _presenceAllowedSenders.removeWhere(
-      (_, observedAt) =>
-          observedNow.difference(observedAt) > _presenceAllowedSenderTtl,
-    );
-  }
-
-  LanShareCatalogPacket? _consumeShareCatalogPacket({
-    required LanShareCatalogPacket packet,
-    required String senderIp,
-  }) {
-    _prunePendingShareCatalogChunks();
-    if (packet.chunkCount <= 1) {
-      return packet;
-    }
-    if (packet.chunkIndex < 0 || packet.chunkIndex >= packet.chunkCount) {
-      _log(
-        'Ignoring malformed share catalog chunk from $senderIp '
-        '(requestId=${packet.requestId}, chunk=${packet.chunkIndex}/${packet.chunkCount})',
-      );
-      return null;
-    }
-    final key =
-        '$senderIp|${packet.instanceId}|${packet.requestId}|${packet.ownerMacAddress}';
-    final pending = _pendingShareCatalogChunks.putIfAbsent(
-      key,
-      () => _PendingShareCatalogChunks(
-        requestId: packet.requestId,
-        ownerName: packet.ownerName,
-        ownerMacAddress: packet.ownerMacAddress,
-        chunkCount: packet.chunkCount,
-        createdAt: DateTime.now(),
-      ),
-    );
-    final reassembled = pending.add(packet);
-    if (reassembled != null) {
-      _pendingShareCatalogChunks.remove(key);
-      return reassembled;
-    }
-    return null;
-  }
-
-  void _prunePendingShareCatalogChunks([DateTime? now]) {
-    final observedNow = now ?? DateTime.now();
-    _pendingShareCatalogChunks.removeWhere(
-      (_, pending) =>
-          observedNow.difference(pending.createdAt) > _shareCatalogChunkTtl,
-    );
-  }
-}
-
-class _PendingShareCatalogChunks {
-  _PendingShareCatalogChunks({
-    required this.requestId,
-    required this.ownerName,
-    required this.ownerMacAddress,
-    required this.chunkCount,
-    required this.createdAt,
-  });
-
-  final String requestId;
-  final String ownerName;
-  final String ownerMacAddress;
-  final int chunkCount;
-  final DateTime createdAt;
-  final Map<int, LanShareCatalogPacket> _chunksByIndex =
-      <int, LanShareCatalogPacket>{};
-
-  LanShareCatalogPacket? add(LanShareCatalogPacket packet) {
-    _chunksByIndex[packet.chunkIndex] = packet;
-    if (_chunksByIndex.length < chunkCount) {
-      return null;
-    }
-
-    final mergedEntriesByCacheId = <String, _MergedShareCatalogEntry>{};
-    final orderedCacheIds = <String>[];
-    final removedCacheIds = <String>{};
-    for (var chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
-      final chunk = _chunksByIndex[chunkIndex];
-      if (chunk == null) {
-        return null;
-      }
-      removedCacheIds.addAll(chunk.removedCacheIds);
-      for (final entry in chunk.entries) {
-        final merged = mergedEntriesByCacheId.putIfAbsent(entry.cacheId, () {
-          orderedCacheIds.add(entry.cacheId);
-          return _MergedShareCatalogEntry(
-            cacheId: entry.cacheId,
-            displayName: entry.displayName,
-            itemCount: entry.itemCount,
-            totalBytes: entry.totalBytes,
-          );
-        });
-        merged.files.addAll(entry.files);
-      }
-    }
-
-    return LanShareCatalogPacket(
-      instanceId: _chunksByIndex[0]!.instanceId,
-      requestId: requestId,
-      ownerName: ownerName,
-      ownerMacAddress: ownerMacAddress,
-      entries: orderedCacheIds
-          .map((cacheId) => mergedEntriesByCacheId[cacheId]!.build())
-          .toList(growable: false),
-      removedCacheIds: removedCacheIds.toList(growable: false),
-    );
-  }
-}
-
-class _MergedShareCatalogEntry {
-  _MergedShareCatalogEntry({
-    required this.cacheId,
-    required this.displayName,
-    required this.itemCount,
-    required this.totalBytes,
-  });
-
-  final String cacheId;
-  final String displayName;
-  final int itemCount;
-  final int totalBytes;
-  final List<SharedCatalogFileItem> files = <SharedCatalogFileItem>[];
-
-  SharedCatalogEntryItem build() {
-    return SharedCatalogEntryItem(
-      cacheId: cacheId,
-      displayName: displayName,
-      itemCount: itemCount,
-      totalBytes: totalBytes,
-      files: List<SharedCatalogFileItem>.unmodifiable(files),
-    );
   }
 }
