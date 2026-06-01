@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_packet_sender.dart';
 import 'lan_clipboard_protocol_handler.dart';
+import 'lan_discovery_lifecycle_state.dart';
 import 'lan_discovery_target_registry.dart';
 import 'lan_discovery_session_callbacks.dart';
 import 'lan_friend_packet_sender.dart';
@@ -100,11 +101,10 @@ class LanDiscoveryService {
         outgoingPacketSender: _outgoingPacketSender,
         log: _log,
       );
-  Timer? _beaconTimer;
-  bool _started = false;
+  final LanDiscoveryLifecycleState _lifecycleState =
+      LanDiscoveryLifecycleState();
   final String _instanceId =
       '${DateTime.now().microsecondsSinceEpoch}-${Random().nextInt(1 << 20)}';
-  String _localPeerId = '';
   final LanSenderAllowlistPolicy _senderAllowlistPolicy =
       LanSenderAllowlistPolicy();
   late final LanDiscoveryTargetRegistry _targetRegistry =
@@ -134,12 +134,9 @@ class LanDiscoveryService {
     void Function(ClipboardQueryEvent event)? onClipboardQuery,
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
   }) async {
-    if (_started) {
-      _log('start() ignored: service already running');
+    if (!_lifecycleState.tryStart(localPeerId: localPeerId, log: _log)) {
       return;
     }
-    _started = true;
-    _localPeerId = localPeerId.trim();
     _targetRegistry.updateConfiguredTargetIps(configuredTargetIps);
     final sessionCallbacks = LanDiscoverySessionCallbacks(
       deviceName: deviceName,
@@ -172,14 +169,14 @@ class LanDiscoveryService {
         ),
       );
     } catch (_) {
-      _started = false;
+      _lifecycleState.markStartFailed();
       rethrow;
     }
 
     await _sendDiscoveryPing(deviceName);
-    _beaconTimer = Timer.periodic(
-      _presenceHeartbeatInterval,
-      (_) => _sendDiscoveryPing(deviceName),
+    _lifecycleState.replaceHeartbeat(
+      interval: _presenceHeartbeatInterval,
+      onHeartbeat: () => _sendDiscoveryPing(deviceName),
     );
   }
 
@@ -191,18 +188,17 @@ class LanDiscoveryService {
   }
 
   Future<void> stop() async {
-    _log('Stopping UDP discovery');
-    _beaconTimer?.cancel();
-    _beaconTimer = null;
+    _lifecycleState.beginStop(log: _log);
     await _transportAdapter.stop();
-    _started = false;
-    _targetRegistry.clearConfiguredTargetIps();
-    _senderAllowlistPolicy.clear();
-    _incomingPacketDispatcher.clear();
+    _lifecycleState.completeStop(
+      clearConfiguredTargets: _targetRegistry.clearConfiguredTargetIps,
+      clearSenderAllowlist: _senderAllowlistPolicy.clear,
+      clearIncomingDispatcher: _incomingPacketDispatcher.clear,
+    );
   }
 
   Future<void> broadcastPresenceNow({required String deviceName}) async {
-    if (!_started) {
+    if (!_lifecycleState.isStarted) {
       return;
     }
     await _sendDiscoveryPing(deviceName);
@@ -464,7 +460,7 @@ class LanDiscoveryService {
     await _presenceAnnouncementSender.announce(
       instanceId: _instanceId,
       deviceName: deviceName,
-      localPeerId: _localPeerId,
+      localPeerId: _lifecycleState.localPeerId,
       nearbyTransferPort: _nearbyTransferPortProvider?.call(),
       internetPeers: _targetRegistry.internetPeers,
       configuredTargetIps: _targetRegistry.configuredTargetIps,
@@ -516,7 +512,7 @@ class LanDiscoveryService {
         final response = _packetCodec.encodeDiscoveryResponse(
           instanceId: _instanceId,
           deviceName: sessionCallbacks.deviceName,
-          localPeerId: _localPeerId,
+          localPeerId: _lifecycleState.localPeerId,
           nearbyTransferPort: _nearbyTransferPortProvider?.call(),
         );
         _transportAdapter.send(
