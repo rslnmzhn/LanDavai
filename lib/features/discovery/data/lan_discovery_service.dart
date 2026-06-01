@@ -11,6 +11,7 @@ import 'lan_clipboard_protocol_handler.dart';
 import 'lan_discovery_target_registry.dart';
 import 'lan_friend_packet_sender.dart';
 import 'lan_friend_protocol_handler.dart';
+import 'lan_incoming_datagram_admission.dart';
 import 'lan_incoming_packet_dispatcher.dart';
 import 'lan_internet_peer_endpoint.dart';
 import 'lan_outgoing_packet_sender.dart';
@@ -70,6 +71,12 @@ class LanDiscoveryService {
         transportAdapter: _transportAdapter,
         packetCodec: _packetCodec,
         discoveryPort: discoveryPort,
+        log: _log,
+      );
+  late final LanIncomingDatagramAdmission _incomingDatagramAdmission =
+      LanIncomingDatagramAdmission(
+        packetCodec: _packetCodec,
+        senderAllowlistPolicy: _senderAllowlistPolicy,
         log: _log,
       );
   late final LanTransferPacketSender _transferPacketSender =
@@ -494,39 +501,23 @@ class LanDiscoveryService {
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
   }) {
     final senderIp = datagram.address.address;
-    if (!_senderAllowlistPolicy.isUsablePacketSenderIp(senderIp)) {
-      _log('Ignoring packet from invalid sender IP: $senderIp');
-      return;
-    }
-
     final localIps = _transportAdapter.localIps;
-    if (localIps.contains(senderIp)) {
-      return;
-    }
-
-    final message = utf8.decode(datagram.data, allowMalformed: true);
-    final packet = _packetCodec.decodeIncomingPacket(message);
-    if (packet == null || packet.instanceId == _instanceId) {
-      return;
-    }
-
-    if (!_senderAllowlistPolicy.isAllowedSenderForPacket(
-      packet: packet,
+    final accepted = _incomingDatagramAdmission.admit(
+      bytes: datagram.data,
       senderIp: senderIp,
       localIps: localIps,
+      localInstanceId: _instanceId,
       configuredTargetIps: _targetRegistry.configuredTargetIps,
       internetPeerIpAllowlist: _targetRegistry.internetPeerIpAllowlist,
-      log: _log,
-    )) {
-      _log('Ignoring packet from foreign subnet: $senderIp');
+    );
+    if (accepted == null) {
       return;
     }
-    final observedAt = DateTime.now();
 
     _incomingPacketDispatcher.dispatch(
-      packet: packet,
-      senderIp: senderIp,
-      observedAt: observedAt,
+      packet: accepted.packet,
+      senderIp: accepted.senderIp,
+      observedAt: accepted.observedAt,
       callbacks: LanIncomingPacketCallbacks(
         onAppDetected: onAppDetected,
         onTransferRequest: onTransferRequest,
@@ -545,7 +536,7 @@ class LanDiscoveryService {
         onClipboardCatalog: onClipboardCatalog,
       ),
       onPresencePacketAccepted: () => _senderAllowlistPolicy
-          .markPresenceAllowedSender(senderIp, observedAt),
+          .markPresenceAllowedSender(accepted.senderIp, accepted.observedAt),
       onDiscoveryResponseRequested: () {
         final response = _packetCodec.encodeDiscoveryResponse(
           instanceId: _instanceId,
