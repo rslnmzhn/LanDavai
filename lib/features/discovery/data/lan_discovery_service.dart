@@ -9,6 +9,7 @@ import 'discovery_transport_adapter.dart';
 import 'lan_clipboard_packet_sender.dart';
 import 'lan_clipboard_protocol_handler.dart';
 import 'lan_discovery_target_registry.dart';
+import 'lan_discovery_session_callbacks.dart';
 import 'lan_friend_packet_sender.dart';
 import 'lan_friend_protocol_handler.dart';
 import 'lan_incoming_datagram_admission.dart';
@@ -140,6 +141,26 @@ class LanDiscoveryService {
     _started = true;
     _localPeerId = localPeerId.trim();
     _targetRegistry.updateConfiguredTargetIps(configuredTargetIps);
+    final sessionCallbacks = LanDiscoverySessionCallbacks(
+      deviceName: deviceName,
+      incoming: LanIncomingPacketCallbacks(
+        onAppDetected: onAppDetected,
+        onTransferRequest: onTransferRequest,
+        onTransferDecision: onTransferDecision,
+        onFriendRequest: onFriendRequest,
+        onFriendResponse: onFriendResponse,
+        onShareQuery: onShareQuery,
+        onShareAccessRequest: onShareAccessRequest,
+        onShareAccessResponse: onShareAccessResponse,
+        onShareCatalog: onShareCatalog,
+        onDownloadRequest: onDownloadRequest,
+        onDownloadResponse: onDownloadResponse,
+        onThumbnailSyncRequest: onThumbnailSyncRequest,
+        onThumbnailPacket: onThumbnailPacket,
+        onClipboardQuery: onClipboardQuery,
+        onClipboardCatalog: onClipboardCatalog,
+      ),
+    );
 
     try {
       await _transportAdapter.start(
@@ -147,22 +168,7 @@ class LanDiscoveryService {
         localSourceIps: localSourceIps,
         onDatagram: (datagram) => _handleIncomingDatagram(
           datagram: datagram,
-          deviceName: deviceName,
-          onAppDetected: onAppDetected,
-          onTransferRequest: onTransferRequest,
-          onTransferDecision: onTransferDecision,
-          onFriendRequest: onFriendRequest,
-          onFriendResponse: onFriendResponse,
-          onShareQuery: onShareQuery,
-          onShareAccessRequest: onShareAccessRequest,
-          onShareAccessResponse: onShareAccessResponse,
-          onShareCatalog: onShareCatalog,
-          onDownloadRequest: onDownloadRequest,
-          onDownloadResponse: onDownloadResponse,
-          onThumbnailSyncRequest: onThumbnailSyncRequest,
-          onThumbnailPacket: onThumbnailPacket,
-          onClipboardQuery: onClipboardQuery,
-          onClipboardCatalog: onClipboardCatalog,
+          sessionCallbacks: sessionCallbacks,
         ),
       );
     } catch (_) {
@@ -483,22 +489,7 @@ class LanDiscoveryService {
 
   void _handleIncomingDatagram({
     required Datagram datagram,
-    required String deviceName,
-    required void Function(AppPresenceEvent event) onAppDetected,
-    void Function(TransferRequestEvent event)? onTransferRequest,
-    void Function(TransferDecisionEvent event)? onTransferDecision,
-    void Function(FriendRequestEvent event)? onFriendRequest,
-    void Function(FriendResponseEvent event)? onFriendResponse,
-    void Function(ShareQueryEvent event)? onShareQuery,
-    void Function(ShareAccessRequestEvent event)? onShareAccessRequest,
-    void Function(ShareAccessResponseEvent event)? onShareAccessResponse,
-    void Function(ShareCatalogEvent event)? onShareCatalog,
-    void Function(DownloadRequestEvent event)? onDownloadRequest,
-    void Function(DownloadResponseEvent event)? onDownloadResponse,
-    void Function(ThumbnailSyncRequestEvent event)? onThumbnailSyncRequest,
-    void Function(ThumbnailPacketEvent event)? onThumbnailPacket,
-    void Function(ClipboardQueryEvent event)? onClipboardQuery,
-    void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
+    required LanDiscoverySessionCallbacks sessionCallbacks,
   }) {
     final senderIp = datagram.address.address;
     final localIps = _transportAdapter.localIps;
@@ -518,29 +509,13 @@ class LanDiscoveryService {
       packet: accepted.packet,
       senderIp: accepted.senderIp,
       observedAt: accepted.observedAt,
-      callbacks: LanIncomingPacketCallbacks(
-        onAppDetected: onAppDetected,
-        onTransferRequest: onTransferRequest,
-        onTransferDecision: onTransferDecision,
-        onFriendRequest: onFriendRequest,
-        onFriendResponse: onFriendResponse,
-        onShareQuery: onShareQuery,
-        onShareAccessRequest: onShareAccessRequest,
-        onShareAccessResponse: onShareAccessResponse,
-        onShareCatalog: onShareCatalog,
-        onDownloadRequest: onDownloadRequest,
-        onDownloadResponse: onDownloadResponse,
-        onThumbnailSyncRequest: onThumbnailSyncRequest,
-        onThumbnailPacket: onThumbnailPacket,
-        onClipboardQuery: onClipboardQuery,
-        onClipboardCatalog: onClipboardCatalog,
-      ),
+      callbacks: sessionCallbacks.incoming,
       onPresencePacketAccepted: () => _senderAllowlistPolicy
           .markPresenceAllowedSender(accepted.senderIp, accepted.observedAt),
       onDiscoveryResponseRequested: () {
         final response = _packetCodec.encodeDiscoveryResponse(
           instanceId: _instanceId,
-          deviceName: deviceName,
+          deviceName: sessionCallbacks.deviceName,
           localPeerId: _localPeerId,
           nearbyTransferPort: _nearbyTransferPortProvider?.call(),
         );
