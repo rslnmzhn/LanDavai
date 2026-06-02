@@ -119,6 +119,136 @@ void main() {
         );
       }
     });
+
+    test('keeps LanDiscoveryService on coordinator-only discovery seams', () {
+      const servicePath =
+          'lib/features/discovery/data/lan_discovery_service.dart';
+      const requiredHelpers = <String>[
+        'lib/features/discovery/data/lan_presence_announcement_sender.dart',
+        'lib/features/discovery/data/lan_discovery_target_registry.dart',
+        'lib/features/discovery/data/lan_transfer_packet_sender.dart',
+        'lib/features/discovery/data/lan_friend_packet_sender.dart',
+        'lib/features/discovery/data/lan_share_packet_sender.dart',
+        'lib/features/discovery/data/lan_clipboard_packet_sender.dart',
+        'lib/features/discovery/data/lan_share_catalog_chunk_encoder.dart',
+        'lib/features/discovery/data/lan_clipboard_catalog_packet_fitter.dart',
+        'lib/features/discovery/data/lan_incoming_datagram_admission.dart',
+        'lib/features/discovery/data/lan_discovery_session_callbacks.dart',
+        'lib/features/discovery/data/lan_discovery_lifecycle_state.dart',
+      ];
+
+      for (final path in requiredHelpers) {
+        expect(
+          sourceTree.fileExists(path),
+          isTrue,
+          reason:
+              '$path is a durable LanDiscoveryService extraction seam from the PR cycle and must not disappear without updating the cycle guards.',
+        );
+      }
+
+      for (final literal in <String>[
+        'Timer? _beaconTimer',
+        'bool _started =',
+        '_internetPeers',
+        '_internetPeerIpAllowlist',
+        '_configuredTargetIps',
+        '_sendOutgoingPacket',
+        '_sendOutgoingPackets',
+        'decodeIncomingPacket(',
+        'encodeTransferRequest(',
+        'encodeTransferDecision(',
+        'encodeFriendRequest(',
+        'encodeFriendResponse(',
+        'encodeShareCatalogChunks(',
+        'fitClipboardCatalogEntries(',
+        'encodeClipboardCatalog(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(servicePath, literal),
+          isFalse,
+          reason:
+              '$servicePath must remain a lifecycle/public-API coordinator and must not regain extracted responsibility "$literal".',
+        );
+      }
+
+      expect(
+        sourceTree.fileContainsRegex(
+          servicePath,
+          RegExp(r'\bpacket\s+is\s+Lan[A-Za-z]+Packet\b'),
+        ),
+        isFalse,
+        reason:
+            '$servicePath must not regain incoming packet type dispatch; LanIncomingPacketDispatcher owns packet branching.',
+      );
+    });
+
+    test('keeps lifecycle helper away from UDP transport ownership', () {
+      const servicePath =
+          'lib/features/discovery/data/lan_discovery_service.dart';
+      const lifecyclePath =
+          'lib/features/discovery/data/lan_discovery_lifecycle_state.dart';
+
+      expect(
+        sourceTree.fileContainsLiteral(servicePath, '_transportAdapter.start('),
+        isTrue,
+        reason:
+            '$servicePath must keep direct DiscoveryTransportAdapter.start ownership.',
+      );
+      expect(
+        sourceTree.fileContainsLiteral(servicePath, '_transportAdapter.stop()'),
+        isTrue,
+        reason:
+            '$servicePath must keep direct DiscoveryTransportAdapter.stop ownership.',
+      );
+
+      for (final literal in <String>[
+        'DiscoveryTransportAdapter',
+        'transportAdapter',
+        'startTransport',
+        'stopTransport',
+        '.start(',
+        '.stop(',
+        'send(',
+        'NetworkInterface.list(',
+      ]) {
+        expect(
+          sourceTree.fileContainsLiteral(lifecyclePath, literal),
+          isFalse,
+          reason:
+              '$lifecyclePath may own lifecycle state only; it must not own UDP transport lifecycle or packet sending residue "$literal".',
+        );
+      }
+    });
+
+    test('keeps extracted LAN discovery helpers under the file size limit', () {
+      const extractedHelpers = <String>[
+        'lib/features/discovery/data/lan_presence_announcement_sender.dart',
+        'lib/features/discovery/data/lan_discovery_target_registry.dart',
+        'lib/features/discovery/data/lan_transfer_packet_sender.dart',
+        'lib/features/discovery/data/lan_friend_packet_sender.dart',
+        'lib/features/discovery/data/lan_share_packet_sender.dart',
+        'lib/features/discovery/data/lan_clipboard_packet_sender.dart',
+        'lib/features/discovery/data/lan_share_catalog_chunk_encoder.dart',
+        'lib/features/discovery/data/lan_clipboard_catalog_packet_fitter.dart',
+        'lib/features/discovery/data/lan_incoming_datagram_admission.dart',
+        'lib/features/discovery/data/lan_discovery_session_callbacks.dart',
+        'lib/features/discovery/data/lan_discovery_lifecycle_state.dart',
+      ];
+      final oversizedHelpers = <String>[];
+      for (final path in extractedHelpers) {
+        final lineCount = sourceTree.fileLineCount(path);
+        if (lineCount > 500) {
+          oversizedHelpers.add('$path ($lineCount lines)');
+        }
+      }
+
+      expect(
+        oversizedHelpers,
+        isEmpty,
+        reason:
+            'Extracted LAN discovery helper files must stay below 500 lines. Oversized files: ${oversizedHelpers.join(', ')}',
+      );
+    });
   });
 }
 
@@ -160,6 +290,14 @@ class _SourceTree {
 
   bool fileContainsRegex(String relativePath, RegExp pattern) {
     return pattern.hasMatch(_readFile(relativePath));
+  }
+
+  int fileLineCount(String relativePath) {
+    final text = _readFile(relativePath);
+    if (text.isEmpty) {
+      return 0;
+    }
+    return text.split('\n').length;
   }
 
   List<_SourceMatch> findLiteralInLib(String literal) {
