@@ -9,6 +9,7 @@ import '../../history/application/download_history_boundary.dart';
 import '../../history/domain/transfer_history_record.dart';
 import '../data/file_hash_service.dart';
 import '../data/file_transfer_service.dart';
+import '../data/transfer_failed_file_cleanup.dart';
 import '../data/transfer_storage_service.dart';
 import '../domain/shared_folder_cache.dart';
 import '../domain/transfer_request.dart';
@@ -59,6 +60,8 @@ class IncomingTransferCompletionBoundary extends ChangeNotifier {
   final TransferPathPolicy _pathPolicy = const TransferPathPolicy();
   final IncomingTransferCompletionPathVerifier _pathVerifier =
       const IncomingTransferCompletionPathVerifier();
+  static const TransferFailedFileCleanup _failedFileCleanup =
+      TransferFailedFileCleanup();
   final Map<String, TransferReceiveSession> _activeReceiveSessions =
       <String, TransferReceiveSession>{};
 
@@ -234,6 +237,9 @@ class IncomingTransferCompletionBoundary extends ChangeNotifier {
         );
         savedPaths = await _pathVerifier.verifyReceivedSavedPaths(savedPaths);
       } catch (error) {
+        // Publishing failed mid-batch: drop the staging copies so the app
+        // sandbox does not accumulate orphaned incoming temp files.
+        await _failedFileCleanup.cleanupSavedFiles(result.savedPaths);
         throw StateError('Failed to publish files into user downloads: $error');
       }
     }

@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'incoming_temp_sweeper.dart';
+
 class PreviewCacheCleanupResult {
   const PreviewCacheCleanupResult({
     required this.filesDeleted,
@@ -27,6 +29,24 @@ class TransferStorageService {
       Platform.isWindows || Platform.isLinux;
 
   bool get publishesReceivedDownloadsToUserDownloads => Platform.isAndroid;
+
+  static const IncomingTempSweeper _incomingTempSweeper = IncomingTempSweeper();
+
+  /// Deletes stale files in the Android `incoming_temp` staging directory
+  /// that were left behind by interrupted transfers. Safe to call at startup:
+  /// recent files are preserved so an already-running transfer is not hit.
+  Future<IncomingTempSweepResult> sweepOrphanedIncomingTempFiles({
+    String appFolderName = 'Landa',
+  }) async {
+    if (!Platform.isAndroid) {
+      return const IncomingTempSweepResult(filesDeleted: 0, bytesFreed: 0);
+    }
+
+    final support = await getApplicationSupportDirectory();
+    return _incomingTempSweeper.sweep(
+      Directory(p.join(support.path, appFolderName, 'incoming_temp')),
+    );
+  }
 
   Future<Directory> resolveReceiveDirectory({
     String appFolderName = 'Landa',
@@ -233,6 +253,8 @@ class TransferStorageService {
       if (destinationPath == null || destinationPath.trim().isEmpty) {
         throw StateError('Failed to publish file to Downloads: $relativePath');
       }
+      // Delete the staging copy only after a successful publish so a mid-batch
+      // failure leaves recoverable sources instead of orphaned temp files.
       final sourceFile = File(sourcePath);
       if (await sourceFile.exists()) {
         await sourceFile.delete();

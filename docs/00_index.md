@@ -8,6 +8,7 @@ Current project docs are split into small, active reference files. Read in this 
 4. [04_nearby_transfer_qr_flow.md](/e:/Projects/Landa/docs/04_nearby_transfer_qr_flow.md)
 5. [05_build_release_packaging.md](/e:/Projects/Landa/docs/05_build_release_packaging.md)
 6. [06_regression_and_test_gates.md](/e:/Projects/Landa/docs/06_regression_and_test_gates.md)
+7. [roadmap.md](/e:/Projects/Landa/docs/roadmap.md)
 
 Focused working analysis branches stay linked from this index. The current
 whole-share large-folder audit lives here:

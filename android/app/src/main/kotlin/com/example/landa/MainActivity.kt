@@ -352,7 +352,13 @@ class MainActivity : FlutterActivity() {
         val baseTarget = File(downloads, "$appFolderName/$relativePath")
         val target = nextAvailableFile(baseTarget)
         target.parentFile?.mkdirs()
-        sourceFile.copyTo(target, overwrite = false)
+        try {
+            sourceFile.copyTo(target, overwrite = false)
+        } catch (t: Throwable) {
+            // Remove a partially written target so no broken file is left behind.
+            target.delete()
+            throw t
+        }
         return target.absolutePath
     }
 
@@ -381,21 +387,61 @@ class MainActivity : FlutterActivity() {
         val itemUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("Failed to create MediaStore item")
 
-        resolver.openOutputStream(itemUri)?.use { output ->
-            FileInputStream(sourceFile).use { input ->
-                input.copyTo(output)
+        try {
+            resolver.openOutputStream(itemUri)?.use { output ->
+                FileInputStream(sourceFile).use { input ->
+                    input.copyTo(output)
+                }
+            } ?: throw IllegalStateException("Failed to open output stream")
+
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(itemUri, values, null, null)
+        } catch (t: Throwable) {
+            // Drop the pending MediaStore row so it never surfaces as a
+            // zero-byte ghost file in the Downloads picker.
+            try {
+                resolver.delete(itemUri, null, null)
+            } catch (_: Throwable) {
             }
-        } ?: throw IllegalStateException("Failed to open output stream")
+            throw t
+        }
 
-        values.clear()
-        values.put(MediaStore.Downloads.IS_PENDING, 0)
-        resolver.update(itemUri, values, null, null)
+        // MediaStore may auto-rename on DISPLAY_NAME collisions
+        // ("file.txt" -> "file (1).txt"), so resolve the actual stored path
+        // from the inserted row instead of assuming the requested one.
+        return resolveMediaStoreFilePath(itemUri)
+            ?: run {
+                // Row exists but DATA is not readable: fall back to the
+                // conventional location rather than failing the transfer.
+                val fallback = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    "$appFolderName/$normalized",
+                )
+                fallback.absolutePath
+            }
+    }
 
-        val destination = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "$appFolderName/$normalized",
-        )
-        return destination.absolutePath
+    private fun resolveMediaStoreFilePath(itemUri: Uri): String? {
+        return try {
+            applicationContext.contentResolver.query(
+                itemUri,
+                arrayOf(MediaStore.MediaColumns.DATA),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
+                    val path = if (index >= 0) cursor.getString(index) else null
+                    path?.takeIf { it.isNotBlank() }
+                } else {
+                    null
+                }
+            }
+        } catch (_: Throwable) {
+            null
+        }
     }
 
     private fun nextAvailableFile(base: File): File {

@@ -4968,6 +4968,7 @@ class SuccessfulReceiveFileTransferService extends FileTransferService {
     })?
     destinationPathAllocator,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    Duration receiveIdleTimeoutOverride = Duration.zero,
   }) async {
     startReceiverCalls += 1;
     lastDestinationDirectoryPath = destinationDirectory.path;
@@ -5015,6 +5016,7 @@ class MissingSavedFileReceiveTransferService extends FileTransferService {
     })?
     destinationPathAllocator,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    Duration receiveIdleTimeoutOverride = Duration.zero,
   }) async {
     onProgress?.call(result.totalBytes, result.totalBytes);
     return TransferReceiveSession(
@@ -5338,6 +5340,7 @@ class AllocatingReceiveFileTransferService extends FileTransferService {
     })?
     destinationPathAllocator,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    Duration receiveIdleTimeoutOverride = Duration.zero,
   }) async {
     startReceiverCalls += 1;
     lastDestinationDirectoryPath = destinationDirectory.path;
@@ -5420,6 +5423,7 @@ class PendingReceiveFileTransferService extends FileTransferService {
     })?
     destinationPathAllocator,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    Duration receiveIdleTimeoutOverride = Duration.zero,
   }) async {
     startReceiverCalls += 1;
     lastArmTimeoutImmediately = armTimeoutImmediately;

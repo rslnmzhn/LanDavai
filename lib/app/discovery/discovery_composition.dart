@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -412,6 +413,27 @@ class DiscoveryCompositionFactory {
       videoLinkShareService: videoLinkShareService,
       hostAddressProvider: () => controller.localIp,
       hostChangeListenable: controller,
+    );
+    // Best-effort startup sweep: stale staging files from interrupted Android
+    // transfers would otherwise count against the app's storage footprint.
+    unawaited(
+      resolvedTransferStorageService
+          .sweepOrphanedIncomingTempFiles()
+          .then((sweepResult) {
+            if (sweepResult.filesDeleted > 0) {
+              developer.log(
+                'Swept ${sweepResult.filesDeleted} orphaned incoming temp '
+                'file(s), freed ${sweepResult.bytesFreed} bytes.',
+                name: 'DiscoveryComposition',
+              );
+            }
+          })
+          .catchError((Object error) {
+            developer.log(
+              'Incoming temp sweep failed: $error',
+              name: 'DiscoveryComposition',
+            );
+          }),
     );
     final readModel = DiscoveryReadModel(
       legacyController: controller,

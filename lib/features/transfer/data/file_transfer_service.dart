@@ -100,6 +100,11 @@ class FileTransferService {
   static const TransferFailedFileCleanup _failedFileCleanup =
       TransferFailedFileCleanup();
 
+  /// Maximum time the receiver waits for the next bytes on an established
+  /// connection before giving up. The timer is re-armed after every
+  /// successful read, so slow-but-progressing transfers are never cut off.
+  static const Duration receiveIdleTimeout = Duration(seconds: 30);
+
   Future<TransferReceiveSession> startReceiver({
     required String requestId,
     required List<TransferFileManifestItem>? expectedItems,
@@ -114,6 +119,7 @@ class FileTransferService {
     })?
     destinationPathAllocator,
     TransferRuntimeDiagnosticCallback? onDiagnosticEvent,
+    Duration receiveIdleTimeoutOverride = Duration.zero,
   }) async {
     final server = await ServerSocket.bind(InternetAddress.anyIPv4, 0);
     final resultCompleter = Completer<FileTransferResult>();
@@ -157,6 +163,16 @@ class FileTransferService {
 
     Timer? timeoutTimer;
     var timeoutArmed = false;
+    final effectiveIdleTimeout = receiveIdleTimeoutOverride > Duration.zero
+        ? receiveIdleTimeoutOverride
+        : receiveIdleTimeout;
+    // Once a socket is accepted, the original timer becomes an idle watchdog:
+    // it is re-armed after every successful read instead of being cancelled,
+    // so a stalled sender can no longer park the receive session forever.
+    var idleWatchdogActive = false;
+    // Set together with [idleWatchdogActive] so the watchdog can destroy a
+    // stalled connection; otherwise its result would wait on more reads.
+    void Function()? socketDestroyCallback;
 
     void armTimeout() {
       if (closed || timeoutArmed) {
@@ -168,28 +184,73 @@ class FileTransferService {
         details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
       );
       timeoutTimer = Timer(timeout, () {
-        if (closed) {
+        if (closed || resultCompleter.isCompleted) {
           return;
         }
         onDiagnosticEvent?.call(
           stage: 'receiver_timeout',
           details: <String, Object?>{'timeoutSeconds': timeout.inSeconds},
         );
+        // Complete before closing: closeSession would otherwise finish the
+        // future with the generic "receiver closed" message first.
+        resultCompleter.complete(
+          FileTransferResult(
+            success: false,
+            message: 'Transfer receive timed out.',
+            savedPaths: <String>[],
+            receivedItems: <TransferFileManifestItem>[],
+            totalBytes: 0,
+            destinationDirectory: destinationDirectory.path,
+            hashVerified: false,
+          ),
+        );
         unawaited(closeSession());
-        if (!resultCompleter.isCompleted) {
-          resultCompleter.complete(
-            FileTransferResult(
-              success: false,
-              message: 'Transfer receive timed out.',
-              savedPaths: <String>[],
-              receivedItems: <TransferFileManifestItem>[],
-              totalBytes: 0,
-              destinationDirectory: destinationDirectory.path,
-              hashVerified: false,
-            ),
-          );
-        }
       });
+    }
+
+    void armIdleWatchdog() {
+      // Deliberately not gated on `closed`: the connection handler reuses
+      // that flag to mean "a socket was accepted", which is exactly when
+      // this watchdog may run. Armed only while a socket read is actually
+      // pending, so slow disk-bound phases without incoming bytes are not
+      // mistaken for a stalled sender.
+      if (!idleWatchdogActive || resultCompleter.isCompleted) {
+        return;
+      }
+      timeoutTimer?.cancel();
+      timeoutTimer = Timer(effectiveIdleTimeout, () {
+        if (resultCompleter.isCompleted) {
+          return;
+        }
+        onDiagnosticEvent?.call(
+          stage: 'receiver_idle_timeout',
+          details: <String, Object?>{
+            'idleTimeoutSeconds': effectiveIdleTimeout.inSeconds,
+          },
+        );
+        socketDestroyCallback?.call();
+        // Complete before closing: closeSession would otherwise finish the
+        // future with the generic "receiver closed" message first.
+        resultCompleter.complete(
+          FileTransferResult(
+            success: false,
+            message:
+                'Transfer receive stalled: no data for '
+                '${effectiveIdleTimeout.inSeconds}s.',
+            savedPaths: <String>[],
+            receivedItems: <TransferFileManifestItem>[],
+            totalBytes: 0,
+            destinationDirectory: destinationDirectory.path,
+            hashVerified: false,
+          ),
+        );
+        unawaited(closeSession());
+      });
+    }
+
+    void disarmIdleWatchdog() {
+      timeoutTimer?.cancel();
+      timeoutTimer = null;
     }
 
     if (armTimeoutImmediately) {
@@ -208,8 +269,11 @@ class FileTransferService {
           return;
         }
         closed = true;
-        timeoutTimer?.cancel();
         server.close();
+        // The pre-connection timeout is superseded by the per-read idle
+        // watchdog for the lifetime of this connection.
+        idleWatchdogActive = true;
+        socketDestroyCallback = socket.destroy;
         onDiagnosticEvent?.call(
           stage: 'receiver_connected',
           details: <String, Object?>{
@@ -219,33 +283,41 @@ class FileTransferService {
         );
         unawaited(
           _receiveFiles(
-            socket: socket,
-            requestId: requestId,
-            expectedItems: expectedItems,
-            destinationDirectory: destinationDirectory,
-            onProgress: onProgress,
-            onDiagnosticEvent: onDiagnosticEvent,
-            destinationRelativeRootPrefix: destinationRelativeRootPrefix,
-            destinationPathAllocator: destinationPathAllocator,
-          ).then(resultCompleter.complete).catchError((Object error) {
-            onDiagnosticEvent?.call(
-              stage: 'receiver_stream_failure',
-              error: error,
-            );
-            if (!resultCompleter.isCompleted) {
-              resultCompleter.complete(
-                FileTransferResult(
-                  success: false,
-                  message: 'Transfer receive failed: $error',
-                  savedPaths: <String>[],
-                  receivedItems: <TransferFileManifestItem>[],
-                  totalBytes: 0,
-                  destinationDirectory: destinationDirectory.path,
-                  hashVerified: false,
-                ),
-              );
-            }
-          }),
+                socket: socket,
+                requestId: requestId,
+                expectedItems: expectedItems,
+                destinationDirectory: destinationDirectory,
+                onProgress: onProgress,
+                onDiagnosticEvent: onDiagnosticEvent,
+                destinationRelativeRootPrefix: destinationRelativeRootPrefix,
+                destinationPathAllocator: destinationPathAllocator,
+                onBeforeSocketRead: armIdleWatchdog,
+                onAfterSocketRead: disarmIdleWatchdog,
+              )
+              .then((result) {
+                if (!resultCompleter.isCompleted) {
+                  resultCompleter.complete(result);
+                }
+              })
+              .catchError((Object error) {
+                onDiagnosticEvent?.call(
+                  stage: 'receiver_stream_failure',
+                  error: error,
+                );
+                if (!resultCompleter.isCompleted) {
+                  resultCompleter.complete(
+                    FileTransferResult(
+                      success: false,
+                      message: 'Transfer receive failed: $error',
+                      savedPaths: <String>[],
+                      receivedItems: <TransferFileManifestItem>[],
+                      totalBytes: 0,
+                      destinationDirectory: destinationDirectory.path,
+                      hashVerified: false,
+                    ),
+                  );
+                }
+              }),
         );
       },
       onError: (Object error) {
@@ -511,11 +583,21 @@ class FileTransferService {
       required String relativePath,
     })?
     destinationPathAllocator,
+    void Function()? onBeforeSocketRead,
+    void Function()? onAfterSocketRead,
   }) async {
     final reader = SocketExactReader(socket);
     await destinationDirectory.create(recursive: true);
 
+    // The idle watchdog is scoped to pending socket reads only: armed just
+    // before each read and cancelled right after it completes. Disk-bound
+    // phases between reads (path allocation, hashing of completed files)
+    // produce no incoming bytes and must not be mistaken for a stalled
+    // sender, while silence during an awaited read still trips the timer.
+
+    onBeforeSocketRead?.call();
     final headerLengthBytes = await reader.readExact(_headerLengthBytes);
+    onAfterSocketRead?.call();
     final headerLength = ByteData.sublistView(
       headerLengthBytes,
     ).getUint32(0, Endian.big);
@@ -523,7 +605,9 @@ class FileTransferService {
       throw StateError('Invalid transfer header length: $headerLength');
     }
 
+    onBeforeSocketRead?.call();
     final headerBytes = await reader.readExact(headerLength);
+    onAfterSocketRead?.call();
     final header = _transferHeaderCodec.decode(headerBytes);
     if (header.requestId != requestId) {
       throw StateError('Transfer request mismatch.');
@@ -607,7 +691,9 @@ class FileTransferService {
         var remaining = file.sizeBytes;
         while (remaining > 0) {
           final toRead = remaining < _chunkBytes ? remaining : _chunkBytes;
+          onBeforeSocketRead?.call();
           final chunk = await reader.readExact(toRead);
+          onAfterSocketRead?.call();
           sink.add(chunk);
           hashSink.add(chunk);
           remaining -= chunk.length;

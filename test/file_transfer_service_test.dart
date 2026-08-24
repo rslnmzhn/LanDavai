@@ -1,9 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
+import 'package:landa/features/transfer/data/transfer_header_codec.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 
 void main() {
@@ -19,9 +21,20 @@ void main() {
     });
 
     tearDown(() async {
-      if (await rootDirectory.exists()) {
-        await rootDirectory.delete(recursive: true);
+      if (!await rootDirectory.exists()) {
+        return;
       }
+      // Windows can transiently lock freshly written temp files (AV/indexer),
+      // so retry the recursive delete briefly before giving up.
+      for (var attempt = 0; attempt < 5; attempt += 1) {
+        try {
+          await rootDirectory.delete(recursive: true);
+          return;
+        } on FileSystemException {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+      }
+      await rootDirectory.delete(recursive: true);
     });
 
     test(
@@ -356,6 +369,101 @@ void main() {
             'sender_whole_share_batch_sent:3:6',
           ]),
         );
+      },
+    );
+
+    test('receiver fails when the sender stalls after connecting', () async {
+      final destinationDirectory = Directory(
+        p.join(rootDirectory.path, 'destination'),
+      );
+      await destinationDirectory.create(recursive: true);
+      final receiveSession = await service.startReceiver(
+        requestId: 'request-stalled-sender',
+        expectedItems: null,
+        destinationDirectory: destinationDirectory,
+        armTimeoutImmediately: false,
+        receiveIdleTimeoutOverride: const Duration(milliseconds: 150),
+      );
+
+      // Connect but never send anything, simulating a stalled sender.
+      final stalledSocket = await Socket.connect(
+        InternetAddress.loopbackIPv4.address,
+        receiveSession.port,
+      );
+
+      final result = await receiveSession.result;
+
+      expect(result.success, isFalse);
+      expect(result.message, contains('stalled'));
+      expect(result.savedPaths, isEmpty);
+      await stalledSocket.close();
+    });
+
+    test(
+      'receiver keeps a slow-but-progressing transfer alive and completes it',
+      () async {
+        final sourceFile = File(
+          p.join(rootDirectory.path, 'source', 'slow.bin'),
+        );
+        await sourceFile.parent.create(recursive: true);
+        final bytes = List<int>.generate(256 * 1024, (index) => index % 251);
+        await sourceFile.writeAsBytes(bytes, flush: true);
+
+        final destinationDirectory = Directory(
+          p.join(rootDirectory.path, 'destination'),
+        );
+        final receiveSession = await service.startReceiver(
+          requestId: 'request-slow-sender',
+          expectedItems: null,
+          destinationDirectory: destinationDirectory,
+          armTimeoutImmediately: false,
+          // Idle window comfortably longer than the inter-chunk delay below
+          // (4x margin) so only a genuine multi-interval silence trips it.
+          receiveIdleTimeoutOverride: const Duration(milliseconds: 400),
+        );
+
+        final socket = await Socket.connect(
+          InternetAddress.loopbackIPv4.address,
+          receiveSession.port,
+        );
+        try {
+          const codec = TransferHeaderCodec();
+          final header = codec.encode(
+            TransferHeader(
+              requestId: 'request-slow-sender',
+              files: <TransferFileManifestItem>[
+                TransferFileManifestItem(
+                  fileName: 'slow.bin',
+                  sizeBytes: bytes.length,
+                  sha256: '',
+                ),
+              ],
+            ),
+          );
+          final headerLength = ByteData(4)
+            ..setUint32(0, header.bytes.length, Endian.big);
+          socket.add(headerLength.buffer.asUint8List());
+          socket.add(header.bytes);
+
+          // Drip chunks faster than the idle timeout (100ms drip vs 400ms
+          // window); each drip re-arms the watchdog so the session is never
+          // killed mid-transfer.
+          for (var offset = 0; offset < bytes.length; offset += 64 * 1024) {
+            final end = (offset + 64 * 1024).clamp(0, bytes.length);
+            socket.add(bytes.sublist(offset, end));
+            await socket.flush();
+            await Future<void>.delayed(const Duration(milliseconds: 100));
+          }
+          await socket.flush();
+        } finally {
+          await socket.close();
+        }
+
+        final result = await receiveSession.result;
+
+        expect(result.success, isTrue);
+        expect(result.savedPaths, hasLength(1));
+        expect(await File(result.savedPaths.single).readAsBytes(), bytes);
       },
     );
   });
