@@ -2947,10 +2947,9 @@ void main() {
 
         final logFile = await diagnosticStore.resolveLogFile();
         expect(logFile, isNotNull);
-        await _waitForDiagnosticStage(
-          diagnosticStore,
-          'share_access_request_sent',
-        );
+        // The later stages are appended fire-and-forget; the store's idle
+        // barrier is the deterministic signal that all writes have landed.
+        await diagnosticStore.idle;
         final logContents = await logFile!.readAsString();
         expect(logContents, contains('"stage":"share_access_request_sent"'));
         expect(
@@ -4637,19 +4636,6 @@ Future<List<Map<String, Object?>>> _readDiagnosticEntries(
             Map<String, Object?>.from(jsonDecode(line) as Map<String, dynamic>),
       )
       .toList(growable: false);
-}
-
-Future<void> _waitForDiagnosticStage(
-  SharedDownloadDiagnosticLogStore store,
-  String stage,
-) async {
-  for (var i = 0; i < 30; i += 1) {
-    final entries = await _readDiagnosticEntries(store);
-    if (entries.any((entry) => entry['stage'] == stage)) {
-      return;
-    }
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-  }
 }
 
 class CapturingLanDiscoveryService extends LanDiscoveryService {

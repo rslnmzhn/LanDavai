@@ -134,7 +134,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       0,
       (sum, entry) => sum + entry.sizeBytes,
     );
-    _events.add(
+    _emit(
       NearbyTransferSelectionPreparationStartedEvent(
         label: selection.label,
         totalItemCount: totalItemCount,
@@ -178,7 +178,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       );
       completedItemCount += 1;
       preparedBytes += entry.sizeBytes;
-      _events.add(
+      _emit(
         NearbyTransferSelectionPreparationProgressEvent(
           label: selection.label,
           completedItemCount: completedItemCount,
@@ -207,7 +207,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           .map((node) => _offerNodeToJson(node))
           .toList(growable: false),
     });
-    _events.add(
+    _emit(
       NearbyTransferSelectionPreparationCompletedEvent(
         requestId: requestId,
         label: selection.label,
@@ -274,7 +274,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
             );
           },
       onProgress: (receivedBytes, totalBytes) {
-        _events.add(
+        _emit(
           NearbyTransferTransferProgressEvent(
             direction: NearbyTransferProgressDirection.receiving,
             completedBytes: receivedBytes,
@@ -296,7 +296,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
         _receiveSessions.remove(requestId);
         if (result.success) {
           _pendingIncomingOffers.remove(requestId);
-          _events.add(
+          _emit(
             NearbyTransferTransferCompletedEvent(
               direction: NearbyTransferProgressDirection.receiving,
               message: result.message,
@@ -304,7 +304,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
             ),
           );
         } else {
-          _events.add(NearbyTransferErrorEvent(message: result.message));
+          _emit(NearbyTransferErrorEvent(message: result.message));
         }
       }),
     );
@@ -332,14 +332,24 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     _server = null;
   }
 
+  /// Single funnel for event emission. Drops events once [dispose] has
+  /// started so late socket callbacks can never hit a closed controller.
+  void _emit(NearbyTransferTransportEvent event) {
+    if (_disposed) {
+      return;
+    }
+    _events.add(event);
+  }
+
   @override
   void dispose() {
     if (_disposed) {
       return;
     }
     _disposed = true;
-    unawaited(disconnect());
-    _events.close();
+    // Close the event stream only after teardown finishes: socket handlers
+    // may still emit while disconnect() is cancelling subscriptions.
+    unawaited(disconnect().whenComplete(_events.close));
   }
 
   void _handleIncomingSocket(Socket socket) {
@@ -362,7 +372,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           (line) => unawaited(_handleMessage(socket, line)),
           onDone: () => unawaited(_handleSocketClosed(socket)),
           onError: (Object error) {
-            _events.add(
+            _emit(
               NearbyTransferErrorEvent(
                 message: 'Nearby transport socket error: $error',
               ),
@@ -405,14 +415,12 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           ?.whereType<String>()
           .toList(growable: false);
       if (sequence != null && sequence.isNotEmpty) {
-        _events.add(
-          NearbyTransferHandshakeOfferEvent(verificationCode: sequence),
-        );
+        _emit(NearbyTransferHandshakeOfferEvent(verificationCode: sequence));
       }
       return;
     }
     if (type == 'handshakeAccepted') {
-      _events.add(const NearbyTransferHandshakeAcceptedEvent());
+      _emit(const NearbyTransferHandshakeAcceptedEvent());
       return;
     }
     if (type == 'fileOffer') {
@@ -433,14 +441,14 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     }
     if (type == 'reject') {
       final message = json['message'] as String? ?? 'Подключение отклонено.';
-      _events.add(NearbyTransferErrorEvent(message: message));
+      _emit(NearbyTransferErrorEvent(message: message));
       await _handleSocketClosed(socket);
       return;
     }
     if (type == 'error') {
       final message = json['message'] as String?;
       if (message != null && message.trim().isNotEmpty) {
-        _events.add(NearbyTransferErrorEvent(message: message));
+        _emit(NearbyTransferErrorEvent(message: message));
       }
     }
   }
@@ -479,7 +487,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       'deviceId': _localDeviceId ?? 'unknown-device',
       'deviceName': _localDeviceName ?? 'Landa',
     });
-    _events.add(
+    _emit(
       NearbyTransferConnectedEvent(peer: _peer!, sessionId: localSessionId),
     );
   }
@@ -500,7 +508,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     if (expectedSessionId != null &&
         expectedSessionId.trim().isNotEmpty &&
         expectedSessionId != sessionId) {
-      _events.add(
+      _emit(
         const NearbyTransferErrorEvent(message: 'QR session does not match.'),
       );
       unawaited(_handleSocketClosed(socket));
@@ -513,9 +521,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       displayName: deviceName,
       host: socket.remoteAddress.address,
     );
-    _events.add(
-      NearbyTransferConnectedEvent(peer: _peer!, sessionId: sessionId),
-    );
+    _emit(NearbyTransferConnectedEvent(peer: _peer!, sessionId: sessionId));
   }
 
   void _handleFileOffer(Map<String, dynamic> json) {
@@ -554,7 +560,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       },
     );
     final offer = _pendingIncomingOffers[requestId]!;
-    _events.add(
+    _emit(
       NearbyTransferIncomingSelectionOfferedEvent(
         requestId: requestId,
         label: label,
@@ -602,7 +608,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       if (text == null) {
         return;
       }
-      _events.add(
+      _emit(
         NearbyTransferRemotePreviewReadyEvent(
           preview: NearbyTransferRemoteFilePreview.text(
             requestId: requestId,
@@ -619,7 +625,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       if (encodedBytes == null) {
         return;
       }
-      _events.add(
+      _emit(
         NearbyTransferRemotePreviewReadyEvent(
           preview: NearbyTransferRemoteFilePreview.image(
             requestId: requestId,
@@ -670,7 +676,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           .map((entry) => entry.sourceFile)
           .toList(growable: false),
       onProgress: (sentBytes, totalBytesValue) {
-        _events.add(
+        _emit(
           NearbyTransferTransferProgressEvent(
             direction: NearbyTransferProgressDirection.sending,
             completedBytes: sentBytes,
@@ -679,7 +685,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
         );
       },
     );
-    _events.add(
+    _emit(
       NearbyTransferTransferCompletedEvent(
         direction: NearbyTransferProgressDirection.sending,
         message: '${offer.label}: отправка завершена.',
@@ -733,7 +739,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       await socket.close();
     } catch (_) {}
     socket.destroy();
-    _events.add(
+    _emit(
       const NearbyTransferDisconnectedEvent(message: 'Соединение закрыто.'),
     );
   }

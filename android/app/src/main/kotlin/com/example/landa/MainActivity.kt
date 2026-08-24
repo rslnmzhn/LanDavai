@@ -209,6 +209,15 @@ class MainActivity : FlutterActivity() {
                         result.error("share_intent_failed", t.message, null)
                     }
                 }
+                "discardSharedFiles" -> {
+                    try {
+                        @Suppress("UNCHECKED_CAST")
+                        val paths = call.arguments as? List<String> ?: emptyList()
+                        result.success(discardSharedFiles(paths))
+                    } catch (t: Throwable) {
+                        result.error("share_intent_failed", t.message, null)
+                    }
+                }
                 else -> result.notImplemented()
             }
         }
@@ -256,6 +265,32 @@ class MainActivity : FlutterActivity() {
         }
         setIntent(Intent(this, MainActivity::class.java))
         return copiedPaths
+    }
+
+    private fun discardSharedFiles(paths: List<String>): Int {
+        if (paths.isEmpty()) {
+            return 0
+        }
+        val cacheRoot = File(cacheDir, "share_intent").canonicalFile
+        var deletedCount = 0
+        for (rawPath in paths) {
+            try {
+                val file = File(rawPath)
+                // Only ever delete staging files this component created.
+                val canonicalPath = file.canonicalFile.path
+                val containedInCacheRoot =
+                    canonicalPath == cacheRoot.path ||
+                        canonicalPath.startsWith(cacheRoot.path + File.separator)
+                if (!containedInCacheRoot) {
+                    continue
+                }
+                if (file.delete()) {
+                    deletedCount += 1
+                }
+            } catch (_: Throwable) {
+            }
+        }
+        return deletedCount
     }
 
     private fun sharedUrisFromIntent(source: Intent?): List<Uri> {

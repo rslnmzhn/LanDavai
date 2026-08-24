@@ -46,7 +46,7 @@
     (`DATA` / DocumentsContract), в catch-ветке удалять pending row, pre-Q —
     писать через temp+rename или чистить partial target.
 
-- [ ] **B-04 (MEDIUM). Тест `share_access_snapshot_applied`: гонка flush диагностического лога**
+- [x] **B-04 (MEDIUM). Тест `share_access_snapshot_applied`: гонка flush диагностического лога** — закрыто этим коммитом: flush-barrier `idle` в `SharedDownloadDiagnosticLogStore`, тест ждёт барьер вместо гонки с файлом, ошибки записи логируются вместо молчаливого проглатывания.
   - `test/transfer_session_coordinator_test.dart:2950-2962` ждёт только стадию
     `share_access_request_sent`, затем ассертит более поздние стадии, которые
     пишутся fire-and-forget (`remote_share_access_session_boundary.dart:392,400`);
@@ -70,7 +70,7 @@
     parents), тесту поднять timeout явно; замерить вклад Windows Defender
     отдельно.
 
-- [ ] **B-06 (MEDIUM). `LanNearbyTransportAdapter.dispose()`: event-after-close race**
+- [x] **B-06 (MEDIUM). `LanNearbyTransportAdapter.dispose()`: event-after-close race** — закрыто этим коммитом: контроллер событий закрывается после завершения disconnect + guard `_emit` на добавление после dispose; регрессионный тест на teardown под трафиком.
   - `lan_nearby_transport_adapter.dart:336-343`: `unawaited(disconnect())`,
     затем синхронный `_events.close()`; асинхронные socket-обработчики позже
     добавляют event в закрытый broadcast controller → спорадический
@@ -79,7 +79,7 @@
   - Fix direction: закрывать controller после завершения disconnect, либо
     guard-флаг на add.
 
-- [ ] **B-07 (MEDIUM). `share_intent` cache никогда не чистится**
+- [x] **B-07 (MEDIUM). `share_intent` cache никогда не чистится** — закрыто этим коммитом: удаление staging-копий через канал `discardSharedFiles` при очистке share (успешная отправка/отказ пользователя) + age-sweep каталога `<cache>/share_intent` при старте (24 ч).
   - `MainActivity.kt:286` копирует share-intent контент в
     `cacheDir/share_intent`; дальше пути живут только в памяти
     (`share_receive_boundary.dart`, `share_intent_adapter.dart`), удаления

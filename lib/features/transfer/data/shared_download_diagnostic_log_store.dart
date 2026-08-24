@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
@@ -26,6 +27,12 @@ class SharedDownloadDiagnosticLogStore {
   final bool enabled;
 
   Future<void> _pendingWrite = Future<void>.value();
+
+  /// Completes once every [appendEvent] issued so far has finished its write
+  /// attempt, whether it succeeded or failed with a logged error. Diagnostics
+  /// are fire-and-forget by design; tests and tooling await this barrier
+  /// instead of racing the log file.
+  Future<void> get idle => _pendingWrite;
 
   Future<Directory?> resolveLogDirectory({bool create = true}) async {
     if (!enabled || _logDirectoryProvider == null) {
@@ -71,11 +78,25 @@ class SharedDownloadDiagnosticLogStore {
       payload['stackTrace'] = stackTrace.toString();
     }
     final line = '${jsonEncode(payload)}\n';
-    _pendingWrite = _pendingWrite
-        .catchError((_) {})
-        .then((_) => _appendLine(line))
-        .catchError((_) {});
-    await _pendingWrite;
+    final previousWrite = _pendingWrite;
+    final thisWrite = Completer<void>();
+    _pendingWrite = thisWrite.future;
+    unawaited(
+      previousWrite
+          .then((_) => _appendLine(line))
+          .catchError((Object error, StackTrace stackTrace) {
+            // Diagnostics must never break transfers, but write failures are
+            // no longer swallowed silently.
+            developer.log(
+              'Diagnostic log write failed: $error',
+              name: 'SharedDownloadDiagnosticLogStore',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          })
+          .whenComplete(thisWrite.complete),
+    );
+    await thisWrite.future;
   }
 
   Future<void> _appendLine(String line) async {

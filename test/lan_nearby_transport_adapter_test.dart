@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -287,6 +288,57 @@ void main() {
       );
       expect(preview.preview.kind, NearbyTransferRemotePreviewKind.text);
       expect(preview.preview.textContent, 'preview body');
+    },
+  );
+
+  test(
+    'dispose during inbound traffic closes the event stream without errors',
+    () async {
+      final sender = _buildAdapter();
+      addTearDown(sender.dispose);
+
+      final hosting = await sender.startHostingSession(
+        sessionId: 'session-dispose-race',
+        localDeviceId: 'sender-device',
+        localDeviceName: 'Sender',
+      );
+
+      final receiver = _buildAdapter();
+      final streamDone = Completer<void>();
+      final subscription = receiver.events.listen(
+        (_) {},
+        onDone: () {
+          if (!streamDone.isCompleted) {
+            streamDone.complete();
+          }
+        },
+      );
+      addTearDown(subscription.cancel);
+
+      // Raw client: no connect handshake needed, handshakeOffer messages
+      // alone make the adapter emit events. Queue a burst of them and tear
+      // the adapter down while the line callbacks are still being drained,
+      // so late emissions would previously hit the closed controller.
+      final rawSocket = await Socket.connect(
+        InternetAddress.loopbackIPv4.address,
+        hosting.port,
+      );
+      addTearDown(rawSocket.destroy);
+      for (var index = 0; index < 64; index += 1) {
+        rawSocket.writeln(
+          jsonEncode(<String, Object?>{
+            'type': 'handshakeOffer',
+            'verificationCode': <String>['1', '2'],
+          }),
+        );
+      }
+      await rawSocket.flush();
+      receiver.dispose();
+
+      // No StateError may escape into the zone from late emissions, and the
+      // stream must reach done once teardown completes.
+      await pumpEventQueue();
+      await streamDone.future.timeout(const Duration(seconds: 5));
     },
   );
 }

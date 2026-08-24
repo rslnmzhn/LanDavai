@@ -57,6 +57,7 @@ import '../../features/nearby_transfer/data/wifi_direct_transport_adapter.dart';
 import '../../features/settings/application/settings_store.dart';
 import '../../features/settings/data/app_settings_repository.dart';
 import '../../features/share_target/application/share_receive_boundary.dart';
+import '../../features/share_target/data/share_intent_cache_sweeper.dart';
 import '../../features/transfer/application/shared_cache_catalog.dart';
 import '../../features/transfer/application/shared_cache_index_store.dart';
 import '../../features/transfer/application/shared_download_boundary.dart';
@@ -431,6 +432,26 @@ class DiscoveryCompositionFactory {
           .catchError((Object error) {
             developer.log(
               'Incoming temp sweep failed: $error',
+              name: 'DiscoveryComposition',
+            );
+          }),
+    );
+    // Same best-effort policy for abandoned share-intent staging copies.
+    unawaited(
+      const ShareIntentCacheSweeper()
+          .sweepStaleFiles()
+          .then((sweepResult) {
+            if (sweepResult.filesDeleted > 0) {
+              developer.log(
+                'Swept ${sweepResult.filesDeleted} stale share intent '
+                'file(s), freed ${sweepResult.bytesFreed} bytes.',
+                name: 'DiscoveryComposition',
+              );
+            }
+          })
+          .catchError((Object error) {
+            developer.log(
+              'Share intent sweep failed: $error',
               name: 'DiscoveryComposition',
             );
           }),
