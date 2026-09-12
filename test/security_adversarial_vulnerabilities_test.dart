@@ -1,5 +1,3 @@
-// ignore_for_file: depend_on_referenced_packages
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -26,7 +24,6 @@ import 'package:landa/features/transfer/data/transfer_header_codec.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 void main() {
   group('Security Adversarial Tests (Vulnerability Demonstrations)', () {
@@ -284,20 +281,19 @@ void main() {
       () async {
         final mockDir = await Directory.systemTemp.createTemp('mock_dl_');
         addTearDown(() => mockDir.delete(recursive: true));
-        PathProviderPlatform.instance = _MockPathProvider(mockDir.path);
 
-        final storageService = AppUpdateStorageService();
+        final storageService = AppUpdateStorageService(
+          updateDirectoryResolver: () async => mockDir,
+        );
 
         // EXPECTATION: createTargetFile must strip directory separators and '..'
         // from fileName (e.g. using p.basename).
-        // CURRENT BUG: It directly joins directory.path and fileName.
         final targetFile = await storageService.createTargetFile(
           '../../outside_update.bin',
         );
 
-        // This assertion FAILS because targetFile escapes mockDir/updates:
         expect(
-          p.isWithin(p.join(mockDir.path, 'Landa', 'updates'), targetFile.path),
+          p.isWithin(mockDir.path, targetFile.path),
           isTrue,
           reason:
               'CWE-22: createTargetFile allowed target file path to escape update directory: ${targetFile.path}',
@@ -444,15 +440,4 @@ class _MockTransferStorageService implements TransferStorageService {
 class _MockClipboardCaptureService implements ClipboardCaptureService {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-class _MockPathProvider extends PathProviderPlatform {
-  _MockPathProvider(this.basePath);
-  final String basePath;
-
-  @override
-  Future<String?> getDownloadsPath() async => basePath;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => basePath;
 }

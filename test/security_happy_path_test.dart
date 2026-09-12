@@ -1,5 +1,3 @@
-// ignore_for_file: depend_on_referenced_packages
-
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -14,7 +12,6 @@ import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_header_codec.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
 void main() {
   group('Security & Reliability - Happy Path and Regression Tests', () {
@@ -125,26 +122,16 @@ void main() {
     test('Happy Path: AppUpdateStorageService creates file in updates directory', () async {
       final mockDir = await Directory.systemTemp.createTemp('mock_dl_happy_');
       addTearDown(() => mockDir.delete(recursive: true));
-      PathProviderPlatform.instance = _MockPathProvider(mockDir.path);
 
-      final storageService = AppUpdateStorageService();
+      final storageService = AppUpdateStorageService(
+        updateDirectoryResolver: () async => Directory(p.join(mockDir.path, 'updates')),
+      );
       final targetFile = await storageService.createTargetFile('legitimate_update_v1.0.0.apk');
 
       expect(p.basename(targetFile.path), equals('legitimate_update_v1.0.0.apk'));
       expect(targetFile.parent.path, contains('updates'));
     });
   });
-}
-
-class _MockPathProvider extends PathProviderPlatform {
-  _MockPathProvider(this.basePath);
-  final String basePath;
-
-  @override
-  Future<String?> getDownloadsPath() async => basePath;
-
-  @override
-  Future<String?> getApplicationSupportPath() async => basePath;
 }
 
 class _MockAppDatabase implements AppDatabase {
