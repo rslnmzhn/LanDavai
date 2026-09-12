@@ -357,6 +357,8 @@ jobs:
           APP_VERSION: ${{ needs.resolve_release.outputs.release_version }}
         run: |
           bash .github/scripts/package_linux_appimage.sh 2>&1 | tee appimage_log.txt || {
+            ERR_MSG="$(tail -n 25 appimage_log.txt | tr '\n' ' ')"
+            echo "::error title=AppImage Packaging Error::${ERR_MSG}"
             echo "### Package Linux AppImage failed:" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 100 appimage_log.txt >> $GITHUB_STEP_SUMMARY || true
