@@ -43,10 +43,24 @@ jobs:
         run: flutter pub get
 
       - name: Flutter analyze
-        run: flutter analyze
+        run: |
+          flutter analyze 2>&1 | tee analyze_output.txt || {
+            echo "### Flutter analyze failed:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat analyze_output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
       - name: Flutter test
-        run: flutter test
+        run: |
+          flutter test 2>&1 | tee test_output.txt || {
+            echo "### Flutter test failed:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat test_output.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
   # workflow_dispatch shares the same stable release resolver as push-to-main.
   resolve_release:
