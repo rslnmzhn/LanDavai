@@ -3,9 +3,13 @@ import 'lan_packet_codec_models.dart';
 class LanShareCatalogChunkReassembler {
   LanShareCatalogChunkReassembler({
     this.chunkTtl = const Duration(seconds: 15),
+    this.maxChunkCount = 128,
+    this.maxPendingReassemblies = 256,
   });
 
   final Duration chunkTtl;
+  final int maxChunkCount;
+  final int maxPendingReassemblies;
   final Map<String, _PendingShareCatalogChunks> _pendingShareCatalogChunks =
       <String, _PendingShareCatalogChunks>{};
 
@@ -19,11 +23,20 @@ class LanShareCatalogChunkReassembler {
     if (packet.chunkCount <= 1) {
       return packet;
     }
-    if (packet.chunkIndex < 0 || packet.chunkIndex >= packet.chunkCount) {
+    if (packet.chunkCount > maxChunkCount ||
+        packet.chunkIndex < 0 ||
+        packet.chunkIndex >= packet.chunkCount) {
       log?.call(
         'Ignoring malformed share catalog chunk from $senderIp '
         '(requestId=${packet.requestId}, chunk=${packet.chunkIndex}/${packet.chunkCount})',
       );
+      return null;
+    }
+    if (_pendingShareCatalogChunks.length >= maxPendingReassemblies &&
+        !_pendingShareCatalogChunks.containsKey(
+          '$senderIp|${packet.instanceId}|${packet.requestId}|${packet.ownerMacAddress}',
+        )) {
+      log?.call('Dropping share catalog chunk: max pending reassemblies reached');
       return null;
     }
     final key =
@@ -56,6 +69,8 @@ class LanShareCatalogChunkReassembler {
   void clear() {
     _pendingShareCatalogChunks.clear();
   }
+
+  int get pendingCount => _pendingShareCatalogChunks.length;
 }
 
 class _PendingShareCatalogChunks {

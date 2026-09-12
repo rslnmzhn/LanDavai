@@ -5,9 +5,13 @@ import 'dart:typed_data';
 import '../domain/transfer_request.dart';
 
 class TransferHeaderCodec {
-  const TransferHeaderCodec({this.compressionThresholdBytes = 128 * 1024});
+  const TransferHeaderCodec({
+    this.compressionThresholdBytes = 128 * 1024,
+    this.maxDecompressedBytes = 2 * 1024 * 1024,
+  });
 
   final int compressionThresholdBytes;
+  final int maxDecompressedBytes;
 
   EncodedTransferHeader encode(TransferHeader header) {
     final jsonBytes = utf8.encode(jsonEncode(header.toJson()));
@@ -36,9 +40,31 @@ class TransferHeaderCodec {
   }
 
   TransferHeader decode(Uint8List headerBytes) {
-    final decodedBytes = _looksLikeGzip(headerBytes)
-        ? gzip.decode(headerBytes)
-        : headerBytes;
+    Uint8List decodedBytes;
+    if (_looksLikeGzip(headerBytes)) {
+      final sink = _BoundedByteSink(maxDecompressedBytes);
+      final conversion = gzip.decoder.startChunkedConversion(sink);
+      try {
+        conversion.add(headerBytes);
+        conversion.close();
+      } catch (e) {
+        if (e is FormatException) {
+          rethrow;
+        }
+        throw TransferHeaderFormatException(
+          'Failed to decompress transfer header: $e',
+        );
+      }
+      decodedBytes = sink.toBytes();
+    } else {
+      if (headerBytes.length > maxDecompressedBytes) {
+        throw const FormatException(
+          'Transfer header exceeded maximum decompression limit.',
+        );
+      }
+      decodedBytes = headerBytes;
+    }
+
     final decoded = jsonDecode(utf8.decode(decodedBytes));
     if (decoded is! Map<String, dynamic>) {
       throw const TransferHeaderFormatException(
@@ -51,6 +77,28 @@ class TransferHeaderCodec {
   bool _looksLikeGzip(Uint8List bytes) {
     return bytes.length >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b;
   }
+}
+
+class _BoundedByteSink implements Sink<List<int>> {
+  _BoundedByteSink(this.maxBytes);
+
+  final int maxBytes;
+  final BytesBuilder _builder = BytesBuilder(copy: false);
+
+  @override
+  void add(List<int> chunk) {
+    if (_builder.length + chunk.length > maxBytes) {
+      throw const FormatException(
+        'Transfer header exceeded maximum decompression limit.',
+      );
+    }
+    _builder.add(chunk);
+  }
+
+  @override
+  void close() {}
+
+  Uint8List toBytes() => _builder.toBytes();
 }
 
 class TransferHeader {

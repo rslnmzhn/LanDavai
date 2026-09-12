@@ -247,6 +247,16 @@ class DiscoveryController extends ChangeNotifier {
       localDeviceMacProvider: () => _localDeviceMac,
       isTrustedMac: (normalizedMac) =>
           _trustedLanPeerStore.isTrustedMac(normalizedMac),
+      isTrustedSender: (ip, normalizedMac) {
+        if (!_trustedLanPeerStore.isTrustedMac(normalizedMac)) {
+          return false;
+        }
+        final boundMac = _deviceRegistry.macForIp(ip);
+        if (boundMac != null && boundMac.isNotEmpty) {
+          return boundMac == normalizedMac;
+        }
+        return false;
+      },
       log: _log,
     );
     _remoteSharePacketRouteAdapter = RemoteSharePacketRouteAdapter(

@@ -550,6 +550,9 @@ class FileTransferService {
         .toList(growable: false);
 
     if (normalizedExpected.isNotEmpty) {
+      if (normalizedActual.isEmpty) {
+        throw StateError('Transfer manifest contains no files when items were expected.');
+      }
       final expectedByName = <String, _FileDescriptor>{
         for (final expected in normalizedExpected) expected.name: expected,
       };

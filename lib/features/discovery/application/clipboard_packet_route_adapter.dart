@@ -37,6 +37,7 @@ class ClipboardPacketRouteAdapter {
     required String Function() localNameProvider,
     required String Function() localDeviceMacProvider,
     required bool Function(String? normalizedMac) isTrustedMac,
+    bool Function(String ip, String? normalizedMac)? isTrustedSender,
     void Function(String message)? log,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _clipboardHistoryStore = clipboardHistoryStore,
@@ -45,6 +46,7 @@ class ClipboardPacketRouteAdapter {
        _localNameProvider = localNameProvider,
        _localDeviceMacProvider = localDeviceMacProvider,
        _isTrustedMac = isTrustedMac,
+       _isTrustedSender = isTrustedSender,
        _log = log;
 
   static const int _maxImagePreviewBytes = 22 * 1024;
@@ -64,13 +66,17 @@ class ClipboardPacketRouteAdapter {
   final String Function() _localNameProvider;
   final String Function() _localDeviceMacProvider;
   final bool Function(String? normalizedMac) _isTrustedMac;
+  final bool Function(String ip, String? normalizedMac)? _isTrustedSender;
   final void Function(String message)? _log;
 
   Future<void> handleClipboardQuery(ClipboardQueryEvent event) async {
     final requesterMac = DeviceAliasRepository.normalizeMac(
       event.requesterMacAddress,
     );
-    if (!_isTrustedMac(requesterMac)) {
+    final isAuthorized = _isTrustedSender != null
+        ? _isTrustedSender(event.requesterIp, requesterMac)
+        : _isTrustedMac(requesterMac);
+    if (!isAuthorized) {
       _log?.call(
         'Clipboard query from ${event.requesterIp} ignored: not a friend.',
       );

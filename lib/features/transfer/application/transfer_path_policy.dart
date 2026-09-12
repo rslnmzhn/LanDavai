@@ -80,12 +80,20 @@ class TransferPathPolicy {
     if (sanitizedPrefix == null || sanitizedPrefix.isEmpty) {
       return sanitizedRelativePath;
     }
-    return p.join(sanitizedPrefix, sanitizedRelativePath);
+    final safePrefix = sanitizeRelativePath(sanitizedPrefix);
+    if (safePrefix == 'file.bin' || safePrefix.isEmpty) {
+      return sanitizedRelativePath;
+    }
+    return p.join(safePrefix, sanitizedRelativePath);
   }
 
   String? resolveReceiveRootPrefix(String sharedLabel) {
-    final sanitized = sanitizeRelativePathPart(sharedLabel.trim());
-    if (sanitized.isEmpty || sanitized == '_') {
+    final trimmed = sharedLabel.trim();
+    if (trimmed.isEmpty || trimmed == '.' || trimmed == '..') {
+      return null;
+    }
+    final sanitized = sanitizeRelativePathPart(trimmed);
+    if (sanitized.isEmpty || sanitized == '_' || sanitized == '..' || sanitized == '.') {
       return null;
     }
     return sanitized;
