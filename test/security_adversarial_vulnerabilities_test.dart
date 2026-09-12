@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/app/update/data/app_update_storage_service.dart';
-import 'package:landa/core/storage/app_database.dart';
 import 'package:landa/features/clipboard/application/clipboard_history_store.dart';
 import 'package:landa/features/clipboard/application/remote_clipboard_projection_store.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
@@ -25,7 +24,11 @@ import 'package:landa/features/transfer/data/transfer_storage_service.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:path/path.dart' as p;
 
+import 'test_support/test_app_database.dart';
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Security Adversarial Tests (Vulnerability Demonstrations)', () {
     // -------------------------------------------------------------------------
     // VULNERABILITY 1: Path Traversal in Thumbnail Receiver (Arbitrary File Write)
@@ -35,19 +38,18 @@ void main() {
     test(
       'ThumbnailCacheService.saveReceiverThumbnailBytes rejects directory traversal in cacheId and thumbnailId',
       () async {
-        final tempDir = await Directory.systemTemp.createTemp('landa_thumb_vuln_');
-        addTearDown(() => tempDir.delete(recursive: true));
+        final harness = await TestAppDatabaseHarness.create(
+          prefix: 'landa_thumb_vuln_',
+        );
+        addTearDown(harness.dispose);
 
-        final mockDb = _MockAppDatabase(thumbnailRoot: tempDir);
-        final service = ThumbnailCacheService(database: mockDb);
+        final service = ThumbnailCacheService(database: harness.database);
+        final thumbRoot = await harness.database.resolveSharedThumbnailDirectory();
 
         final maliciousCacheId = '../../../../tmp';
         final maliciousThumbnailId = 'hacked_payload';
         final payloadBytes = Uint8List.fromList(utf8.encode('MALICIOUS_DATA'));
 
-        // EXPECTATION: The service must sanitize or reject traversal paths like '..'
-        // so that files cannot escape the designated thumbnail directory.
-        // CURRENT BUG: It constructs a path escaping the root and writes arbitrary files.
         final savedPath = await service.saveReceiverThumbnailBytes(
           ownerMacAddress: '00:11:22:33:44:55',
           cacheId: maliciousCacheId,
@@ -55,9 +57,8 @@ void main() {
           bytes: payloadBytes,
         );
 
-        // This assertion FAILS on vulnerable code because savedPath escapes tempDir!
         expect(
-          p.isWithin(tempDir.path, savedPath),
+          p.isWithin(thumbRoot.path, savedPath),
           isTrue,
           reason:
               'CWE-22: saveReceiverThumbnailBytes allowed writing outside thumbnail directory: $savedPath',
@@ -75,16 +76,16 @@ void main() {
       () {
         const policy = TransferPathPolicy();
 
-        // 1. resolveReceiveRootPrefix on Linux/macOS allows '..'
+        // 1. resolveReceiveRootPrefix rejects '..'
         final prefixFromDots = policy.resolveReceiveRootPrefix('..');
         expect(
           prefixFromDots,
-          isNot('..'),
+          isNull,
           reason:
-              'CWE-22: resolveReceiveRootPrefix("..") returned ".." which enables directory traversal',
+              'CWE-22: resolveReceiveRootPrefix("..") returned non-null enabling traversal',
         );
 
-        // 2. buildReceiveRelativePath does not sanitize destinationRelativeRootPrefix
+        // 2. buildReceiveRelativePath sanitizes destinationRelativeRootPrefix
         final relativePathWithAbsolute = policy.buildReceiveRelativePath(
           'test.bin',
           destinationRelativeRootPrefix: '/etc',
@@ -118,24 +119,13 @@ void main() {
     test(
       'ClipboardPacketRouteAdapter does not exfiltrate clipboard data to arbitrary IP spoofing a friend MAC',
       () async {
-        final sentPackets = <_SentClipboardPacket>[];
-        final fakeLanService = _MockLanDiscoveryService(
-          onSendClipboardCatalog: ({
-            required String targetIp,
-            required String requestId,
-            required String ownerName,
-            required String ownerMacAddress,
-            required List<ClipboardCatalogItem> entries,
-          }) async {
-            sentPackets.add(
-              _SentClipboardPacket(
-                targetIp: targetIp,
-                requestId: requestId,
-                entries: entries,
-              ),
-            );
-          },
+        final harness = await TestAppDatabaseHarness.create(
+          prefix: 'landa_clip_vuln_',
         );
+        addTearDown(harness.dispose);
+
+        final recordingLanService = _RecordingLanDiscoveryService();
+        final repository = ClipboardHistoryRepository(database: harness.database);
 
         final testEntry = ClipboardHistoryEntry(
           id: 'secret_entry_1',
@@ -144,21 +134,19 @@ void main() {
           textValue: 'SUPER_SECRET_PASSWORD_12345',
           createdAt: DateTime.now(),
         );
-        final mockRepo = _MockClipboardRepository(entries: [testEntry]);
-        final mockStorage = _MockTransferStorageService();
-        final mockCapture = _MockClipboardCaptureService();
+        await repository.insert(testEntry);
 
         final historyStore = ClipboardHistoryStore(
-          clipboardHistoryRepository: mockRepo,
-          clipboardCaptureService: mockCapture,
-          transferStorageService: mockStorage,
+          clipboardHistoryRepository: repository,
+          clipboardCaptureService: _FakeClipboardCaptureService(),
+          transferStorageService: TransferStorageService(),
         );
         await historyStore.load();
 
         const friendMac = 'aa:bb:cc:dd:ee:ff';
         const friendIp = '192.168.1.55';
         final adapter = ClipboardPacketRouteAdapter(
-          lanDiscoveryService: fakeLanService,
+          lanDiscoveryService: recordingLanService,
           clipboardHistoryStore: historyStore,
           remoteClipboardProjectionStore: RemoteClipboardProjectionStore(
             fileHashService: FileHashService(),
@@ -182,11 +170,8 @@ void main() {
           ),
         );
 
-        // EXPECTATION: Landa should NOT transmit private clipboard history to an unverified IP
-        // merely because an unauthenticated UDP packet contained a known MAC.
-        // CURRENT BUG: It immediately sends the catalog with passwords to 192.168.1.250!
         expect(
-          sentPackets.isEmpty,
+          recordingLanService.catalogs.isEmpty,
           isTrue,
           reason:
               'CWE-290/CWE-200: Clipboard history exfiltrated to attacker IP because MAC was spoofed in UDP packet!',
@@ -205,15 +190,9 @@ void main() {
       () {
         const codec = TransferHeaderCodec();
 
-        // Construct a highly compressed payload (gzip bomb):
-        // 5 MB of repeating zeroes compresses to ~5 KB in gzip.
-        // In real attack, 8MB compressed can expand to 8GB.
         final rawLargeData = Uint8List(5 * 1024 * 1024); // 5 MB of zeroes
         final compressedBomb = Uint8List.fromList(gzip.encode(rawLargeData));
 
-        // EXPECTATION: Decompressor must enforce a strict maximum decompressed size limit
-        // (e.g. 1 MB or 2 MB for JSON header) and throw FormatException on decompression bombs.
-        // CURRENT BUG: gzip.decode decompresses unbounded data in memory.
         expect(
           () => codec.decode(compressedBomb),
           throwsA(
@@ -245,13 +224,9 @@ void main() {
           entries: const [],
           removedCacheIds: const [],
           chunkIndex: 0,
-          // Attacker claims catalog is split into 1,000,000 chunks:
           chunkCount: 1000000,
         );
 
-        // EXPECTATION: Reassembler must reject chunkCount exceeding reasonable protocol limits
-        // (e.g. chunkCount > 64 or 128) immediately returning null and not allocating state.
-        // CURRENT BUG: It accepts arbitrary chunkCount and creates pending reassemblies.
         final result = reassembler.consume(
           packet: maliciousPacket,
           senderIp: '192.168.1.100',
@@ -286,8 +261,6 @@ void main() {
           updateDirectoryResolver: () async => mockDir,
         );
 
-        // EXPECTATION: createTargetFile must strip directory separators and '..'
-        // from fileName (e.g. using p.basename).
         final targetFile = await storageService.createTargetFile(
           '../../outside_update.bin',
         );
@@ -325,11 +298,10 @@ void main() {
           destinationDirectory: tempDir,
         );
 
-        // Sender connects via TCP and sends a valid header with EMPTY files list:
         final socket = await Socket.connect(InternetAddress.loopbackIPv4, session.port);
         final emptyHeader = const TransferHeader(
           requestId: 'test-req-123',
-          files: [], // Zero files sent!
+          files: [],
         );
         const headerCodec = TransferHeaderCodec();
         final encoded = headerCodec.encode(emptyHeader);
@@ -342,8 +314,6 @@ void main() {
 
         final result = await session.result;
 
-        // EXPECTATION: When expectedItems has items, receiving 0 files must be marked as failure!
-        // CURRENT BUG: result.success is TRUE, message is "Received 0 files successfully."!
         expect(
           result.success,
           isFalse,
@@ -359,40 +329,23 @@ void main() {
 // Helper Mocks for Isolated Adversarial Testing
 // =============================================================================
 
-class _MockAppDatabase implements AppDatabase {
-  _MockAppDatabase({required this.thumbnailRoot});
-
-  final Directory thumbnailRoot;
-
-  @override
-  Future<Directory> resolveSharedThumbnailDirectory() async => thumbnailRoot;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-class _SentClipboardPacket {
-  _SentClipboardPacket({
+class _RecordedClipboardCatalog {
+  const _RecordedClipboardCatalog({
     required this.targetIp,
-    required this.requestId,
+    required this.ownerName,
+    required this.ownerMacAddress,
     required this.entries,
   });
 
   final String targetIp;
-  final String requestId;
+  final String ownerName;
+  final String ownerMacAddress;
   final List<ClipboardCatalogItem> entries;
 }
 
-class _MockLanDiscoveryService implements LanDiscoveryService {
-  _MockLanDiscoveryService({required this.onSendClipboardCatalog});
-
-  final Future<void> Function({
-    required String targetIp,
-    required String requestId,
-    required String ownerName,
-    required String ownerMacAddress,
-    required List<ClipboardCatalogItem> entries,
-  }) onSendClipboardCatalog;
+class _RecordingLanDiscoveryService extends LanDiscoveryService {
+  final List<_RecordedClipboardCatalog> catalogs =
+      <_RecordedClipboardCatalog>[];
 
   @override
   Future<void> sendClipboardCatalog({
@@ -401,43 +354,25 @@ class _MockLanDiscoveryService implements LanDiscoveryService {
     required String ownerName,
     required String ownerMacAddress,
     required List<ClipboardCatalogItem> entries,
-  }) {
-    return onSendClipboardCatalog(
-      targetIp: targetIp,
-      requestId: requestId,
-      ownerName: ownerName,
-      ownerMacAddress: ownerMacAddress,
-      entries: entries,
+  }) async {
+    catalogs.add(
+      _RecordedClipboardCatalog(
+        targetIp: targetIp,
+        ownerName: ownerName,
+        ownerMacAddress: ownerMacAddress,
+        entries: entries,
+      ),
     );
   }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _MockClipboardRepository implements ClipboardHistoryRepository {
-  _MockClipboardRepository({required this.entries});
-
-  final List<ClipboardHistoryEntry> entries;
+class _FakeClipboardCaptureService extends ClipboardCaptureService {
+  @override
+  Future<bool> writeTextToClipboard(String text) async => true;
 
   @override
-  Future<List<ClipboardHistoryEntry>> listRecent({int? limit}) async => entries;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-class _MockTransferStorageService implements TransferStorageService {
-  @override
-  Future<Directory> resolveClipboardDirectory({String appFolderName = 'Landa'}) async {
-    return Directory.systemTemp;
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-class _MockClipboardCaptureService implements ClipboardCaptureService {
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  Future<bool> writeImageBytesToClipboard(
+    Uint8List imageBytes, {
+    String suggestedName = 'clipboard-image.png',
+  }) async => true;
 }

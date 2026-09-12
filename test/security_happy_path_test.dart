@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/app/update/data/app_update_storage_service.dart';
-import 'package:landa/core/storage/app_database.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/data/lan_share_catalog_chunk_reassembler.dart';
 import 'package:landa/features/transfer/application/transfer_path_policy.dart';
@@ -13,14 +12,19 @@ import 'package:landa/features/transfer/data/transfer_header_codec.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:path/path.dart' as p;
 
+import 'test_support/test_app_database.dart';
+
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('Security & Reliability - Happy Path and Regression Tests', () {
     test('Happy Path: ThumbnailCacheService saves and reads valid thumbnail safely', () async {
-      final tempDir = await Directory.systemTemp.createTemp('landa_thumb_ok_');
-      addTearDown(() => tempDir.delete(recursive: true));
+      final harness = await TestAppDatabaseHarness.create(
+        prefix: 'landa_thumb_happy_',
+      );
+      addTearDown(harness.dispose);
 
-      final mockDb = _MockAppDatabase(thumbnailRoot: tempDir);
-      final service = ThumbnailCacheService(database: mockDb);
+      final service = ThumbnailCacheService(database: harness.database);
 
       const validCacheId = 'cache_valid_123';
       const validThumbnailId = 'thumb_abc_456';
@@ -132,16 +136,4 @@ void main() {
       expect(targetFile.parent.path, contains('updates'));
     });
   });
-}
-
-class _MockAppDatabase implements AppDatabase {
-  _MockAppDatabase({required this.thumbnailRoot});
-
-  final Directory thumbnailRoot;
-
-  @override
-  Future<Directory> resolveSharedThumbnailDirectory() async => thumbnailRoot;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
