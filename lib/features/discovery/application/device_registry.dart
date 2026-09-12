@@ -33,6 +33,14 @@ class DeviceRegistry extends ChangeNotifier {
     return _macByLastKnownIp[normalizedIp];
   }
 
+  String? lastKnownIpForMac(String? macAddress) {
+    final normalizedMac = DeviceAliasRepository.normalizeMac(macAddress);
+    if (normalizedMac == null) {
+      return null;
+    }
+    return _lastKnownIpByMac[normalizedMac];
+  }
+
   String? macForPeerId(String? peerId) {
     final normalizedPeerId = peerId?.trim();
     if (normalizedPeerId == null || normalizedPeerId.isEmpty) {

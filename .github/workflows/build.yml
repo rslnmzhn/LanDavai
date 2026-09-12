@@ -57,7 +57,7 @@ jobs:
           flutter test 2>&1 | tee test_output.txt || {
             echo "### Flutter test failed:" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-            cat test_output.txt >> $GITHUB_STEP_SUMMARY
+            grep -E '^\s*(FAIL|Expected:|Actual:|Some tests failed|[0-9]+:[0-9]+ \+[0-9]+ -[0-9]+:)' test_output.txt | head -n 100 >> $GITHUB_STEP_SUMMARY || true
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit 1
           }
@@ -343,6 +343,7 @@ jobs:
       - name: Install pinned appimage-builder
         shell: bash
         run: |
+          python3 -m pip install --user --break-system-packages "appimage-builder==${APPIMAGE_BUILDER_VERSION}" || \
           python3 -m pip install --user "appimage-builder==${APPIMAGE_BUILDER_VERSION}"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 

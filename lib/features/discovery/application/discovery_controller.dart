@@ -252,10 +252,14 @@ class DiscoveryController extends ChangeNotifier {
           return false;
         }
         final boundMac = _deviceRegistry.macForIp(ip);
-        if (boundMac != null && boundMac.isNotEmpty) {
-          return boundMac == normalizedMac;
+        if (boundMac != null && boundMac.isNotEmpty && boundMac != normalizedMac) {
+          return false;
         }
-        return false;
+        final knownIp = _deviceRegistry.lastKnownIpForMac(normalizedMac);
+        if (knownIp != null && knownIp.isNotEmpty && knownIp != ip.trim()) {
+          return false;
+        }
+        return true;
       },
       log: _log,
     );

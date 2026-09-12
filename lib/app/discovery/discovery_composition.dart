@@ -346,10 +346,14 @@ class DiscoveryCompositionFactory {
           return false;
         }
         final boundMac = deviceRegistry.macForIp(ip);
-        if (boundMac != null && boundMac.isNotEmpty) {
-          return boundMac == normalizedMac;
+        if (boundMac != null && boundMac.isNotEmpty && boundMac != normalizedMac) {
+          return false;
         }
-        return false;
+        final knownIp = deviceRegistry.lastKnownIpForMac(normalizedMac);
+        if (knownIp != null && knownIp.isNotEmpty && knownIp != ip.trim()) {
+          return false;
+        }
+        return true;
       },
       resolveRemoteOwnerMac:
           ({required String ownerIp, required String cacheId}) =>

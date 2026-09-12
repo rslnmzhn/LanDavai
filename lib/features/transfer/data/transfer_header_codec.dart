@@ -7,7 +7,7 @@ import '../domain/transfer_request.dart';
 class TransferHeaderCodec {
   const TransferHeaderCodec({
     this.compressionThresholdBytes = 128 * 1024,
-    this.maxDecompressedBytes = 2 * 1024 * 1024,
+    this.maxDecompressedBytes = 8 * 1024 * 1024,
   });
 
   final int compressionThresholdBytes;

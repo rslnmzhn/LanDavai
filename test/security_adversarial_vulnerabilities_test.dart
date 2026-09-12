@@ -190,7 +190,7 @@ void main() {
       () {
         const codec = TransferHeaderCodec();
 
-        final rawLargeData = Uint8List(5 * 1024 * 1024); // 5 MB of zeroes
+        final rawLargeData = Uint8List(16 * 1024 * 1024); // 16 MB of zeroes
         final compressedBomb = Uint8List.fromList(gzip.encode(rawLargeData));
 
         expect(
