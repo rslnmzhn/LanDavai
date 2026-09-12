@@ -343,8 +343,8 @@ jobs:
       - name: Install pinned appimage-builder
         shell: bash
         run: |
-          python3 -m pip install --user --break-system-packages "appimage-builder==${APPIMAGE_BUILDER_VERSION}" || \
-          python3 -m pip install --user "appimage-builder==${APPIMAGE_BUILDER_VERSION}"
+          python3 -m pip install --user --break-system-packages "packaging<22" "appimage-builder==${APPIMAGE_BUILDER_VERSION}" || \
+          python3 -m pip install --user "packaging<22" "appimage-builder==${APPIMAGE_BUILDER_VERSION}"
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
 
       - name: Validate appimage-builder availability
