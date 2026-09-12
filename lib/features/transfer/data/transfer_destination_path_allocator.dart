@@ -75,6 +75,10 @@ class TransferDestinationPathAllocator {
         .replaceAll(RegExp(r'[\x00-\x1F]'), '')
         .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
 
+    if (value == '.' || value == '..') {
+      return '_';
+    }
+
     if (Platform.isWindows) {
       value = value.trimRight();
       value = value.replaceFirst(RegExp(r'[. ]+$'), '');
