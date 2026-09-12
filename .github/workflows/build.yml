@@ -355,7 +355,14 @@ jobs:
         shell: bash
         env:
           APP_VERSION: ${{ needs.resolve_release.outputs.release_version }}
-        run: bash .github/scripts/package_linux_appimage.sh
+        run: |
+          bash .github/scripts/package_linux_appimage.sh 2>&1 | tee appimage_log.txt || {
+            echo "### Package Linux AppImage failed:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 100 appimage_log.txt >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
       - name: Upload Linux AppImage artifact
         uses: actions/upload-artifact@v4

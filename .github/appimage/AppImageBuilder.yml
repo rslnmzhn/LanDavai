@@ -4,6 +4,8 @@ script:
   - rm -rf AppDir
   - mkdir -p AppDir
   - cp -r build/linux/x64/release/bundle/* AppDir/
+  - cp build/linux/x64/release/bundle/landa AppDir/landa-bin || true
+  - ln -sf landa AppDir/landa-bin || true
   - mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
   - cp assets/tray/landa_tray.png AppDir/usr/share/icons/hicolor/256x256/apps/landa.png
   - install -Dm644 .github/appimage/landa.desktop AppDir/usr/share/applications/landa.desktop
