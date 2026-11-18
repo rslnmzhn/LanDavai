@@ -24,12 +24,6 @@ class AppTypography {
         fontWeight: FontWeight.w600,
         color: baseColor,
       ),
-      titleSmall: TextStyle(
-        fontFamily: 'Manrope',
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: baseColor,
-      ),
       bodyLarge: TextStyle(
         fontFamily: 'Manrope',
         fontSize: 16,
@@ -48,23 +42,11 @@ class AppTypography {
         fontWeight: FontWeight.w500,
         color: AppColors.textSecondary,
       ),
-      labelLarge: TextStyle(
-        fontFamily: 'Manrope',
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: baseColor,
-      ),
       labelMedium: TextStyle(
         fontFamily: 'JetBrains Mono',
         fontSize: 12,
         fontWeight: FontWeight.w600,
         color: baseColor,
-      ),
-      labelSmall: TextStyle(
-        fontFamily: 'JetBrains Mono',
-        fontSize: 11,
-        fontWeight: FontWeight.w500,
-        color: AppColors.textSecondary,
       ),
     );
   }

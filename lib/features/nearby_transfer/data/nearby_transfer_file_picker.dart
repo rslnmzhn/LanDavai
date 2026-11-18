@@ -45,11 +45,10 @@ class NearbyTransferFilePicker {
 
     final entries = <NearbyTransferPickedEntry>[];
     for (final path in paths) {
-      if (await FileSystemEntity.type(path, followLinks: false) !=
-          FileSystemEntityType.file) {
+      final file = File(path);
+      if (!await file.exists()) {
         continue;
       }
-      final file = File(path);
       final stat = await file.stat();
       if (stat.type != FileSystemEntityType.file) {
         continue;
@@ -91,15 +90,8 @@ class NearbyTransferFilePicker {
 
     final rootName = p.basename(directory.path);
     final entries = <NearbyTransferPickedEntry>[];
-    await for (final entity in directory.list(
-      recursive: true,
-      followLinks: false,
-    )) {
+    await for (final entity in directory.list(recursive: true)) {
       if (entity is! File) {
-        continue;
-      }
-      if (await FileSystemEntity.type(entity.path, followLinks: false) !=
-          FileSystemEntityType.file) {
         continue;
       }
       final stat = await entity.stat();

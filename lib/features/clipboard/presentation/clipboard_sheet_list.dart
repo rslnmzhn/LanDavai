@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 
-import '../../../app/theme/app_colors.dart';
-import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
 import '../domain/clipboard_entry.dart';
 import 'clipboard_sheet_preview.dart';
@@ -53,9 +51,9 @@ class ClipboardHistoryPreviewRow extends StatelessWidget {
           child: onTap == null
               ? previewContent
               : Material(
-                  color: AppColors.transparent,
+                  color: Colors.transparent,
                   child: InkWell(
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                    borderRadius: BorderRadius.circular(16),
                     onTap: onTap,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(

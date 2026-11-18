@@ -62,25 +62,14 @@ class _ShareTargetPageState extends State<ShareTargetPage> {
       child: Scaffold(
         backgroundColor: AppColors.bgBase,
         appBar: AppBar(
-          title: Text(
-            'share_target.title'.tr(),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          title: Text('share_target.title'.tr()),
           backgroundColor: AppColors.bgBase,
           foregroundColor: AppColors.textPrimary,
           elevation: 0,
           actions: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 148),
-              child: TextButton(
-                onPressed: _isSending ? null : _openApp,
-                child: Text(
-                  'share_target.open_app'.tr(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+            TextButton(
+              onPressed: _isSending ? null : _openApp,
+              child: Text('share_target.open_app'.tr()),
             ),
           ],
         ),

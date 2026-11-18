@@ -220,37 +220,15 @@ class DiscoverySettingsPage extends StatelessWidget {
             },
             onShowLogs: () async {
               final result = await debugLogAccessService.showLogs();
-              return result.opened ? null : _localizeDebugLogResult(result);
+              return result.opened ? null : result.message;
             },
             onOpenLogsFolder: () async {
               final result = await debugLogAccessService.openLogsFolder();
-              return result.opened ? null : _localizeDebugLogResult(result);
+              return result.opened ? null : result.message;
             },
           );
         },
       ),
     );
-  }
-
-  static String? _localizeDebugLogResult(DebugLogAccessResult result) {
-    final detail = result.errorDetail ?? '';
-    return switch (result.failureCode) {
-      DebugLogAccessFailureCode.logMissing => 'settings.debug_log_missing'.tr(),
-      DebugLogAccessFailureCode.logUnsupported =>
-        'settings.debug_log_unsupported'.tr(),
-      DebugLogAccessFailureCode.logOpenFailed =>
-        'settings.debug_log_open_failed'.tr(
-          namedArgs: <String, String>{'error': detail},
-        ),
-      DebugLogAccessFailureCode.folderMissing =>
-        'settings.debug_log_folder_missing'.tr(),
-      DebugLogAccessFailureCode.folderUnsupported =>
-        'settings.debug_log_folder_unsupported'.tr(),
-      DebugLogAccessFailureCode.folderOpenFailed =>
-        'settings.debug_log_folder_open_failed'.tr(
-          namedArgs: <String, String>{'error': detail},
-        ),
-      null => result.message,
-    };
   }
 }

@@ -1,5 +1,5 @@
-import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart';
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_spacing.dart';
@@ -27,14 +27,11 @@ class NearbyTransferDeviceListWidget extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(
-              child: Text(
-                'nearby_transfer.devices_nearby'.tr(),
-                style: Theme.of(context).textTheme.titleSmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+            Text(
+              'nearby_transfer.devices_nearby'.tr(),
+              style: Theme.of(context).textTheme.titleSmall,
             ),
+            const Spacer(),
             if (onRefresh != null)
               IconButton(
                 tooltip: 'nearby_transfer.refresh_devices'.tr(),
@@ -57,14 +54,7 @@ class NearbyTransferDeviceListWidget extends StatelessWidget {
             children: [
               for (final device in devices)
                 ChoiceChip(
-                  label: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 220),
-                    child: Text(
-                      device.displayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
+                  label: Text(device.displayName),
                   selected: selectedDeviceId == device.id,
                   onSelected: onSelectDevice == null
                       ? null

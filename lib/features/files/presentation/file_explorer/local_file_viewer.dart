@@ -253,15 +253,13 @@ class _MediaKitVideoFileViewerState extends State<_MediaKitVideoFileViewer> {
                             ),
                             Container(
                               decoration: BoxDecoration(
-                                color: AppColors.scannerSurface.withValues(
-                                  alpha: 0.45,
-                                ),
+                                color: Colors.black.withValues(alpha: 0.32),
                                 shape: BoxShape.circle,
                               ),
                               padding: const EdgeInsets.all(AppSpacing.xs),
                               child: const Icon(
                                 Icons.play_circle_fill_rounded,
-                                color: AppColors.surface,
+                                color: Colors.white,
                                 size: 46,
                               ),
                             ),
@@ -646,13 +644,13 @@ class _VideoFileViewerState extends State<_VideoFileViewer> {
                   ),
                   Container(
                     decoration: BoxDecoration(
-                      color: AppColors.scannerSurface.withValues(alpha: 0.45),
+                      color: Colors.black.withValues(alpha: 0.32),
                       shape: BoxShape.circle,
                     ),
                     padding: const EdgeInsets.all(AppSpacing.xs),
                     child: const Icon(
                       Icons.play_circle_fill_rounded,
-                      color: AppColors.surface,
+                      color: Colors.white,
                       size: 46,
                     ),
                   ),
@@ -992,9 +990,7 @@ class _TextFileViewerState extends State<_TextFileViewer> {
               ),
               child: Text(
                 'files.viewer_text_truncated'.tr(),
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                style: const TextStyle(color: AppColors.textSecondary),
               ),
             ),
           if (_truncated) const SizedBox(height: AppSpacing.sm),
@@ -1003,7 +999,7 @@ class _TextFileViewerState extends State<_TextFileViewer> {
               child: SelectableText(
                 _content,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontFamily: 'JetBrains Mono',
+                  fontFamily: 'JetBrainsMono',
                   height: 1.45,
                 ),
               ),

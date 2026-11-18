@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import '../app_update_config.dart';
 import '../domain/app_update_models.dart';
@@ -70,26 +69,14 @@ class GithubReleaseUpdateService {
     );
   }
 
-  static const int maxJsonResponseBytes = 4 * 1024 * 1024;
-
   Future<Object?> _readJson(Uri uri) async {
-    if (!_isAllowedReleaseUri(uri)) {
-      throw FormatException('Refusing non-HTTPS release metadata URL: $uri');
-    }
     final client = _httpClientFactory();
     try {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.userAgentHeader, 'LandaUpdateCheck/1.0');
       final response = await request.close();
-      final builder = BytesBuilder(copy: false);
-      await for (final chunk in response) {
-        if (builder.length + chunk.length > maxJsonResponseBytes) {
-          throw FormatException('GitHub release metadata exceeds size limit.');
-        }
-        builder.add(chunk);
-      }
-      final body = utf8.decode(builder.takeBytes());
+      final body = await response.transform(utf8.decoder).join();
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException(
           'GitHub request failed with status ${response.statusCode}',
@@ -100,18 +87,6 @@ class GithubReleaseUpdateService {
     } finally {
       client.close(force: true);
     }
-  }
-
-  static bool _isAllowedReleaseUri(Uri uri) {
-    final scheme = uri.scheme.toLowerCase();
-    if (scheme == 'https') {
-      return true;
-    }
-    if (scheme == 'http' &&
-        (uri.host == '127.0.0.1' || uri.host == 'localhost' || uri.host == '::1')) {
-      return true;
-    }
-    return false;
   }
 
   void _validateStableManifest({
@@ -156,12 +131,6 @@ class GithubReleaseUpdateService {
         .cast<Object?>()
         .map((value) {
           final map = _requireMap(value, 'release manifest asset');
-          final downloadUrl = _requireString(map, 'downloadUrl');
-          if (!_isAllowedReleaseUri(Uri.parse(downloadUrl))) {
-            throw FormatException(
-              'Refusing non-HTTPS release asset downloadUrl: $downloadUrl',
-            );
-          }
           return AppUpdateAsset(
             platform: _requireString(map, 'platform'),
             arch: _requireString(map, 'arch'),
@@ -170,7 +139,7 @@ class GithubReleaseUpdateService {
             fileName: _requireString(map, 'fileName'),
             size: _requireInt(map, 'size'),
             sha256: _requireString(map, 'sha256'),
-            downloadUrl: downloadUrl,
+            downloadUrl: _requireString(map, 'downloadUrl'),
           );
         })
         .toList(growable: false);

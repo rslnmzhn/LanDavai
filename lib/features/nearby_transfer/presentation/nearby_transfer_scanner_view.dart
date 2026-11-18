@@ -13,14 +13,12 @@ class NearbyTransferScannerView extends StatefulWidget {
   const NearbyTransferScannerView({
     required this.liveScannerSupported,
     required this.onPayloadDetected,
-    this.payloadValidator,
     this.previewBuilder,
     super.key,
   });
 
   final bool liveScannerSupported;
   final ValueChanged<String> onPayloadDetected;
-  final bool Function(String payload)? payloadValidator;
   final Widget Function(ValueChanged<String> onDetected)? previewBuilder;
 
   @override
@@ -30,10 +28,10 @@ class NearbyTransferScannerView extends StatefulWidget {
 
 class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
     with TickerProviderStateMixin {
-  static const double _maxViewportSize = 296;
-  static const double _frameInset = AppSpacing.md;
-  static const double _minFrameSize = 112;
-  static const double _maxFrameSize = 220;
+  static const double _maxViewportSize = 320;
+  static const double _frameInset = AppSpacing.lg;
+  static const double _minFrameSize = 180;
+  static const double _maxFrameSize = 224;
   static const Duration _feedbackHold = Duration(milliseconds: 900);
 
   late final AnimationController _scanLineController;
@@ -49,26 +47,11 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
     _scanLineController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2200),
-    );
-    if (widget.liveScannerSupported) {
-      _scanLineController.repeat();
-    }
+    )..repeat();
     _feedbackController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 260),
     );
-  }
-
-  @override
-  void didUpdateWidget(covariant NearbyTransferScannerView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.liveScannerSupported != oldWidget.liveScannerSupported) {
-      if (widget.liveScannerSupported) {
-        _scanLineController.repeat();
-      } else {
-        _scanLineController.stop();
-      }
-    }
   }
 
   @override
@@ -90,36 +73,16 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
           borderRadius: BorderRadius.circular(AppRadius.lg),
           border: Border.all(color: AppColors.mutedBorder),
         ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.qr_code_scanner_rounded,
-              color: AppColors.mutedIcon,
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Expanded(
-              child: Text(
-                'nearby_transfer.scanner_unavailable'.tr(),
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
+        child: Text(
+          'nearby_transfer.scanner_unavailable'.tr(),
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       );
     }
 
-    final mediaHeight = MediaQuery.sizeOf(context).height;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth.isFinite
-            ? constraints.maxWidth
-            : _maxViewportSize;
-        final heightCap = constraints.maxHeight.isFinite
-            ? constraints.maxHeight
-            : math.max(168.0, mediaHeight * 0.44);
-        final viewportSize = math
-            .min(_maxViewportSize, math.min(maxWidth, heightCap))
-            .clamp(140.0, _maxViewportSize);
+        final viewportSize = _resolveViewportSize(constraints.biggest);
         return Center(
           child: ClipRRect(
             borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -154,11 +117,16 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
     );
   }
 
+  double _resolveViewportSize(Size availableSize) {
+    final bounded = math.min(availableSize.shortestSide, _maxViewportSize);
+    return math.max(_minFrameSize + (_frameInset * 2), bounded);
+  }
+
   Widget _buildPreview(Rect scanWindow) {
     final builder = widget.previewBuilder;
     if (builder != null) {
       return ColoredBox(
-        color: AppColors.scannerSurface,
+        color: Colors.black,
         child: builder(_handleDetectedPayload),
       );
     }
@@ -166,23 +134,6 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
       scanWindow: scanWindow,
       fit: BoxFit.cover,
       overlayBuilder: (context, _) => const SizedBox.shrink(),
-      errorBuilder: (context, error) {
-        return ColoredBox(
-          color: AppColors.scannerSurface,
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Text(
-                'nearby_transfer.camera_error'.tr(),
-                textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(color: AppColors.surface),
-              ),
-            ),
-          ),
-        );
-      },
       onDetect: (capture) {
         final value = capture.barcodes
             .map((barcode) => barcode.rawValue)
@@ -197,11 +148,10 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
   }
 
   Rect _buildScanWindow(Size size) {
-    final maxAllowed = math.max(88.0, size.shortestSide - (_frameInset * 2));
-    final squareSize = math
-        .min(_maxFrameSize, maxAllowed)
-        .clamp(math.min(_minFrameSize, maxAllowed), _maxFrameSize)
-        .toDouble();
+    final squareSize = math.min(
+      _maxFrameSize,
+      math.max(_minFrameSize, size.shortestSide - (_frameInset * 2)),
+    );
     return Rect.fromCenter(
       center: size.center(Offset.zero),
       width: squareSize,
@@ -215,24 +165,19 @@ class _NearbyTransferScannerViewState extends State<NearbyTransferScannerView>
     }
     _detectionLocked = true;
     _feedbackResetTimer?.cancel();
-    final isValid = widget.payloadValidator?.call(rawPayload) ?? true;
-    if (isValid) {
-      setState(() {
-        _showDetectionFeedback = true;
-      });
-      _feedbackController.forward(from: 0);
-    }
+    setState(() {
+      _showDetectionFeedback = true;
+    });
+    _feedbackController.forward(from: 0);
     widget.onPayloadDetected(rawPayload);
     _feedbackResetTimer = Timer(_feedbackHold, () {
       if (!mounted) {
         return;
       }
-      if (_showDetectionFeedback) {
-        _feedbackController.reverse();
-        setState(() {
-          _showDetectionFeedback = false;
-        });
-      }
+      _feedbackController.reverse();
+      setState(() {
+        _showDetectionFeedback = false;
+      });
       _detectionLocked = false;
     });
   }
@@ -263,9 +208,9 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
                 colors: [
-                  AppColors.scannerSurface.withValues(alpha: 0.24),
-                  AppColors.scannerSurface.withValues(alpha: 0.08),
-                  AppColors.scannerSurface.withValues(alpha: 0.28),
+                  Colors.black.withValues(alpha: 0.24),
+                  Colors.black.withValues(alpha: 0.08),
+                  Colors.black.withValues(alpha: 0.28),
                 ],
               ),
             ),
@@ -278,7 +223,7 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppRadius.xl),
               border: Border.all(
-                width: detectionActive ? 3 : 2,
+                width: detectionActive ? 2.8 : 2.2,
                 color: detectionActive
                     ? AppColors.success
                     : AppColors.brandAccent.withValues(alpha: 0.96),
@@ -296,7 +241,7 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
               ],
             ),
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(AppRadius.xl),
+              borderRadius: BorderRadius.circular(AppRadius.xl - 2),
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -306,9 +251,9 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          AppColors.surface.withValues(alpha: 0.03),
-                          AppColors.transparent,
-                          AppColors.surface.withValues(alpha: 0.04),
+                          Colors.white.withValues(alpha: 0.03),
+                          Colors.transparent,
+                          Colors.white.withValues(alpha: 0.04),
                         ],
                       ),
                     ),
@@ -316,7 +261,7 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                   AnimatedBuilder(
                     animation: scanLineAnimation,
                     builder: (context, _) {
-                      final travel = math.max(0.0, scanWindow.height - 16);
+                      final travel = scanWindow.height - 18;
                       return Transform.translate(
                         offset: Offset(0, scanLineAnimation.value * travel),
                         child: Align(
@@ -325,7 +270,7 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                             margin: const EdgeInsets.symmetric(
                               horizontal: AppSpacing.md,
                             ),
-                            height: 16,
+                            height: 18,
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
@@ -363,8 +308,8 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                                 key: const Key(
                                   'nearby-transfer-scanner-detection-feedback',
                                 ),
-                                height: 64,
-                                width: 64,
+                                height: 72,
+                                width: 72,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
                                   color: AppColors.success.withValues(
@@ -382,8 +327,8 @@ class NearbyTransferScannerOverlay extends StatelessWidget {
                                 ),
                                 child: const Icon(
                                   Icons.check_rounded,
-                                  color: AppColors.surface,
-                                  size: 32,
+                                  color: Colors.white,
+                                  size: 34,
                                 ),
                               ),
                             ),
@@ -417,8 +362,8 @@ class _ScannerCornerAccent extends StatelessWidget {
     return Align(
       alignment: alignment,
       child: Container(
-        width: 32,
-        height: 32,
+        width: 36,
+        height: 36,
         margin: const EdgeInsets.all(AppSpacing.sm),
         decoration: BoxDecoration(
           border: Border(

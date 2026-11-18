@@ -157,7 +157,6 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onPreviewCacheMaxSizeGbChanged(parsed);
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   void _saveCacheAge() {
@@ -167,7 +166,6 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onPreviewCacheMaxAgeDaysChanged(parsed);
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   void _saveClipboardLimit() {
@@ -177,7 +175,6 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onClipboardHistoryMaxEntriesChanged(parsed);
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   void _saveRecacheParallelWorkers() {
@@ -187,7 +184,6 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onRecacheParallelWorkersChanged(parsed);
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   void _saveDebugLogRetainedLines() {
@@ -197,12 +193,10 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
       return;
     }
     widget.onDebugLogRetainedLinesChanged(parsed);
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   void _saveVideoLinkPassword() {
     widget.onVideoLinkPasswordChanged(_videoLinkPasswordController.text.trim());
-    _showValidationMessage('settings.saved_snackbar'.tr());
   }
 
   Future<void> _runLogAction({
@@ -272,7 +266,7 @@ class _AppSettingsSheetState extends State<AppSettingsSheet> {
               child: TabBar(
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
-                dividerColor: AppColors.transparent,
+                dividerColor: Colors.transparent,
                 labelColor: AppColors.brandPrimaryDark,
                 unselectedLabelColor: AppColors.textSecondary,
                 indicatorSize: TabBarIndicatorSize.tab,

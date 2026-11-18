@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'nearby_transfer_transport_adapter.dart';
 
@@ -121,7 +120,6 @@ class NearbyTransferQrCodec {
     final port = rawPort is num ? rawPort.toInt() : null;
 
     if (normalizedHost.isEmpty ||
-        !_isAllowedLanOrOverlayHost(normalizedHost) ||
         port == null ||
         port <= 0 ||
         port > 65535 ||
@@ -136,39 +134,5 @@ class NearbyTransferQrCodec {
       port: port,
       sessionId: normalizedSessionId,
     );
-  }
-
-  static bool _isAllowedLanOrOverlayHost(String host) {
-    final parsed = InternetAddress.tryParse(host);
-    if (parsed == null || parsed.type != InternetAddressType.IPv4) {
-      return false;
-    }
-    final bytes = parsed.rawAddress;
-    if (bytes.length != 4) {
-      return false;
-    }
-    final a = bytes[0];
-    final b = bytes[1];
-    // Reject 0.x.x.x, 127.x.x.x (loopback), 169.254.x.x (cloud metadata/link-local), >=224 (multicast/broadcast)
-    if (a == 0 || a == 127 || a >= 224) {
-      return false;
-    }
-    if (a == 169 && b == 254) {
-      return false;
-    }
-    // Allow RFC1918 (10/8, 172.16/12, 192.168/16) and RFC6598 CGNAT/Tailscale/ZeroTier (100.64/10)
-    if (a == 10) {
-      return true;
-    }
-    if (a == 172 && b >= 16 && b <= 31) {
-      return true;
-    }
-    if (a == 192 && b == 168) {
-      return true;
-    }
-    if (a == 100 && b >= 64 && b <= 127) {
-      return true;
-    }
-    return false;
   }
 }

@@ -278,7 +278,6 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
       animation: Listenable.merge(<Listenable>[
         _browser,
         widget.readModel,
-        widget.remoteShareAccessSessionBoundary,
         widget.incomingTransferCompletionBoundary,
         widget.transferCachePreparationBoundary,
         widget.sharedDownloadBoundary,
@@ -317,40 +316,85 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
             ],
           ),
           body: SafeArea(
-            child: activeOwner == null
-                ? CustomScrollView(
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: _buildTopControlsSection(filterChoices),
-                      ),
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: Padding(
-                          padding: const EdgeInsets.all(AppSpacing.md),
-                          child: _RemoteDownloadEmptyState(
-                            hasOwners: owners.isNotEmpty,
-                            hasQuery: false,
-                            hasLoadedCatalog: false,
-                          ),
-                        ),
-                      ),
-                    ],
-                  )
-                : Column(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                  ),
+                  child: Column(
                     children: [
-                      Flexible(
-                        flex: 0,
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxHeight: MediaQuery.sizeOf(context).height * 0.45,
-                          ),
-                          child: SingleChildScrollView(
-                            child: _buildTopControlsSection(filterChoices),
-                          ),
-                        ),
+                      _RemoteDownloadViewModeToggle(
+                        viewMode: _viewMode,
+                        onChanged: _handleViewModeChanged,
                       ),
-                      Expanded(
-                        child: Padding(
+                      const SizedBox(height: AppSpacing.sm),
+                      if (filterChoices.isNotEmpty)
+                        _DeviceFilterBar(
+                          filters: filterChoices,
+                          selectedKey: _activeFilterKey,
+                          onSelected: _handleFilterSelected,
+                        ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _RemoteShareAccessActionRow(
+                        deviceLabel: _rootLabelForActiveFilter,
+                        activeOwnerIp: _activeFilterKey,
+                        accessState:
+                            widget.remoteShareAccessSessionBoundary.state,
+                        onRequestAccess: _canRequestAccess
+                            ? _requestAccessForActiveDevice
+                            : null,
+                      ),
+                      if (_viewMode == RemoteBrowseExplorerViewMode.flat) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        _FlatCategoryFilterBar(
+                          showAll: _showAllFlatCategories,
+                          selectedCategories: _visibleFlatCategories,
+                          onShowAllChanged: _handleShowAllFlatCategoriesChanged,
+                          onCategoryChanged: _handleFlatCategoryChanged,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                if (_browser.isLoading)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    child: LinearProgressIndicator(
+                      minHeight: 3,
+                      color: AppColors.brandPrimary,
+                      backgroundColor: AppColors.mutedBorder,
+                    ),
+                  ),
+                if (widget
+                        .transferCachePreparationBoundary
+                        .isPreparingSharedDownload ||
+                    widget.incomingTransferCompletionBoundary.isDownloading)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      AppSpacing.sm,
+                      AppSpacing.md,
+                      0,
+                    ),
+                    child: _SharedDownloadStatusCard(
+                      incomingTransferCompletionBoundary:
+                          widget.incomingTransferCompletionBoundary,
+                      transferCachePreparationBoundary:
+                          widget.transferCachePreparationBoundary,
+                    ),
+                  ),
+                Expanded(
+                  child: activeOwner == null
+                      ? _RemoteDownloadEmptyState(
+                          hasOwners: owners.isNotEmpty,
+                          hasQuery: false,
+                          hasLoadedCatalog: false,
+                        )
+                      : Padding(
                           padding: const EdgeInsets.all(AppSpacing.md),
                           child: _buildExplorerContent(
                             context: context,
@@ -361,9 +405,9 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                             visibleEntries: visibleEntries,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                ),
+              ],
+            ),
           ),
           bottomNavigationBar: _selectedTokens.isEmpty
               ? null
@@ -421,81 +465,6 @@ class _RemoteDownloadBrowserPageState extends State<RemoteDownloadBrowserPage> {
                 ),
         );
       },
-    );
-  }
-
-  Widget _buildTopControlsSection(List<_DeviceFilterChoice> filterChoices) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.md,
-            AppSpacing.sm,
-          ),
-          child: Column(
-            children: [
-              _RemoteDownloadViewModeToggle(
-                viewMode: _viewMode,
-                onChanged: _handleViewModeChanged,
-              ),
-              const SizedBox(height: AppSpacing.sm),
-              if (filterChoices.isNotEmpty) ...[
-                _DeviceFilterBar(
-                  filters: filterChoices,
-                  selectedKey: _activeFilterKey,
-                  onSelected: _handleFilterSelected,
-                ),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              _RemoteShareAccessActionRow(
-                deviceLabel: _rootLabelForActiveFilter,
-                activeOwnerIp: _activeFilterKey,
-                accessState: widget.remoteShareAccessSessionBoundary.state,
-                onRequestAccess: _canRequestAccess
-                    ? _requestAccessForActiveDevice
-                    : null,
-              ),
-              if (_viewMode == RemoteBrowseExplorerViewMode.flat) ...[
-                const SizedBox(height: AppSpacing.sm),
-                _FlatCategoryFilterBar(
-                  showAll: _showAllFlatCategories,
-                  selectedCategories: _visibleFlatCategories,
-                  onShowAllChanged: _handleShowAllFlatCategoriesChanged,
-                  onCategoryChanged: _handleFlatCategoryChanged,
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (_browser.isLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: LinearProgressIndicator(
-              minHeight: 3,
-              color: AppColors.brandPrimary,
-              backgroundColor: AppColors.mutedBorder,
-            ),
-          ),
-        if (widget.transferCachePreparationBoundary.isPreparingSharedDownload ||
-            widget.incomingTransferCompletionBoundary.isDownloading)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              AppSpacing.sm,
-              AppSpacing.md,
-              0,
-            ),
-            child: _SharedDownloadStatusCard(
-              incomingTransferCompletionBoundary:
-                  widget.incomingTransferCompletionBoundary,
-              transferCachePreparationBoundary:
-                  widget.transferCachePreparationBoundary,
-            ),
-          ),
-      ],
     );
   }
 
@@ -1304,39 +1273,6 @@ class _RemoteShareAccessActionRow extends StatelessWidget {
     final isActiveState =
         accessState != null && accessState!.ownerIp == activeOwnerIp;
     final message = isActiveState ? accessState!.statusMessage : null;
-    final textSummary = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          deviceLabel.trim().isEmpty
-              ? 'remote_download.access_select_device'.tr()
-              : 'remote_download.access_title'.tr(
-                  namedArgs: <String, String>{'device': deviceLabel},
-                ),
-          style: Theme.of(context).textTheme.labelLarge,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: AppSpacing.xxs),
-        Text(
-          message ?? 'remote_download.access_description'.tr(),
-          style: Theme.of(
-            context,
-          ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
-        ),
-      ],
-    );
-    final actionButton = FilledButton.icon(
-      key: const Key('remote-download-request-access-button'),
-      onPressed: onRequestAccess == null ? null : () => onRequestAccess!(),
-      icon: const Icon(Icons.lock_open_rounded),
-      label: Text(
-        'remote_download.request_access'.tr(),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-    );
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpacing.sm),
@@ -1345,26 +1281,40 @@ class _RemoteShareAccessActionRow extends StatelessWidget {
         borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(color: AppColors.mutedBorder),
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth < 460) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                textSummary,
-                const SizedBox(height: AppSpacing.sm),
-                actionButton,
+                Text(
+                  deviceLabel.trim().isEmpty
+                      ? 'remote_download.access_select_device'.tr()
+                      : 'remote_download.access_title'.tr(
+                          namedArgs: <String, String>{'device': deviceLabel},
+                        ),
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                const SizedBox(height: AppSpacing.xxs),
+                Text(
+                  message ?? 'remote_download.access_description'.tr(),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
               ],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: textSummary),
-              const SizedBox(width: AppSpacing.sm),
-              actionButton,
-            ],
-          );
-        },
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          FilledButton.icon(
+            key: const Key('remote-download-request-access-button'),
+            onPressed: onRequestAccess == null
+                ? null
+                : () => onRequestAccess!(),
+            icon: const Icon(Icons.lock_open_rounded),
+            label: Text('remote_download.request_access'.tr()),
+          ),
+        ],
       ),
     );
   }
@@ -1498,7 +1448,7 @@ class _SelectionCircleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppColors.transparent,
+      color: Colors.transparent,
       child: InkWell(
         key: Key('remote-download-select-$token'),
         customBorder: const CircleBorder(),
