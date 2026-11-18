@@ -262,7 +262,7 @@ class _ExplorerVideoPreviewState extends State<_ExplorerVideoPreview> {
               ),
               Icon(
                 Icons.play_circle_fill_rounded,
-                color: Colors.white,
+                color: AppColors.surface,
                 size: widget.size * 0.42,
               ),
             ],

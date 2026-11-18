@@ -3,7 +3,9 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:landa/app/update/data/app_update_download_service.dart';
 import 'package:landa/app/update/data/app_update_storage_service.dart';
+import 'package:landa/app/update/domain/app_update_models.dart';
 import 'package:landa/features/clipboard/application/clipboard_history_store.dart';
 import 'package:landa/features/clipboard/application/remote_clipboard_projection_store.dart';
 import 'package:landa/features/clipboard/data/clipboard_capture_service.dart';
@@ -14,17 +16,29 @@ import 'package:landa/features/discovery/data/lan_discovery_service.dart';
 import 'package:landa/features/discovery/data/lan_packet_codec_models.dart';
 import 'package:landa/features/discovery/data/lan_protocol_events.dart';
 import 'package:landa/features/discovery/data/lan_share_catalog_chunk_reassembler.dart';
+import 'package:landa/features/nearby_transfer/application/nearby_transfer_session_store.dart';
+import 'package:landa/features/nearby_transfer/data/lan_nearby_transport_adapter.dart';
+import 'package:landa/features/nearby_transfer/data/nearby_transfer_file_picker.dart';
+import 'package:landa/features/nearby_transfer/data/nearby_transfer_storage_service.dart';
+import 'package:landa/features/nearby_transfer/data/nearby_transfer_transport_adapter.dart';
+import 'package:landa/features/nearby_transfer/data/qr_payload_codec.dart';
 import 'package:landa/features/settings/domain/app_settings.dart';
+import 'package:landa/features/transfer/application/remote_share_access_snapshot_parser.dart';
+import 'package:landa/features/transfer/application/transfer_cache_preparation_path_resolver.dart';
 import 'package:landa/features/transfer/application/transfer_path_policy.dart';
 import 'package:landa/features/transfer/data/file_hash_service.dart';
 import 'package:landa/features/transfer/data/file_transfer_service.dart';
 import 'package:landa/features/transfer/data/thumbnail_cache_service.dart';
 import 'package:landa/features/transfer/data/transfer_header_codec.dart';
 import 'package:landa/features/transfer/data/transfer_storage_service.dart';
+import 'package:landa/features/transfer/data/video_link_share_service.dart';
+import 'package:landa/features/transfer/domain/shared_folder_cache.dart';
 import 'package:landa/features/transfer/domain/transfer_request.dart';
 import 'package:path/path.dart' as p;
 
+import 'test_support/fake_nearby_transfer.dart';
 import 'test_support/test_app_database.dart';
+import 'test_support/test_discovery_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -322,12 +336,337 @@ void main() {
         );
       },
     );
+
+    test(
+      'NearbyTransferSessionStore rejects file offers while awaiting 2-digit handshake',
+      () async {
+        final harness = await TestDiscoveryControllerHarness.create();
+        addTearDown(harness.dispose);
+        final lanAdapter = FakeNearbyTransferTransportAdapter();
+        final store = buildTestNearbyTransferStore(
+          readModel: harness.readModel,
+          lanAdapter: lanAdapter,
+        );
+        addTearDown(store.dispose);
+
+        await store.prepareReceiveFlow();
+        lanAdapter.emit(
+          const NearbyTransferConnectedEvent(
+            peer: NearbyTransferPeerDevice(
+              deviceId: 'attacker-id',
+              displayName: 'Attacker',
+              host: '192.168.1.99',
+            ),
+            sessionId: 'sess-1',
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(store.phase, NearbyTransferSessionPhase.awaitingHandshake);
+
+        lanAdapter.emit(
+          const NearbyTransferIncomingSelectionOfferedEvent(
+            requestId: 'unauth-offer',
+            label: 'Malicious',
+            roots: <NearbyTransferRemoteOfferNode>[
+              NearbyTransferRemoteOfferNode(
+                id: 'f1',
+                name: 'payload.apk',
+                relativePath: 'payload.apk',
+                kind: NearbyTransferRemoteOfferNodeKind.file,
+                sizeBytes: 1024,
+                previewKind: NearbyTransferRemotePreviewKind.none,
+              ),
+            ],
+          ),
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(store.phase, NearbyTransferSessionPhase.awaitingHandshake);
+        expect(store.hasIncomingOffer, isFalse);
+      },
+    );
+
+    test(
+      'LanNearbyTransportAdapter drops unauthenticated messages before connect and caps oversized lines',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp('landa_nearby_sec_');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final adapter = LanNearbyTransportAdapter(
+          fileHashService: FileHashService(),
+          fileTransferService: FileTransferService(),
+          storageService: NearbyTransferStorageService(
+            transferStorageService: TransferStorageService(),
+          ),
+          preferredPort: 0,
+        );
+        addTearDown(adapter.dispose);
+
+        final receivedOffers = <NearbyTransferIncomingSelectionOfferedEvent>[];
+        final errors = <NearbyTransferErrorEvent>[];
+        final sub = adapter.events.listen((event) {
+          if (event is NearbyTransferIncomingSelectionOfferedEvent) {
+            receivedOffers.add(event);
+          } else if (event is NearbyTransferErrorEvent) {
+            errors.add(event);
+          }
+        });
+        addTearDown(sub.cancel);
+
+        final hosting = await adapter.startHostingSession(
+          sessionId: 'host-session',
+          localDeviceId: 'host-id',
+          localDeviceName: 'Host',
+        );
+
+        final rawSocket = await Socket.connect(
+          InternetAddress.loopbackIPv4,
+          hosting.port,
+        );
+        rawSocket.write(
+          '${jsonEncode(<String, Object?>{
+            'type': 'fileOffer',
+            'requestId': 'r1',
+            'label': 'Spoofed',
+            'files': <Map<String, Object?>>[
+              {'id': '1', 'relativePath': 'x.txt', 'sizeBytes': 1, 'sha256': 'a'},
+            ],
+          })}\n',
+        );
+        await rawSocket.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+        expect(receivedOffers, isEmpty);
+
+        // Stream > maxControlLineBytes without newline -> must disconnect with error instead of OOM
+        rawSocket.add(
+          Uint8List(LanNearbyTransportAdapter.maxControlLineBytes + 1024),
+        );
+        await rawSocket.flush();
+        await Future<void>.delayed(const Duration(milliseconds: 60));
+        expect(errors, isNotEmpty);
+        await rawSocket.close();
+      },
+    );
+
+    test(
+      'RemoteShareAccessSnapshotParser rejects gzip decompression bombs',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp('landa_snap_bomb_');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final bombFile = File(p.join(tempDir.path, 'snapshot.json.gz'));
+        await bombFile.writeAsBytes(gzip.encode(Uint8List(256 * 1024)));
+
+        const parser = RemoteShareAccessSnapshotParser(
+          maxDecompressedBytes: 64 * 1024,
+        );
+        await expectLater(
+          parser.parse(<String>[bombFile.path]),
+          throwsA(isA<StateError>()),
+        );
+      },
+    );
+
+    test(
+      'VideoLinkShareService blocks oversized POST bodies, rate-limits brute force, and rejects symlinks',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp('landa_vid_sec_');
+        addTearDown(() => tempDir.delete(recursive: true));
+        final videoFile = File(p.join(tempDir.path, 'clip.mp4'));
+        await videoFile.writeAsBytes(Uint8List.fromList(<int>[0, 1, 2, 3]));
+        final symlinkFile = Link(p.join(tempDir.path, 'linked.mp4'));
+        await symlinkFile.create(videoFile.path);
+
+        final service = VideoLinkShareService();
+        addTearDown(service.stop);
+
+        await expectLater(
+          service.publish(
+            filePath: symlinkFile.path,
+            displayName: 'linked',
+            password: 'secret',
+            port: 0,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+
+        final session = await service.publish(
+          filePath: videoFile.path,
+          displayName: 'clip.mp4',
+          password: 'correct-password',
+          port: 0,
+        );
+
+        await HttpOverrides.runWithHttpOverrides(() async {
+          final client = HttpClient();
+          addTearDown(() => client.close(force: true));
+
+          // 1. Oversized POST body -> 413
+          final bigReq = await client.post(
+            InternetAddress.loopbackIPv4.address,
+            session.port,
+            '/auth',
+          );
+          bigReq.followRedirects = false;
+          bigReq.add(Uint8List(VideoLinkShareService.maxAuthBodyBytes + 512));
+          final bigRes = await bigReq.close();
+          await bigRes.drain<void>();
+          expect(bigRes.statusCode, HttpStatus.requestEntityTooLarge);
+
+          // 2. Repeated wrong passwords -> lockout 429
+          for (var i = 0; i < VideoLinkShareService.maxFailedAuthAttempts; i++) {
+            final req = await client.post(
+              InternetAddress.loopbackIPv4.address,
+              session.port,
+              '/auth',
+            );
+            req.followRedirects = false;
+            req.write('password=wrong-$i');
+            final res = await req.close();
+            await res.drain<void>();
+            expect(res.statusCode, HttpStatus.found);
+          }
+          final lockedReq = await client.post(
+            InternetAddress.loopbackIPv4.address,
+            session.port,
+            '/auth',
+          );
+          lockedReq.followRedirects = false;
+          lockedReq.write('password=correct-password');
+          final lockedRes = await lockedReq.close();
+          await lockedRes.drain<void>();
+          expect(lockedRes.statusCode, HttpStatus.tooManyRequests);
+        }, _RealHttpOverrides());
+      },
+    );
+
+    test(
+      'NearbyTransferFilePicker ignores symlinks and TransferCachePreparationPathResolver rejects traversal',
+      () async {
+        final tempDir = await Directory.systemTemp.createTemp('landa_picker_sec_');
+        final secretDir = await Directory.systemTemp.createTemp('landa_secret_');
+        addTearDown(() async {
+          await tempDir.delete(recursive: true);
+          await secretDir.delete(recursive: true);
+        });
+        final safeFile = File(p.join(tempDir.path, 'safe.txt'));
+        await safeFile.writeAsString('safe');
+        final secretFile = File(p.join(secretDir.path, 'id_ed25519'));
+        await secretFile.writeAsString('PRIVATE KEY');
+        await Link(p.join(tempDir.path, 'leak_link')).create(secretFile.path);
+
+        final picker = NearbyTransferFilePicker(
+          supportsDirectoryPickingOverride: true,
+          pickDirectoryPathInvoker: () async => tempDir.path,
+        );
+        final selection = await picker.pickDirectory();
+        expect(selection, isNotNull);
+        expect(selection!.entries.map((e) => e.sourcePath), <String>[safeFile.path]);
+
+        const resolver = TransferCachePreparationPathResolver();
+        final escaped = resolver.resolve(
+          cache: SharedFolderCacheRecord(
+            cacheId: 'c1',
+            role: SharedFolderCacheRole.owner,
+            ownerMacAddress: 'aa:bb:cc:dd:ee:ff',
+            rootPath: tempDir.path,
+            displayName: 'Shared',
+            indexFilePath: p.join(tempDir.path, 'idx.json'),
+            itemCount: 1,
+            totalBytes: 4,
+            updatedAtMs: 1,
+          ),
+          entry: SharedFolderIndexEntry(
+            relativePath: '../../etc/passwd',
+            sizeBytes: 100,
+            modifiedAtMs: 1,
+          ),
+        );
+        expect(escaped, isNull);
+      },
+    );
+
+    test(
+      'NearbyTransferQrCodec rejects loopback, link-local, and public internet SSRF hosts',
+      () {
+        const codec = NearbyTransferQrCodec();
+        for (final badHost in <String>[
+          '127.0.0.1',
+          '169.254.169.254',
+          '8.8.8.8',
+          'evil.example.com',
+          '::1',
+        ]) {
+          final encoded = codec.encode(
+            NearbyTransferQrPayload(
+              deviceId: 'dev',
+              sessionId: 's1',
+              transportMode: NearbyTransferMode.lanFallback,
+              transportInfo: <String, Object?>{
+                'host': badHost,
+                'port': 45321,
+                'sessionId': 's1',
+              },
+            ),
+          );
+          expect(
+            codec.decodeLanFallbackConnection(encoded),
+            isNull,
+            reason: 'Host $badHost must be rejected in LAN QR payload',
+          );
+        }
+
+        for (final goodHost in <String>['192.168.1.25', '10.0.0.5', '172.20.1.4', '100.100.10.2']) {
+          final encoded = codec.encode(
+            NearbyTransferQrPayload(
+              deviceId: 'dev',
+              sessionId: 's1',
+              transportMode: NearbyTransferMode.lanFallback,
+              transportInfo: <String, Object?>{
+                'host': goodHost,
+                'port': 45321,
+                'sessionId': 's1',
+              },
+            ),
+          );
+          expect(codec.decodeLanFallbackConnection(encoded)?.host, goodHost);
+        }
+      },
+    );
+
+    test(
+      'AppUpdateDownloadService rejects insecure non-loopback HTTP asset URLs',
+      () async {
+        final mockDir = await Directory.systemTemp.createTemp('landa_upd_sec_');
+        addTearDown(() => mockDir.delete(recursive: true));
+        final service = AppUpdateDownloadService(
+          storageService: AppUpdateStorageService(
+            updateDirectoryResolver: () async => mockDir,
+          ),
+        );
+        await expectLater(
+          service.downloadAsset(
+            const AppUpdateAsset(
+              platform: 'linux',
+              arch: 'x86_64',
+              format: 'appimage',
+              primary: true,
+              fileName: 'landa.AppImage',
+              size: 10,
+              sha256: 'abcd',
+              downloadUrl: 'http://evil.example.com/landa.AppImage',
+            ),
+          ),
+          throwsA(isA<FormatException>()),
+        );
+      },
+    );
   });
 }
 
 // =============================================================================
 // Helper Mocks for Isolated Adversarial Testing
 // =============================================================================
+
+class _RealHttpOverrides extends HttpOverrides {}
 
 class _RecordedClipboardCatalog {
   const _RecordedClipboardCatalog({

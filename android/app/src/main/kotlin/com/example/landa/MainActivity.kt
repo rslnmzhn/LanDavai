@@ -283,15 +283,42 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun copySharedUriToCache(uri: Uri): File? {
+        if (!"content".equals(uri.scheme, ignoreCase = true)) {
+            return null
+        }
+        if (uri.authority == "${applicationContext.packageName}.fileprovider") {
+            return null
+        }
         val targetDir = File(cacheDir, "share_intent").apply { mkdirs() }
         val target = nextAvailableFile(File(targetDir, displayNameForSharedUri(uri)))
         val resolver = applicationContext.contentResolver
-        resolver.openInputStream(uri)?.use { input ->
-            target.outputStream().use { output ->
-                input.copyTo(output)
+        resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+            if (isInternalAppFileDescriptor(pfd.fileDescriptor)) {
+                return null
+            }
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                target.outputStream().use { output ->
+                    input.copyTo(output)
+                }
             }
         } ?: return null
         return target
+    }
+
+    private fun isInternalAppFileDescriptor(fd: java.io.FileDescriptor): Boolean {
+        return try {
+            val resolvedPath = android.system.Os.readlink("/proc/self/fd/${getFdNumber(fd)}")
+            val appDataPath = applicationInfo.dataDir?.let { File(it).canonicalPath }
+            appDataPath != null && (resolvedPath == appDataPath || resolvedPath.startsWith("$appDataPath/"))
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun getFdNumber(fd: java.io.FileDescriptor): Int {
+        val field = java.io.FileDescriptor::class.java.getDeclaredField("descriptor")
+        field.isAccessible = true
+        return field.getInt(fd)
     }
 
     private fun displayNameForSharedUri(uri: Uri): String {
@@ -948,7 +975,7 @@ class MainActivity : FlutterActivity() {
         val normalizedTarget = directoryPath
             .replace('\\', '/')
             .trimEnd('/')
-        if (!normalizedTarget.startsWith(downloadsRoot)) {
+        if (normalizedTarget != downloadsRoot && !normalizedTarget.startsWith("$downloadsRoot/")) {
             return null
         }
 
@@ -972,14 +999,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun fileUri(file: File): Uri {
-        return try {
-            FileProvider.getUriForFile(
-                this,
-                "${applicationContext.packageName}.fileprovider",
-                file,
-            )
-        } catch (_: Throwable) {
-            Uri.fromFile(file)
-        }
+        return FileProvider.getUriForFile(
+            this,
+            "${applicationContext.packageName}.fileprovider",
+            file,
+        )
     }
 }

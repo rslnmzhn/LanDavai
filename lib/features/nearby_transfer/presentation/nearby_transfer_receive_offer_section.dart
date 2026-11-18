@@ -1,5 +1,9 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
+
 import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/material.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path/path.dart' as p;
 
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
@@ -12,33 +16,54 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
   const NearbyTransferReceiveOfferSection({required this.store, super.key});
 
   final NearbyTransferSessionStore store;
+  static const int _virtualizationThreshold = 24;
 
   @override
   Widget build(BuildContext context) {
     final incomingOffer = store.incomingOffer;
+    final progress = store.transferProgress;
+    final isTransferring = store.phase == NearbyTransferSessionPhase.transferring;
+
     if (incomingOffer == null) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (store.lastReceivedPaths.isNotEmpty) ...[
+            _ReceivedFilesSuccessCard(savedPaths: store.lastReceivedPaths),
+            const SizedBox(height: AppSpacing.md),
+          ],
           Text(
-            store.phase == NearbyTransferSessionPhase.transferring
+            isTransferring
                 ? 'nearby_transfer.offer_receiving'.tr()
                 : 'nearby_transfer.offer_waiting'.tr(),
             style: Theme.of(context).textTheme.titleSmall,
           ),
-          if (store.transferProgress != null) ...[
+          if (progress != null) ...[
             const SizedBox(height: AppSpacing.sm),
-            LinearProgressIndicator(value: store.transferProgress),
+            LinearProgressIndicator(value: progress),
           ],
         ],
       );
     }
 
+    final rawOfferLabel = incomingOffer.label;
+    final resolvedOfferLabel =
+        rawOfferLabel == 'Файлы' && incomingOffer.files.length > 1
+        ? 'nearby_transfer.selected_default_label'.tr()
+        : rawOfferLabel;
+    final visibleNodes = store.visibleIncomingNodes;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (store.lastReceivedPaths.isNotEmpty) ...[
+          _ReceivedFilesSuccessCard(savedPaths: store.lastReceivedPaths),
+          const SizedBox(height: AppSpacing.md),
+        ],
         Text(
-          incomingOffer.label,
+          resolvedOfferLabel,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: Theme.of(context).textTheme.titleSmall,
         ),
         if (store.currentIncomingDirectory != null) ...[
@@ -54,6 +79,8 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
               Expanded(
                 child: Text(
                   store.currentIncomingDirectory!.relativePath,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: AppColors.textSecondary,
                   ),
@@ -69,26 +96,146 @@ class NearbyTransferReceiveOfferSection extends StatelessWidget {
             context,
           ).textTheme.bodyMedium?.copyWith(color: AppColors.textSecondary),
         ),
-        const SizedBox(height: AppSpacing.md),
-        ...store.visibleIncomingNodes.map((node) {
-          return Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-            child: _IncomingOfferTile(store: store, node: node),
-          );
-        }),
-        if (store.transferProgress != null) ...[
-          const SizedBox(height: AppSpacing.sm),
-          LinearProgressIndicator(value: store.transferProgress),
+        const SizedBox(height: AppSpacing.sm),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xxs,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              'nearby_transfer.offer_selected_summary'.tr(
+                namedArgs: <String, String>{
+                  'count': '${store.selectedIncomingFileCount}',
+                  'size': _formatBytes(context, store.selectedIncomingTotalBytes),
+                },
+              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+            ),
+            TextButton(
+              onPressed: isTransferring ? null : store.selectAllIncomingFiles,
+              child: Text('nearby_transfer.offer_select_all'.tr()),
+            ),
+            if (store.hasIncomingSelection)
+              TextButton(
+                onPressed: isTransferring ? null : store.clearIncomingSelection,
+                child: Text('nearby_transfer.offer_clear_selection'.tr()),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (visibleNodes.length > _virtualizationThreshold)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: visibleNodes.length,
+              separatorBuilder: (_, index) =>
+                  const SizedBox(height: AppSpacing.sm),
+              itemBuilder: (context, index) => _IncomingOfferTile(
+                store: store,
+                node: visibleNodes[index],
+              ),
+            ),
+          )
+        else
+          for (var i = 0; i < visibleNodes.length; i += 1) ...[
+            _IncomingOfferTile(store: store, node: visibleNodes[i]),
+            if (i != visibleNodes.length - 1)
+              const SizedBox(height: AppSpacing.sm),
+          ],
+        if (progress != null) ...[
+          const SizedBox(height: AppSpacing.md),
+          LinearProgressIndicator(value: progress),
+          const SizedBox(height: AppSpacing.xxs),
+          Text(
+            'nearby_transfer.offer_progress_detail'.tr(
+              namedArgs: <String, String>{
+                'completed': _formatBytes(context, store.transferCompletedBytes),
+                'total': _formatBytes(context, store.transferTotalBytes),
+                'percent': '${(progress * 100).round()}',
+              },
+            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
         ],
         const SizedBox(height: AppSpacing.md),
-        FilledButton.icon(
-          onPressed: store.hasIncomingSelection
-              ? store.downloadSelectedIncomingFiles
-              : null,
-          icon: const Icon(Icons.download_rounded),
-          label: Text('nearby_transfer.download_selected'.tr()),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: store.hasIncomingSelection && !isTransferring
+                ? store.downloadSelectedIncomingFiles
+                : null,
+            icon: isTransferring
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_rounded),
+            label: Text('nearby_transfer.download_selected'.tr()),
+          ),
         ),
       ],
+    );
+  }
+}
+
+class _ReceivedFilesSuccessCard extends StatelessWidget {
+  const _ReceivedFilesSuccessCard({required this.savedPaths});
+
+  final List<String> savedPaths;
+
+  @override
+  Widget build(BuildContext context) {
+    final folderPath = p.dirname(savedPaths.first);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.success.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.success.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: AppColors.success),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Text(
+                  'nearby_transfer.received_card_title'.tr(
+                    namedArgs: <String, String>{
+                      'count': '${savedPaths.length}',
+                    },
+                  ),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            folderPath,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          OutlinedButton.icon(
+            onPressed: () => unawaited(OpenFilex.open(folderPath)),
+            icon: const Icon(Icons.folder_open_rounded),
+            label: Text('nearby_transfer.received_open_folder'.tr()),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -108,102 +255,114 @@ class _IncomingOfferTile extends StatelessWidget {
     final checkboxValue = store.isIncomingNodePartiallySelected(node.id)
         ? null
         : store.isIncomingNodeSelected(node.id);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: AppColors.surfaceSoft,
+
+    return Material(
+      color: AppColors.surfaceSoft,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(
+        side: BorderSide(
           color: AppColors.brandAccent.withValues(alpha: 0.35),
         ),
       ),
-      child: Stack(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              AppSpacing.md,
-              60,
-              AppSpacing.md,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _IncomingOfferPreviewBadge(node: node),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(node.name),
-                      const SizedBox(height: AppSpacing.xs),
-                      Text(_buildSecondaryLabel(context, node)),
-                    ],
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          if (node.isDirectory) {
+            store.openIncomingDirectory(node.id);
+          } else {
+            store.toggleIncomingNodeSelection(
+              node.id,
+              !(checkboxValue ?? false),
+            );
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.xs,
+            AppSpacing.sm,
+          ),
+          child: Row(
+            children: [
+              _IncomingOfferPreviewBadge(node: node),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      node.name,
+                      style: Theme.of(context).textTheme.titleSmall,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      _buildSecondaryLabel(context, node),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              if (canPreview)
+                IconButton(
+                  key: ValueKey<String>(
+                    'nearby-transfer-preview-button-${node.id}',
                   ),
+                  tooltip: 'common.preview'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: store.isPreviewLoading(file.id)
+                      ? null
+                      : () async {
+                          final preview = await store.loadIncomingPreview(file);
+                          if (!context.mounted || preview == null) {
+                            return;
+                          }
+                          await showDialog<void>(
+                            context: context,
+                            builder: (context) {
+                              return NearbyTransferRemotePreviewDialog(
+                                filePathLabel: file.relativePath,
+                                preview: preview,
+                              );
+                            },
+                          );
+                        },
+                  icon: store.isPreviewLoading(file.id)
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.visibility_rounded),
                 ),
-              ],
-            ),
-          ),
-          if (canPreview)
-            Positioned(
-              top: AppSpacing.xs,
-              right: AppSpacing.xs,
-              child: IconButton(
-                key: ValueKey<String>(
-                  'nearby-transfer-preview-button-${node.id}',
+              if (node.isDirectory)
+                IconButton(
+                  key: ValueKey<String>(
+                    'nearby-transfer-open-folder-button-${node.id}',
+                  ),
+                  tooltip: 'common.open_folder'.tr(),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => store.openIncomingDirectory(node.id),
+                  icon: const Icon(Icons.chevron_right_rounded),
                 ),
-                tooltip: 'common.preview'.tr(),
-                onPressed: store.isPreviewLoading(file.id)
-                    ? null
-                    : () async {
-                        final preview = await store.loadIncomingPreview(file);
-                        if (!context.mounted || preview == null) {
-                          return;
-                        }
-                        await showDialog<void>(
-                          context: context,
-                          builder: (context) {
-                            return NearbyTransferRemotePreviewDialog(
-                              filePathLabel: file.relativePath,
-                              preview: preview,
-                            );
-                          },
-                        );
-                      },
-                icon: store.isPreviewLoading(file.id)
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.visibility_rounded),
+              Checkbox(
+                key: ValueKey<String>('nearby-transfer-checkbox-${node.id}'),
+                tristate: true,
+                visualDensity: VisualDensity.compact,
+                value: checkboxValue,
+                onChanged: (value) {
+                  store.toggleIncomingNodeSelection(node.id, value ?? false);
+                },
               ),
-            ),
-          if (node.isDirectory)
-            Positioned(
-              top: AppSpacing.xs,
-              right: canPreview ? 44 : AppSpacing.xs,
-              child: IconButton(
-                key: ValueKey<String>(
-                  'nearby-transfer-open-folder-button-${node.id}',
-                ),
-                tooltip: 'common.open_folder'.tr(),
-                onPressed: () => store.openIncomingDirectory(node.id),
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-            ),
-          Positioned(
-            right: AppSpacing.xs,
-            bottom: AppSpacing.xs,
-            child: Checkbox(
-              key: ValueKey<String>('nearby-transfer-checkbox-${node.id}'),
-              tristate: true,
-              value: checkboxValue,
-              onChanged: (value) {
-                store.toggleIncomingNodeSelection(node.id, value ?? false);
-              },
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -227,8 +386,8 @@ class _IncomingOfferPreviewBadge extends StatelessWidget {
     };
     return Container(
       key: ValueKey<String>('nearby-transfer-preview-badge-${node.id}'),
-      width: 52,
-      height: 52,
+      width: 48,
+      height: 48,
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.md),

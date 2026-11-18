@@ -12,7 +12,20 @@ class TransferCachePreparationPathResolver {
     if (cache.rootPath.startsWith('selection://')) {
       return entry.absolutePath;
     }
-    final localRelative = entry.relativePath.replaceAll('/', p.separator);
-    return p.join(cache.rootPath, localRelative);
+    final normalizedRoot = p.normalize(cache.rootPath);
+    final rawSegments = entry.relativePath
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    if (rawSegments.isEmpty ||
+        rawSegments.any((part) => part == '.' || part == '..')) {
+      return null;
+    }
+    final candidate = p.normalize(p.joinAll(<String>[normalizedRoot, ...rawSegments]));
+    if (!p.isWithin(normalizedRoot, candidate)) {
+      return null;
+    }
+    return candidate;
   }
 }

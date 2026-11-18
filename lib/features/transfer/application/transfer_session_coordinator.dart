@@ -243,6 +243,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
         localNameProvider: localNameProvider,
         localDeviceMacProvider: localDeviceMacProvider,
         isTrustedSender: isTrustedSender,
+        isTrustedSenderIpAndMac: isTrustedSenderIpAndMac,
         buildStableId: _fileHashService.buildStableId,
       ),
       deps: RemoteShareAccessDeps(

@@ -34,3 +34,28 @@
   - Проверка обнаружения устройств на реальных мобильных телефонах (Android/iOS) и десктопах (Windows/Linux).
   - Сканирование QR-кодов в `NearbyTransfer` через физическую камеру устройства.
   - Проверка корректности записи файлов через Android Storage Access Framework (SAF) на реальных версиях Android 11–14.
+
+---
+
+## Расширенный аудит безопасности, стабильности и UI/UX — 2026-11-18
+
+### Фаза 1: Безопасность, протоколы и нативный Android-слой
+- [x] **Android Confused Deputy (`ACTION_SEND` `file://` / приватные пути) и `FileProvider` для самообновления APK**, файлы: `android/app/src/main/kotlin/com/example/landa/MainActivity.kt`, `android/app/src/main/res/xml/file_paths.xml`.
+- [x] **Обход 2-значного рукопожатия и OOM в управляющем TCP-канале Nearby Transfer**, файлы: `lib/features/nearby_transfer/data/lan_nearby_transport_adapter.dart`, `lib/features/nearby_transfer/application/nearby_transfer_session_store.dart`.
+- [x] **Автоматическое одобрение доступа к шарам по поддельному MAC без сверки IP**, файлы: `lib/features/transfer/application/remote_share_access_session_boundary.dart`, `lib/features/transfer/application/remote_share_access_session_models.dart`, `lib/features/transfer/application/transfer_session_coordinator.dart`.
+- [x] **Защита от Gzip-бомбы в `RemoteShareAccessSnapshotParser`**, файл: `lib/features/transfer/application/remote_share_access_snapshot_parser.dart`.
+- [x] **Защита `VideoLinkShareService` (лимит тела POST, защита от перебора пароля, 256-битный токен, constant-time сравнение, запрет симлинков)**, файл: `lib/features/transfer/data/video_link_share_service.dart`.
+- [x] **Запрет следования симлинкам в `NearbyTransferFilePicker`, защита путей в `TransferCachePreparationPathResolver`, валидация LAN IP в QR и потоковый SHA-256 в `AppUpdateDownloadService` / HTTPS в `GithubReleaseUpdateService`**.
+
+### Фаза 2: Дизайн-система, шрифты и локализация
+- [x] **Подключение шрифтов `Manrope` и `JetBrains Mono` в `pubspec.yaml`, выравнивание `AppTypography` (`titleSmall`, `labelLarge`), высот кнопок (`44`/`40`) и цветовых токенов**.
+- [x] **Вынос 30+ захардкоженных строк из `NearbyTransferSessionStore`, `LanNearbyTransportAdapter`, `DebugLogAccessService` и виджетов в `assets/translations/ru.json` и `en.json` с сохранением границы локализации в `presentation/`**.
+
+### Фаза 3: Исправление вёрстки и UX основных экранов
+- [x] **Устранение горизонтального и вертикального `RenderFlex overflow` в `DiscoveryDeviceListSection` (переход на единый скролл `CustomScrollView`) + видимая кнопка меню `⋮` на карточках устройств**.
+- [x] **Устранение `RenderFlex overflow` и починка реактивности статуса доступа в `RemoteDownloadBrowserPage`**.
+- [x] **Подтверждение удаления из друзей в `DiscoveryFriendsSheet`, исправление `AppBar` в `ShareTargetPage`, скрытие пустой секции и улучшение сохранения настроек в `AppSettingsSheet`**.
+
+### Фаза 4: Исправление вёрстки и UX `NearbyTransfer`
+- [x] **Устранение 28px наложения кнопок в `_IncomingOfferTile`, виртуализация списка файлов, отображение прогресса (проценты/объём), карточки полученных файлов с открытием папки и повторной докачки из того же предложения**.
+- [x] **`QrErrorCorrectLevel.H`, адаптивный размер QR/сканера в landscape и на узких экранах, копирование кода сессии и ручное подключение на Desktop без камеры, обработка отсутствия локального IP**.

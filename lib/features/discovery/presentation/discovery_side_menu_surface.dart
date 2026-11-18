@@ -606,7 +606,7 @@ class _VideoLinkServerCard extends StatelessWidget {
               activeUrl,
               style: Theme.of(
                 context,
-              ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrainsMono'),
+              ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrains Mono'),
             ),
             trailing: OutlinedButton.icon(
               onPressed: onCopyLink,

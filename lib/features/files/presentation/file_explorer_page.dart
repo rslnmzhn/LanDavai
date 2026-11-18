@@ -228,14 +228,31 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
                             onChanged: owner.setSearchQuery,
                             decoration: InputDecoration(
                               isDense: true,
-                              border: OutlineInputBorder(),
+                              border: const OutlineInputBorder(),
                               hintText: 'common.search_files'.tr(),
-                              prefixIcon: Icon(Icons.search_rounded, size: 18),
-                              prefixIconConstraints: BoxConstraints(
+                              prefixIcon: const Icon(Icons.search_rounded, size: 18),
+                              prefixIconConstraints: const BoxConstraints(
                                 minWidth: 34,
                                 minHeight: 34,
                               ),
-                              contentPadding: EdgeInsets.symmetric(
+                              suffixIcon: state.searchQuery.isEmpty
+                                  ? null
+                                  : IconButton(
+                                      tooltip: 'common.reset'.tr(),
+                                      icon: const Icon(
+                                        Icons.clear_rounded,
+                                        size: 18,
+                                      ),
+                                      onPressed: () {
+                                        _searchController.clear();
+                                        owner.setSearchQuery('');
+                                      },
+                                    ),
+                              suffixIconConstraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
+                              contentPadding: const EdgeInsets.symmetric(
                                 horizontal: AppSpacing.sm,
                                 vertical: AppSpacing.sm,
                               ),
@@ -615,6 +632,7 @@ class _FileExplorerPageState extends State<FileExplorerPage> {
     final state = owner.state;
     final selected = await showModalBottomSheet<int>(
       context: context,
+      isScrollControlled: true,
       builder: (context) {
         return SafeArea(
           child: ListView.separated(

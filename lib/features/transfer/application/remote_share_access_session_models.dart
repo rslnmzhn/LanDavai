@@ -150,6 +150,7 @@ class RemoteShareAccessSessionConfig {
     required this.localNameProvider,
     required this.localDeviceMacProvider,
     required this.isTrustedSender,
+    this.isTrustedSenderIpAndMac,
     required this.buildStableId,
   });
 
@@ -159,7 +160,16 @@ class RemoteShareAccessSessionConfig {
   final String Function() localNameProvider;
   final String Function() localDeviceMacProvider;
   final bool Function(String? normalizedMac) isTrustedSender;
+  final bool Function(String ip, String? normalizedMac)? isTrustedSenderIpAndMac;
   final String Function(String input) buildStableId;
+
+  bool isTrustedPeer({required String ip, required String? normalizedMac}) {
+    final ipAndMacVerifier = isTrustedSenderIpAndMac;
+    if (ipAndMacVerifier != null) {
+      return ipAndMacVerifier(ip, normalizedMac);
+    }
+    return isTrustedSender(normalizedMac);
+  }
 }
 
 class RemoteShareAccessPendingIntent {

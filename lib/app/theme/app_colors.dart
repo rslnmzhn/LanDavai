@@ -15,6 +15,9 @@ class AppColors {
   static const Color error = Color(0xFFC06C84);
   static const Color mutedBorder = Color(0xFFDCD7FF);
   static const Color mutedIcon = Color(0xFFA39DBB);
+  static const Color scannerSurface = Color(0xFF0E0E17);
+  static const Color cardShadow = Color(0x141F1F2E);
+  static const Color transparent = Color(0x00000000);
 
   const AppColors._();
 }

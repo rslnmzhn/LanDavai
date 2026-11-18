@@ -24,6 +24,8 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
   final FileTransferService _fileTransferService;
   final NearbyTransferStorageService _storageService;
   final int preferredPort;
+  static const int maxControlLineBytes = 512 * 1024;
+  int _downloadBatchCounter = 0;
 
   final StreamController<NearbyTransferTransportEvent> _events =
       StreamController<NearbyTransferTransportEvent>.broadcast();
@@ -255,10 +257,12 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       throw StateError('Requested nearby files are not available.');
     }
 
+    _downloadBatchCounter += 1;
+    final transferRequestId = '$requestId#$_downloadBatchCounter';
     final destinationDirectory = await _storageService
         .resolveReceiveDirectory();
     final receiveSession = await _fileTransferService.startReceiver(
-      requestId: requestId,
+      requestId: transferRequestId,
       expectedItems: selectedEntries
           .map((entry) => entry.manifest)
           .toList(growable: false),
@@ -283,19 +287,19 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
         );
       },
     );
-    _receiveSessions[requestId] = receiveSession;
+    _receiveSessions[transferRequestId] = receiveSession;
     await _sendControlMessage(<String, Object?>{
       'type': 'fileReceiverReady',
       'requestId': requestId,
+      'transferRequestId': transferRequestId,
       'port': receiveSession.port,
       'fileIds': normalizedFileIds,
     });
 
     unawaited(
       receiveSession.result.then((result) {
-        _receiveSessions.remove(requestId);
+        _receiveSessions.remove(transferRequestId);
         if (result.success) {
-          _pendingIncomingOffers.remove(requestId);
           _events.add(
             NearbyTransferTransferCompletedEvent(
               direction: NearbyTransferProgressDirection.receiving,
@@ -356,8 +360,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     _activeSocketLines?.cancel();
     _activeSocketLines = socket
         .cast<List<int>>()
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
+        .transform(_boundedLineTransformer())
         .listen(
           (line) => unawaited(_handleMessage(socket, line)),
           onDone: () => unawaited(_handleSocketClosed(socket)),
@@ -371,6 +374,50 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
           },
           cancelOnError: true,
         );
+  }
+
+  static StreamTransformer<List<int>, String> _boundedLineTransformer() {
+    final buffer = <int>[];
+    return StreamTransformer<List<int>, String>.fromHandlers(
+      handleData: (chunk, sink) {
+        for (final byte in chunk) {
+          if (byte == 0x0A) {
+            if (buffer.isNotEmpty && buffer.last == 0x0D) {
+              buffer.removeLast();
+            }
+            final line = utf8.decode(buffer, allowMalformed: true);
+            buffer.clear();
+            if (line.isNotEmpty) {
+              sink.add(line);
+            }
+            continue;
+          }
+          if (buffer.length >= maxControlLineBytes) {
+            buffer.clear();
+            sink.addError(
+              const FormatException(
+                'Nearby control line exceeded maximum allowed size.',
+              ),
+            );
+            return;
+          }
+          buffer.add(byte);
+        }
+      },
+      handleDone: (sink) {
+        if (buffer.isNotEmpty) {
+          if (buffer.last == 0x0D) {
+            buffer.removeLast();
+          }
+          final line = utf8.decode(buffer, allowMalformed: true);
+          buffer.clear();
+          if (line.isNotEmpty) {
+            sink.add(line);
+          }
+        }
+        sink.close();
+      },
+    );
   }
 
   Future<void> _handleMessage(Socket socket, String line) async {
@@ -389,6 +436,15 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
 
     final type = json['type'] as String?;
     if (type == null) {
+      return;
+    }
+
+    // Require completed session setup (_peer & _sessionId) for all post-connect control messages
+    if ((_peer == null || _sessionId == null) &&
+        type != 'connect' &&
+        type != 'connectAccepted' &&
+        type != 'reject' &&
+        type != 'error') {
       return;
     }
 
@@ -633,11 +689,18 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
 
   Future<void> _handleFileReceiverReady(Map<String, dynamic> json) async {
     final requestId = json['requestId'] as String?;
+    final transferRequestId =
+        (json['transferRequestId'] as String?)?.trim().isNotEmpty == true
+        ? (json['transferRequestId'] as String).trim()
+        : requestId;
     final port = (json['port'] as num?)?.toInt();
     final rawFileIds = json['fileIds'] as List<dynamic>?;
     final peer = _peer;
     if (requestId == null ||
+        transferRequestId == null ||
         port == null ||
+        port <= 0 ||
+        port > 65535 ||
         rawFileIds == null ||
         peer == null) {
       return;
@@ -646,7 +709,7 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
     if (selectedIds.isEmpty) {
       return;
     }
-    final offer = _pendingOutgoingOffers.remove(requestId);
+    final offer = _pendingOutgoingOffers[requestId];
     if (offer == null) {
       return;
     }
@@ -662,29 +725,35 @@ class LanNearbyTransportAdapter implements NearbyTransferTransportAdapter {
       0,
       (sum, entry) => sum + entry.sourceFile.sizeBytes,
     );
-    await _fileTransferService.sendFiles(
-      host: peer.host,
-      port: port,
-      requestId: requestId,
-      files: selectedEntries
-          .map((entry) => entry.sourceFile)
-          .toList(growable: false),
-      onProgress: (sentBytes, totalBytesValue) {
-        _events.add(
-          NearbyTransferTransferProgressEvent(
-            direction: NearbyTransferProgressDirection.sending,
-            completedBytes: sentBytes,
-            totalBytes: totalBytesValue == 0 ? totalBytes : totalBytesValue,
-          ),
-        );
-      },
-    );
-    _events.add(
-      NearbyTransferTransferCompletedEvent(
-        direction: NearbyTransferProgressDirection.sending,
-        message: '${offer.label}: отправка завершена.',
-      ),
-    );
+    try {
+      await _fileTransferService.sendFiles(
+        host: peer.host,
+        port: port,
+        requestId: transferRequestId,
+        files: selectedEntries
+            .map((entry) => entry.sourceFile)
+            .toList(growable: false),
+        onProgress: (sentBytes, totalBytesValue) {
+          _events.add(
+            NearbyTransferTransferProgressEvent(
+              direction: NearbyTransferProgressDirection.sending,
+              completedBytes: sentBytes,
+              totalBytes: totalBytesValue == 0 ? totalBytes : totalBytesValue,
+            ),
+          );
+        },
+      );
+      _events.add(
+        NearbyTransferTransferCompletedEvent(
+          direction: NearbyTransferProgressDirection.sending,
+          message: '${offer.label}: отправка завершена.',
+        ),
+      );
+    } catch (error) {
+      _events.add(
+        NearbyTransferErrorEvent(message: 'Transfer send failed: $error'),
+      );
+    }
   }
 
   Future<void> _rejectSocket(Socket socket, String reason) async {

@@ -20,6 +20,34 @@ enum NearbyTransferSessionPhase {
   transferring,
 }
 
+enum NearbyTransferBannerCode {
+  usingWifiDirect,
+  usingLanFallback,
+  noLocalIp,
+  portFallback,
+  connectFailed,
+  qrInvalid,
+  receiveNotReady,
+  verifyCodeExpired,
+  verifyCodeCooldown,
+  verifyCodeFormatError,
+  verifyCodeInvalid,
+  connected,
+  previewUnavailable,
+  preparingReceive,
+  preparingList,
+  preparingFiles,
+  offerSent,
+  confirmOnPeer,
+  enterCode,
+  chooseToDownload,
+  peerCanSelect,
+  receiveCompleted,
+  disconnected,
+  busy,
+  rejected,
+}
+
 class NearbyTransferSessionStore extends ChangeNotifier {
   NearbyTransferSessionStore({
     required NearbyTransferCapabilityService capabilityService,
@@ -66,6 +94,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   final Duration _candidateRefreshInterval;
 
   StreamSubscription<NearbyTransferTransportEvent>? _transportSubscription;
+  NearbyTransferTransportAdapter? _subscribedAdapter;
   Timer? _candidateRefreshTimer;
 
   NearbyTransferMode? _mode;
@@ -77,6 +106,8 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       const <NearbyTransferCandidateDevice>[];
   String? _selectedCandidateId;
   String? _bannerMessage;
+  NearbyTransferBannerCode? _bannerCode;
+  Map<String, String> _bannerArgs = const <String, String>{};
   bool _bannerIsError = false;
   String? _qrPayloadText;
   String? _sessionId;
@@ -103,6 +134,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   String? _currentIncomingDirectoryId;
   String? _previewingFileId;
   NearbyTransferRemoteFilePreview? _activeIncomingPreview;
+  List<String> _lastReceivedPaths = const <String>[];
   bool _autoAcceptPendingHandshake = false;
   final Map<String, Completer<NearbyTransferRemoteFilePreview?>>
   _pendingPreviewRequests =
@@ -125,14 +157,30 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   String? get bannerMessage => _bannerMessage;
 
+  NearbyTransferBannerCode? get bannerCode => _bannerCode;
+
+  Map<String, String> get bannerArgs =>
+      Map<String, String>.unmodifiable(_bannerArgs);
+
   bool get bannerIsError => _bannerIsError;
 
   String? get qrPayloadText => _qrPayloadText;
+
+  bool isValidQrPayloadText(String rawPayload) =>
+      _qrCodec.decodeLanFallbackConnection(rawPayload) != null;
 
   List<String> get verificationCode =>
       List<String>.unmodifiable(_verificationCode);
 
   DateTime? get handshakeExpiresAt => _handshakeExpiresAt;
+
+  int get handshakeRemainingSeconds {
+    final expiresAt = _handshakeExpiresAt;
+    if (expiresAt == null || _handshakeService.isExpired(expiresAt)) {
+      return 0;
+    }
+    return expiresAt.difference(_handshakeService.now()).inSeconds + 1;
+  }
 
   bool get isHandshakeCoolingDown =>
       _handshakeService.isCoolingDown(_handshakeCooldownUntil);
@@ -157,7 +205,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool get canSendFiles =>
       _role == NearbyTransferRole.send &&
-      (_phase == NearbyTransferSessionPhase.connected);
+      (_phase == NearbyTransferSessionPhase.connected) &&
+      !_isPreparingOutgoingSelection;
+
+  bool get supportsDirectoryPicking => _filePicker.supportsDirectoryPicking;
 
   bool get canSendDirectory =>
       canSendFiles && _filePicker.supportsDirectoryPicking;
@@ -235,6 +286,42 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   bool get hasIncomingSelection => _selectedIncomingFileIds.isNotEmpty;
 
+  int get selectedIncomingFileCount => _selectedIncomingFileIds.length;
+
+  int get selectedIncomingTotalBytes {
+    final offer = _incomingOffer;
+    if (offer == null || _selectedIncomingFileIds.isEmpty) {
+      return 0;
+    }
+    var sum = 0;
+    for (final file in offer.files) {
+      if (_selectedIncomingFileIds.contains(file.id)) {
+        sum += file.sizeBytes;
+      }
+    }
+    return sum;
+  }
+
+  List<String> get lastReceivedPaths =>
+      List<String>.unmodifiable(_lastReceivedPaths);
+
+  void selectAllIncomingFiles() {
+    final offer = _incomingOffer;
+    if (offer == null) {
+      return;
+    }
+    _selectedIncomingFileIds = offer.files.map((file) => file.id).toSet();
+    notifyListeners();
+  }
+
+  void clearIncomingSelection() {
+    if (_selectedIncomingFileIds.isEmpty) {
+      return;
+    }
+    _selectedIncomingFileIds = <String>{};
+    notifyListeners();
+  }
+
   bool isIncomingFileSelected(String fileId) =>
       _selectedIncomingFileIds.contains(fileId);
 
@@ -269,6 +356,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     return (_transferCompletedBytes / _transferTotalBytes).clamp(0.0, 1.0);
   }
 
+  int get transferCompletedBytes => _transferCompletedBytes;
+
+  int get transferTotalBytes => _transferTotalBytes;
+
   String get modeLabel => switch (_mode) {
     NearbyTransferMode.wifiDirect => 'Wi-Fi Direct',
     NearbyTransferMode.lanFallback => 'Локальная сеть',
@@ -292,7 +383,11 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _availabilityStore.advertiseLanFallback(hostingInfo.port);
       final host = _localIpProvider();
       if (host == null || host.trim().isEmpty) {
-        _setBanner('Не удалось определить локальный IP для QR.', isError: true);
+        _setBanner(
+          'Не удалось определить локальный IP для QR.',
+          code: NearbyTransferBannerCode.noLocalIp,
+          isError: true,
+        );
       } else {
         final payload = NearbyTransferQrPayload(
           deviceId: _localDeviceIdProvider(),
@@ -309,6 +404,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       if (!hostingInfo.supportsVisibleCandidatePairing) {
         _setBanner(
           'Подключение по списку устройств может быть недоступно. Используйте QR.',
+          code: NearbyTransferBannerCode.portFallback,
         );
       }
       await refreshCandidates();
@@ -369,6 +465,8 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     } catch (error) {
       await _resetFailedConnectAttempt(
         'Не удалось подключиться к устройству: $error',
+        code: NearbyTransferBannerCode.connectFailed,
+        args: <String, String>{'error': '$error'},
       );
     }
   }
@@ -376,12 +474,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   Future<void> handleQrPayloadText(String rawPayload) async {
     final connection = _qrCodec.decodeLanFallbackConnection(rawPayload);
     if (connection == null) {
-      await _resetFailedConnectAttempt('QR-код недействителен или устарел.');
+      await _resetFailedConnectAttempt(
+        'QR-код недействителен или устарел.',
+        code: NearbyTransferBannerCode.qrInvalid,
+      );
       return;
     }
     final adapter = _activeAdapter;
     if (adapter == null) {
-      await _resetFailedConnectAttempt('Приём рядом не готов к подключению.');
+      await _resetFailedConnectAttempt(
+        'Приём рядом не готов к подключению.',
+        code: NearbyTransferBannerCode.receiveNotReady,
+      );
       return;
     }
     if (_phase == NearbyTransferSessionPhase.connecting ||
@@ -404,6 +508,8 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     } catch (error) {
       await _resetFailedConnectAttempt(
         'Не удалось подключиться по QR: $error',
+        code: NearbyTransferBannerCode.connectFailed,
+        args: <String, String>{'error': '$error'},
       );
     }
   }
@@ -421,19 +527,28 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (_handshakeService.isExpired(_handshakeExpiresAt)) {
       await _invalidateHandshakeSession(
         'Код подтверждения истёк. Подключитесь заново.',
+        code: NearbyTransferBannerCode.verifyCodeExpired,
       );
       return;
     }
     if (isHandshakeCoolingDown) {
       _setBanner(
         'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+        code: NearbyTransferBannerCode.verifyCodeCooldown,
+        args: <String, String>{
+          'seconds': '$handshakeCooldownRemainingSeconds',
+        },
         isError: true,
       );
       notifyListeners();
       return;
     }
     if (sanitizedCode.length != 2) {
-      _setBanner('Введите двухзначный код.', isError: true);
+      _setBanner(
+        'Введите двухзначный код.',
+        code: NearbyTransferBannerCode.verifyCodeFormatError,
+        isError: true,
+      );
       notifyListeners();
       return;
     }
@@ -449,10 +564,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
         _handshakeCooldownUntil = _handshakeService.createCooldownUntil();
         _setBanner(
           'Слишком много попыток. Подождите $handshakeCooldownRemainingSeconds сек.',
+          code: NearbyTransferBannerCode.verifyCodeCooldown,
+          args: <String, String>{
+            'seconds': '$handshakeCooldownRemainingSeconds',
+          },
           isError: true,
         );
       } else {
-        _setBanner('Код не совпал. Попробуйте ещё раз.', isError: true);
+        _setBanner(
+          'Код не совпал. Попробуйте ещё раз.',
+          code: NearbyTransferBannerCode.verifyCodeInvalid,
+          isError: true,
+        );
       }
       notifyListeners();
       return;
@@ -461,7 +584,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     await _activeAdapter?.sendHandshakeAccepted();
     _phase = NearbyTransferSessionPhase.connected;
     _clearHandshakeValidationState();
-    _setBanner('Соединение подтверждено.');
+    _setBanner(
+      'Соединение подтверждено.',
+      code: NearbyTransferBannerCode.connected,
+    );
     notifyListeners();
   }
 
@@ -550,6 +676,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     } on TimeoutException {
       _setBanner(
         'Предпросмотр пока недоступен. Попробуйте ещё раз.',
+        code: NearbyTransferBannerCode.previewUnavailable,
         isError: true,
       );
       return null;
@@ -564,11 +691,16 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   Future<void> downloadSelectedIncomingFiles() async {
     final offer = _incomingOffer;
-    if (offer == null || _selectedIncomingFileIds.isEmpty) {
+    if (offer == null ||
+        _selectedIncomingFileIds.isEmpty ||
+        _phase == NearbyTransferSessionPhase.transferring) {
       return;
     }
     _phase = NearbyTransferSessionPhase.transferring;
-    _setBanner('Готовим получение выбранных файлов...');
+    _setBanner(
+      'Готовим получение выбранных файлов...',
+      code: NearbyTransferBannerCode.preparingReceive,
+    );
     notifyListeners();
     await _activeAdapter?.requestIncomingSelectionDownload(
       requestId: offer.requestId,
@@ -595,12 +727,20 @@ class NearbyTransferSessionStore extends ChangeNotifier {
 
   Future<void> resetForEntrySelection() async {
     await _activeAdapter?.disconnect();
+    final sub = _transportSubscription;
+    _transportSubscription = null;
+    _subscribedAdapter = null;
+    if (sub != null) {
+      unawaited(sub.cancel());
+    }
     _clearConnectionState();
     _candidateDevices = const <NearbyTransferCandidateDevice>[];
     _mode = null;
     _role = null;
     _phase = NearbyTransferSessionPhase.idle;
     _bannerMessage = null;
+    _bannerCode = null;
+    _bannerArgs = const <String, String>{};
     _bannerIsError = false;
     _qrPayloadText = null;
     _resetSessionIdentity();
@@ -610,6 +750,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   Future<void> _prepareRole(NearbyTransferRole nextRole) async {
     _role = nextRole;
     _clearConnectionState();
+    _phase = NearbyTransferSessionPhase.idle;
     final capabilities = _capabilityService.snapshot();
     _capabilities = capabilities;
     _mode = _modeResolver.resolve(capabilities);
@@ -617,6 +758,9 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _mode == NearbyTransferMode.wifiDirect
           ? 'Используется Wi-Fi Direct.'
           : 'Wi-Fi Direct недоступен. Используется локальная сеть.',
+      code: _mode == NearbyTransferMode.wifiDirect
+          ? NearbyTransferBannerCode.usingWifiDirect
+          : NearbyTransferBannerCode.usingLanFallback,
     );
     await _subscribeToActiveAdapter();
   }
@@ -628,8 +772,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   };
 
   Future<void> _subscribeToActiveAdapter() async {
-    await _transportSubscription?.cancel();
-    _transportSubscription = _activeAdapter?.events.listen(
+    final adapter = _activeAdapter;
+    if (identical(adapter, _subscribedAdapter) &&
+        _transportSubscription != null) {
+      return;
+    }
+    final previous = _transportSubscription;
+    _transportSubscription = null;
+    _subscribedAdapter = adapter;
+    if (previous != null) {
+      unawaited(previous.cancel());
+    }
+    _transportSubscription = adapter?.events.listen(
       (event) => unawaited(_handleTransportEvent(event)),
     );
   }
@@ -640,7 +794,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _outgoingPreparationCompletedItemCount = 0;
       _outgoingPreparationTotalItemCount = event.totalItemCount;
       _outgoingPreparationCurrentPath = null;
-      _setBanner('Готовим список файлов для отправки...');
+      _setBanner(
+        'Готовим список файлов для отправки...',
+        code: NearbyTransferBannerCode.preparingList,
+      );
       notifyListeners();
       return;
     }
@@ -649,7 +806,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _outgoingPreparationCompletedItemCount = event.completedItemCount;
       _outgoingPreparationTotalItemCount = event.totalItemCount;
       _outgoingPreparationCurrentPath = event.currentRelativePath;
-      _setBanner('Подготавливаем файлы для отправки...');
+      _setBanner(
+        'Подготавливаем файлы для отправки...',
+        code: NearbyTransferBannerCode.preparingFiles,
+      );
       notifyListeners();
       return;
     }
@@ -660,6 +820,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _outgoingPreparationCurrentPath = null;
       _setBanner(
         'Предложение отправлено. Ждём выбор файлов на втором устройстве.',
+        code: NearbyTransferBannerCode.offerSent,
       );
       notifyListeners();
       return;
@@ -674,7 +835,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _startHandshakeStateTimer();
       if (_role == NearbyTransferRole.send) {
         await _activeAdapter?.sendHandshakeOffer(_verificationCode);
-        _setBanner('Подтвердите цифровой код на втором устройстве.');
+        _setBanner(
+          'Подтвердите цифровой код на втором устройстве.',
+          code: NearbyTransferBannerCode.confirmOnPeer,
+        );
       }
       notifyListeners();
       return;
@@ -689,13 +853,19 @@ class NearbyTransferSessionStore extends ChangeNotifier {
         _autoAcceptPendingHandshake = false;
         _phase = NearbyTransferSessionPhase.connected;
         _clearHandshakeValidationState();
-        _setBanner('Соединение подтверждено.');
+        _setBanner(
+          'Соединение подтверждено.',
+          code: NearbyTransferBannerCode.connected,
+        );
         notifyListeners();
         await _activeAdapter?.sendHandshakeAccepted();
         return;
       }
       _phase = NearbyTransferSessionPhase.awaitingHandshake;
-      _setBanner('Выберите совпадающий цифровой код.');
+      _setBanner(
+        'Введите совпадающий цифровой код.',
+        code: NearbyTransferBannerCode.enterCode,
+      );
       notifyListeners();
       return;
     }
@@ -703,18 +873,29 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _autoAcceptPendingHandshake = false;
       _phase = NearbyTransferSessionPhase.connected;
       _clearHandshakeValidationState();
-      _setBanner('Соединение подтверждено.');
+      _setBanner(
+        'Соединение подтверждено.',
+        code: NearbyTransferBannerCode.connected,
+      );
       notifyListeners();
       return;
     }
     if (event is NearbyTransferIncomingSelectionOfferedEvent) {
+      if (_phase != NearbyTransferSessionPhase.connected &&
+          _phase != NearbyTransferSessionPhase.transferring) {
+        return;
+      }
       _incomingOffer = event;
+      _lastReceivedPaths = const <String>[];
       _rebuildIncomingOfferIndex(event.roots);
       _selectedIncomingFileIds = event.files.map((file) => file.id).toSet();
       _currentIncomingDirectoryId = null;
       _activeIncomingPreview = null;
       _phase = NearbyTransferSessionPhase.connected;
-      _setBanner('Выберите файлы для загрузки.');
+      _setBanner(
+        'Выберите файлы для загрузки.',
+        code: NearbyTransferBannerCode.chooseToDownload,
+      );
       notifyListeners();
       return;
     }
@@ -738,12 +919,18 @@ class NearbyTransferSessionStore extends ChangeNotifier {
       _transferTotalBytes = 0;
       if (event.direction == NearbyTransferProgressDirection.sending) {
         _hasCompletedOutgoingTransfer = true;
-        _setBanner('Получатель может выбрать файлы для загрузки.');
+        _setBanner(
+          'Получатель может выбрать файлы для загрузки.',
+          code: NearbyTransferBannerCode.peerCanSelect,
+        );
       } else {
-        _incomingOffer = null;
-        _selectedIncomingFileIds = <String>{};
+        _lastReceivedPaths = List<String>.unmodifiable(event.savedPaths);
         _activeIncomingPreview = null;
-        _setBanner(event.message);
+        _setBanner(
+          event.message,
+          code: NearbyTransferBannerCode.receiveCompleted,
+          args: <String, String>{'count': '${event.savedPaths.length}'},
+        );
       }
       notifyListeners();
       return;
@@ -751,19 +938,49 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     if (event is NearbyTransferDisconnectedEvent) {
       _clearConnectionState();
       _phase = NearbyTransferSessionPhase.idle;
-      _setBanner(event.message ?? 'Соединение закрыто.');
+      _setBanner(
+        event.message ?? 'Соединение закрыто.',
+        code: NearbyTransferBannerCode.disconnected,
+      );
       notifyListeners();
       return;
     }
     if (event is NearbyTransferErrorEvent) {
-      _setBanner(event.message, isError: true);
+      final mappedCode = _classifyErrorBannerCode(event.message);
+      final mappedArgs = mappedCode == NearbyTransferBannerCode.connectFailed
+          ? <String, String>{'error': event.message}
+          : const <String, String>{};
+      _setBanner(
+        event.message,
+        code: mappedCode,
+        args: mappedArgs,
+        isError: true,
+      );
       if (_phase == NearbyTransferSessionPhase.connecting ||
           _phase == NearbyTransferSessionPhase.awaitingHandshake) {
-        await _resetFailedConnectAttempt(event.message);
+        await _resetFailedConnectAttempt(
+          event.message,
+          code: mappedCode,
+          args: mappedArgs,
+        );
         return;
       }
       notifyListeners();
     }
+  }
+
+  static NearbyTransferBannerCode _classifyErrorBannerCode(String message) {
+    final normalized = message.trim().toLowerCase();
+    if (normalized == 'busy') {
+      return NearbyTransferBannerCode.busy;
+    }
+    if (normalized.contains('отклон') ||
+        normalized.contains('reject') ||
+        normalized.contains('mismatch') ||
+        normalized.contains('invalid session')) {
+      return NearbyTransferBannerCode.rejected;
+    }
+    return NearbyTransferBannerCode.connectFailed;
   }
 
   Future<void> _sendSelection(NearbyTransferSelection selection) async {
@@ -782,7 +999,10 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _outgoingPreparationTotalItemCount = selection.entries.length;
     _outgoingPreparationCurrentPath = null;
     _phase = NearbyTransferSessionPhase.connected;
-    _setBanner('Готовим список файлов для отправки...');
+    _setBanner(
+      'Готовим список файлов для отправки...',
+      code: NearbyTransferBannerCode.preparingList,
+    );
     notifyListeners();
     await _activeAdapter?.sendSelection(selection);
   }
@@ -811,6 +1031,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
   void _clearConnectionState() {
     _availabilityStore.clear();
     _peer = null;
+    _qrPayloadText = null;
     _clearHandshakeValidationState();
     _autoAcceptPendingHandshake = false;
     _transferCompletedBytes = 0;
@@ -821,6 +1042,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     _incomingParentById = <String, String?>{};
     _currentIncomingDirectoryId = null;
     _activeIncomingPreview = null;
+    _lastReceivedPaths = const <String>[];
     _previewingFileId = null;
     for (final completer in _pendingPreviewRequests.values) {
       if (!completer.isCompleted) {
@@ -861,6 +1083,7 @@ class NearbyTransferSessionStore extends ChangeNotifier {
         unawaited(
           _invalidateHandshakeSession(
             'Код подтверждения истёк. Подключитесь заново.',
+            code: NearbyTransferBannerCode.verifyCodeExpired,
           ),
         );
         return;
@@ -873,19 +1096,26 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     });
   }
 
-  Future<void> _invalidateHandshakeSession(String message) async {
+  Future<void> _invalidateHandshakeSession(
+    String message, {
+    NearbyTransferBannerCode? code,
+  }) async {
     await _activeAdapter?.disconnect();
     _clearConnectionState();
     _phase = NearbyTransferSessionPhase.idle;
-    _setBanner(message, isError: true);
+    _setBanner(message, code: code, isError: true);
     notifyListeners();
   }
 
-  Future<void> _resetFailedConnectAttempt(String message) async {
+  Future<void> _resetFailedConnectAttempt(
+    String message, {
+    NearbyTransferBannerCode? code,
+    Map<String, String> args = const <String, String>{},
+  }) async {
     await _activeAdapter?.disconnect();
     _clearConnectionState();
     _phase = NearbyTransferSessionPhase.idle;
-    _setBanner(message, isError: true);
+    _setBanner(message, code: code, args: args, isError: true);
     if (_role == NearbyTransferRole.receive &&
         _mode == NearbyTransferMode.lanFallback) {
       await refreshCandidates();
@@ -894,8 +1124,15 @@ class NearbyTransferSessionStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _setBanner(String? message, {bool isError = false}) {
+  void _setBanner(
+    String? message, {
+    NearbyTransferBannerCode? code,
+    Map<String, String> args = const <String, String>{},
+    bool isError = false,
+  }) {
     _bannerMessage = message;
+    _bannerCode = code;
+    _bannerArgs = args;
     _bannerIsError = isError;
   }
 

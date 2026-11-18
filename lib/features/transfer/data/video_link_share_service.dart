@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -32,9 +33,14 @@ class VideoLinkShareService {
   static const String _authPath = '/auth';
   static const String _streamPath = '/stream';
   static const String _authCookieName = 'landa_video_token';
+  static const int maxAuthBodyBytes = 8 * 1024;
+  static const int maxFailedAuthAttempts = 5;
+  static const Duration authLockoutDuration = Duration(seconds: 30);
 
   HttpServer? _server;
   _ActiveVideoShare? _activeShare;
+  final Map<String, _AuthAttemptWindow> _failedAuthByIp =
+      <String, _AuthAttemptWindow>{};
 
   VideoLinkShareSession? get activeSession => _activeShare?.session;
 
@@ -56,6 +62,10 @@ class VideoLinkShareService {
       throw ArgumentError('port must be between 0 and 65535.');
     }
 
+    if (await FileSystemEntity.type(normalizedPath, followLinks: false) !=
+        FileSystemEntityType.file) {
+      throw ArgumentError('Path is not a regular file: $normalizedPath');
+    }
     final file = File(normalizedPath);
     if (!await file.exists()) {
       throw ArgumentError('File does not exist: $normalizedPath');
@@ -81,17 +91,21 @@ class VideoLinkShareService {
       fileName: normalizedDisplayName,
       updatedAt: DateTime.now(),
     );
+    final salt = _buildRandomHex(16);
+    _failedAuthByIp.clear();
     _activeShare = _ActiveVideoShare(
       session: session,
       contentType: _videoContentType(normalizedPath),
-      passwordHash: _hashPassword(normalizedPassword),
-      authToken: _buildAuthToken(normalizedPath),
+      passwordSalt: salt,
+      passwordHash: _hashPassword(normalizedPassword, salt: salt),
+      authToken: _buildRandomHex(32),
     );
     return session;
   }
 
   Future<void> stop() async {
     _activeShare = null;
+    _failedAuthByIp.clear();
     final server = _server;
     _server = null;
     if (server != null) {
@@ -187,12 +201,43 @@ class VideoLinkShareService {
       return;
     }
 
-    final fields = await _readFormFields(request);
+    final remoteIp = request.connectionInfo?.remoteAddress.address ?? 'unknown';
+    final now = DateTime.now();
+    final attemptWindow = _failedAuthByIp[remoteIp];
+    if (attemptWindow != null && attemptWindow.isLockedAt(now)) {
+      await _writePlainResponse(
+        request.response,
+        statusCode: HttpStatus.tooManyRequests,
+        body: 'Too many failed password attempts. Please wait and try again.',
+      );
+      return;
+    }
+
+    Map<String, String> fields;
+    try {
+      fields = await _readFormFields(request);
+    } on _PayloadTooLargeException {
+      await _writePlainResponse(
+        request.response,
+        statusCode: HttpStatus.requestEntityTooLarge,
+        body: 'Request payload is too large.',
+      );
+      return;
+    }
+
     final password = fields['password'] ?? '';
-    if (_hashPassword(password) != activeShare.passwordHash) {
+    final candidateHash = _hashPassword(password, salt: activeShare.passwordSalt);
+    if (!_constantTimeEquals(candidateHash, activeShare.passwordHash)) {
+      final updatedWindow = (attemptWindow ?? _AuthAttemptWindow()).recordFailure(
+        now,
+        maxFailures: maxFailedAuthAttempts,
+        lockoutDuration: authLockoutDuration,
+      );
+      _failedAuthByIp[remoteIp] = updatedWindow;
       request.response.cookies.add(
         Cookie(_authCookieName, '')
           ..httpOnly = true
+          ..sameSite = SameSite.lax
           ..path = '/'
           ..expires = DateTime.fromMillisecondsSinceEpoch(0),
       );
@@ -203,9 +248,11 @@ class VideoLinkShareService {
       return;
     }
 
+    _failedAuthByIp.remove(remoteIp);
     request.response.cookies.add(
       Cookie(_authCookieName, activeShare.authToken)
         ..httpOnly = true
+        ..sameSite = SameSite.lax
         ..path = '/',
     );
     await request.response.redirect(
@@ -236,6 +283,18 @@ class VideoLinkShareService {
       return;
     }
 
+    if (await FileSystemEntity.type(
+          activeShare.session.filePath,
+          followLinks: false,
+        ) !=
+        FileSystemEntityType.file) {
+      await _writePlainResponse(
+        request.response,
+        statusCode: HttpStatus.notFound,
+        body: 'Shared file is unavailable.',
+      );
+      return;
+    }
     final file = File(activeShare.session.filePath);
     if (!await file.exists()) {
       await _writePlainResponse(
@@ -308,7 +367,7 @@ class VideoLinkShareService {
   bool _isAuthorized(HttpRequest request, _ActiveVideoShare activeShare) {
     for (final cookie in request.cookies) {
       if (cookie.name == _authCookieName &&
-          cookie.value == activeShare.authToken) {
+          _constantTimeEquals(cookie.value, activeShare.authToken)) {
         return true;
       }
     }
@@ -316,7 +375,17 @@ class VideoLinkShareService {
   }
 
   Future<Map<String, String>> _readFormFields(HttpRequest request) async {
-    final body = await utf8.decoder.bind(request).join();
+    if (request.contentLength > maxAuthBodyBytes) {
+      throw const _PayloadTooLargeException();
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in request) {
+      if (builder.length + chunk.length > maxAuthBodyBytes) {
+        throw const _PayloadTooLargeException();
+      }
+      builder.add(chunk);
+    }
+    final body = utf8.decode(builder.takeBytes(), allowMalformed: true);
     if (body.trim().isEmpty) {
       return const <String, String>{};
     }
@@ -454,14 +523,30 @@ class VideoLinkShareService {
     }
   }
 
-  String _hashPassword(String value) {
-    return sha256.convert(utf8.encode(value)).toString();
+  String _hashPassword(String value, {required String salt}) {
+    return sha256.convert(utf8.encode('$salt:$value')).toString();
   }
 
-  String _buildAuthToken(String filePath) {
-    final random = Random.secure().nextInt(1 << 31);
-    final raw = '$filePath|${DateTime.now().microsecondsSinceEpoch}|$random';
-    return sha256.convert(utf8.encode(raw)).toString();
+  String _buildRandomHex(int byteCount) {
+    final random = Random.secure();
+    final buffer = StringBuffer();
+    for (var i = 0; i < byteCount; i++) {
+      buffer.write(random.nextInt(256).toRadixString(16).padLeft(2, '0'));
+    }
+    return buffer.toString();
+  }
+
+  bool _constantTimeEquals(String a, String b) {
+    final aBytes = utf8.encode(a);
+    final bBytes = utf8.encode(b);
+    if (aBytes.length != bBytes.length) {
+      return false;
+    }
+    var diff = 0;
+    for (var i = 0; i < aBytes.length; i++) {
+      diff |= aBytes[i] ^ bBytes[i];
+    }
+    return diff == 0;
   }
 
   String _escapeHtml(String input) {
@@ -489,14 +574,48 @@ class _ActiveVideoShare {
   const _ActiveVideoShare({
     required this.session,
     required this.contentType,
+    required this.passwordSalt,
     required this.passwordHash,
     required this.authToken,
   });
 
   final VideoLinkShareSession session;
   final String contentType;
+  final String passwordSalt;
   final String passwordHash;
   final String authToken;
+}
+
+class _PayloadTooLargeException implements Exception {
+  const _PayloadTooLargeException();
+}
+
+class _AuthAttemptWindow {
+  const _AuthAttemptWindow({this.failures = 0, this.lockedUntil});
+
+  final int failures;
+  final DateTime? lockedUntil;
+
+  bool isLockedAt(DateTime now) =>
+      lockedUntil != null && now.isBefore(lockedUntil!);
+
+  _AuthAttemptWindow recordFailure(
+    DateTime now, {
+    required int maxFailures,
+    required Duration lockoutDuration,
+  }) {
+    final activeFailures = lockedUntil != null && !now.isBefore(lockedUntil!)
+        ? 0
+        : failures;
+    final nextFailures = activeFailures + 1;
+    if (nextFailures >= maxFailures) {
+      return _AuthAttemptWindow(
+        failures: nextFailures,
+        lockedUntil: now.add(lockoutDuration),
+      );
+    }
+    return _AuthAttemptWindow(failures: nextFailures);
+  }
 }
 
 class _ByteRange {

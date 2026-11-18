@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:easy_localization/easy_localization.dart';
@@ -20,9 +21,18 @@ class NearbyTransferRemotePreviewDialog extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final dialogWidth = math.min(520.0, math.max(240.0, screenWidth - 48.0));
     return AlertDialog(
-      title: Text(filePathLabel),
-      content: SizedBox(width: 520, child: _PreviewBody(preview: preview)),
+      title: Text(
+        filePathLabel,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
+      content: SizedBox(
+        width: dialogWidth,
+        child: _PreviewBody(preview: preview),
+      ),
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -56,7 +66,9 @@ class _PreviewBody extends StatelessWidget {
                 ),
                 child: Text(
                   'nearby_transfer.preview_truncated'.tr(),
-                  style: TextStyle(color: AppColors.textSecondary),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
                 ),
               ),
             if (preview.isTruncated) const SizedBox(height: AppSpacing.sm),
@@ -66,7 +78,7 @@ class _PreviewBody extends StatelessWidget {
                 child: SelectableText(
                   preview.textContent ?? '',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: 'JetBrains Mono',
                     height: 1.4,
                   ),
                 ),
@@ -79,14 +91,17 @@ class _PreviewBody extends StatelessWidget {
         if (bytes == null || bytes.isEmpty) {
           return Text('nearby_transfer.preview_unavailable'.tr());
         }
-        return ClipRRect(
-          borderRadius: BorderRadius.circular(AppRadius.lg),
-          child: Image.memory(
-            Uint8List.fromList(bytes),
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return Text('nearby_transfer.preview_image_failed'.tr());
-            },
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 360),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.lg),
+            child: Image.memory(
+              Uint8List.fromList(bytes),
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                return Text('nearby_transfer.preview_image_failed'.tr());
+              },
+            ),
           ),
         );
       case NearbyTransferRemotePreviewKind.none:

@@ -634,6 +634,8 @@ void main() {
         ),
       );
       await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
+      await Future<void>.delayed(Duration.zero);
       lanAdapter.emit(
         const NearbyTransferIncomingSelectionOfferedEvent(
           requestId: 'offer-1',
@@ -694,6 +696,8 @@ void main() {
           sessionId: 'session-1',
         ),
       );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
       await Future<void>.delayed(Duration.zero);
       lanAdapter.emit(
         const NearbyTransferIncomingSelectionOfferedEvent(
@@ -792,6 +796,8 @@ void main() {
           sessionId: 'session-1',
         ),
       );
+      await Future<void>.delayed(Duration.zero);
+      lanAdapter.emit(const NearbyTransferHandshakeAcceptedEvent());
       await Future<void>.delayed(Duration.zero);
       lanAdapter.emit(
         const NearbyTransferIncomingSelectionOfferedEvent(

@@ -11,6 +11,7 @@ Future<bool> showDiscoveryAddShareSheet({
 }) async {
   final action = await showModalBottomSheet<_DiscoveryAddShareAction>(
     context: context,
+    isScrollControlled: true,
     builder: (context) {
       return SafeArea(
         child: Wrap(

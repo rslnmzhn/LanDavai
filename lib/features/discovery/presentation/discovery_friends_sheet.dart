@@ -108,10 +108,15 @@ class DiscoveryFriendsSheet extends StatelessWidget {
                                           ? null
                                           : () {
                                               unawaited(
-                                                controller
-                                                    .removeDeviceFromFriends(
-                                                      friend,
-                                                    ),
+                                                _confirmAndRemoveFriend(
+                                                  context: context,
+                                                  friendName:
+                                                      friend.displayName,
+                                                  onConfirm: () => controller
+                                                      .removeDeviceFromFriends(
+                                                        friend,
+                                                      ),
+                                                ),
                                               );
                                             },
                                       icon: const Icon(
@@ -203,6 +208,40 @@ class DiscoveryFriendsSheet extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _confirmAndRemoveFriend({
+    required BuildContext context,
+    required String friendName,
+    required Future<void> Function() onConfirm,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text('discovery.friends_sheet.remove_confirm_title'.tr()),
+          content: Text(
+            'discovery.friends_sheet.remove_confirm_message'.tr(
+              namedArgs: <String, String>{'name': friendName},
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text('common.cancel'.tr()),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text('common.remove'.tr()),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed == true) {
+      await onConfirm();
+    }
   }
 
   String _formatTime(DateTime time) {

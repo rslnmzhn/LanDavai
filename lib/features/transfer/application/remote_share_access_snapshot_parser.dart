@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
@@ -7,7 +8,12 @@ import '../../discovery/data/lan_packet_codec_models.dart';
 import 'remote_share_access_session_models.dart';
 
 class RemoteShareAccessSnapshotParser {
-  const RemoteShareAccessSnapshotParser();
+  const RemoteShareAccessSnapshotParser({
+    this.maxDecompressedBytes = defaultMaxDecompressedBytes,
+  });
+
+  static const int defaultMaxDecompressedBytes = 32 * 1024 * 1024;
+  final int maxDecompressedBytes;
 
   Future<RemoteShareAccessSnapshotPayload> parse(
     List<String> savedPaths,
@@ -19,10 +25,7 @@ class RemoteShareAccessSnapshotParser {
         if (!await file.exists()) {
           continue;
         }
-        final rawBytes = await file.readAsBytes();
-        final decodedBytes = p.extension(path).toLowerCase() == '.gz'
-            ? gzip.decode(rawBytes)
-            : rawBytes;
+        final decodedBytes = await _readBoundedSnapshotBytes(file, path);
         final decoded = jsonDecode(utf8.decode(decodedBytes));
         if (decoded is! Map<String, dynamic>) {
           continue;
@@ -59,5 +62,20 @@ class RemoteShareAccessSnapshotParser {
       'Не удалось прочитать snapshot общего доступа.'
       '${lastError == null ? '' : ' $lastError'}',
     );
+  }
+
+  Future<List<int>> _readBoundedSnapshotBytes(File file, String path) async {
+    final isGzip = p.extension(path).toLowerCase() == '.gz';
+    final stream = isGzip ? file.openRead().transform(gzip.decoder) : file.openRead();
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in stream) {
+      if (builder.length + chunk.length > maxDecompressedBytes) {
+        throw FormatException(
+          'Remote share snapshot exceeds safe decompressed limit ($maxDecompressedBytes bytes).',
+        );
+      }
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
   }
 }

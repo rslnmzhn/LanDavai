@@ -315,13 +315,8 @@ class AppSettingsDesktopTab extends StatelessWidget {
       ),
       children: [
         AppSettingsSectionCard(
-          title: 'settings.window_section_title'.tr(),
-          description: 'settings.window_section_description'.tr(),
-          children: const [],
-        ),
-        const SizedBox(height: AppSpacing.md),
-        AppSettingsSectionCard(
           title: 'settings.interface_title'.tr(),
+          description: 'settings.window_section_description'.tr(),
           children: [
             SwitchListTile.adaptive(
               value: settings.isLeftHandedMode,
@@ -574,20 +569,17 @@ class IntegerSettingField extends StatelessWidget {
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            key: buttonKey,
-            onPressed: onSave,
-            child: Text('common.save'.tr()),
-          ),
+        FilledButton(
+          key: buttonKey,
+          onPressed: onSave,
+          child: Text('common.save'.tr()),
         ),
       ],
     );
   }
 }
 
-class TextSettingField extends StatelessWidget {
+class TextSettingField extends StatefulWidget {
   const TextSettingField({
     required this.controller,
     required this.label,
@@ -602,29 +594,58 @@ class TextSettingField extends StatelessWidget {
   final bool obscureText;
 
   @override
+  State<TextSettingField> createState() => _TextSettingFieldState();
+}
+
+class _TextSettingFieldState extends State<TextSettingField> {
+  late bool _isObscured = widget.obscureText;
+
+  @override
+  void didUpdateWidget(covariant TextSettingField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.obscureText != widget.obscureText) {
+      _isObscured = widget.obscureText;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Expanded(
           child: TextField(
-            controller: controller,
-            obscureText: obscureText,
+            controller: widget.controller,
+            obscureText: widget.obscureText && _isObscured,
             decoration: InputDecoration(
-              labelText: label,
+              labelText: widget.label,
               border: const OutlineInputBorder(),
               isDense: true,
+              suffixIcon: widget.obscureText
+                  ? IconButton(
+                      tooltip: _isObscured
+                          ? 'settings.show_password'.tr()
+                          : 'settings.hide_password'.tr(),
+                      onPressed: () {
+                        setState(() {
+                          _isObscured = !_isObscured;
+                        });
+                      },
+                      icon: Icon(
+                        _isObscured
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
+                    )
+                  : null,
             ),
-            onSubmitted: (_) => onSave(),
+            onSubmitted: (_) => widget.onSave(),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
-        SizedBox(
-          height: 48,
-          child: FilledButton(
-            onPressed: onSave,
-            child: Text('common.save'.tr()),
-          ),
+        FilledButton(
+          onPressed: widget.onSave,
+          child: Text('common.save'.tr()),
         ),
       ],
     );

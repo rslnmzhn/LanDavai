@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:easy_localization/easy_localization.dart';
 
@@ -57,95 +59,112 @@ class DiscoveryDeviceListSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: padding,
-      child: Column(
-        children: [
-          _NetworkSummaryCard(readModel: readModel, total: devices.length),
-          const SizedBox(height: AppSpacing.md),
-          if (errorMessage != null) ...[
-            _ErrorBanner(message: errorMessage!),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          if (incomingTransferRequestBoundary.incomingRequests.isNotEmpty) ...[
-            _IncomingTransferRequestsCard(
-              requests: incomingTransferRequestBoundary.incomingRequests,
-              onRespond: ({required requestId, required approved}) {
-                return incomingTransferRequestBoundary.respondToTransferRequest(
-                  requestId: requestId,
-                  approved: approved,
-                );
-              },
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          if (sharedDownloadBoundary
-              .incomingSharedDownloadRequests
-              .isNotEmpty) ...[
-            _IncomingSharedDownloadRequestsCard(
-              requests: sharedDownloadBoundary.incomingSharedDownloadRequests,
-              onRespond: ({required requestId, required approved}) {
-                return sharedDownloadBoundary
-                    .respondToIncomingSharedDownloadRequest(
-                      requestId: requestId,
-                      approved: approved,
-                    );
-              },
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          if (remoteShareAccessSessionBoundary.incomingRequests.isNotEmpty) ...[
-            _IncomingRemoteShareAccessRequestsCard(
-              requests: remoteShareAccessSessionBoundary.incomingRequests,
-              onRespond: ({required requestId, required approved}) {
-                return remoteShareAccessSessionBoundary
-                    .respondToIncomingRequest(
-                      requestId: requestId,
-                      approved: approved,
-                    );
-              },
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          if (outgoingTransferSendBoundary.isUploading ||
-              incomingTransferCompletionBoundary.isDownloading ||
-              transferCachePreparationBoundary.isPreparingSharedDownload ||
-              transferCachePreparationBoundary.isPreparingSharedUpload) ...[
-            _TransferProgressCard(
-              outgoingTransferSendBoundary: outgoingTransferSendBoundary,
-              incomingTransferCompletionBoundary:
-                  incomingTransferCompletionBoundary,
-              transferCachePreparationBoundary:
-                  transferCachePreparationBoundary,
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          if (isManualRefreshInProgress) ...[
-            const LinearProgressIndicator(
-              minHeight: 3,
-              color: AppColors.brandPrimary,
-              backgroundColor: AppColors.mutedBorder,
-            ),
-            const SizedBox(height: AppSpacing.sm),
-          ],
-          Expanded(
-            child: devices.isEmpty
-                ? _EmptyState(readModel: readModel, onRefresh: onRefresh)
-                : ListView.separated(
-                    itemCount: devices.length,
-                    separatorBuilder: (_, index) =>
-                        const SizedBox(height: AppSpacing.xs),
-                    itemBuilder: (_, index) => _DeviceTile(
-                      device: devices[index],
-                      selected:
-                          readModel.selectedDevice?.ip == devices[index].ip,
-                      onSelect: onSelectDeviceByIp,
-                      onOpenActionsMenu: onOpenDeviceActionsMenu,
-                    ),
-                  ),
+    final headerItems = <Widget>[
+      _NetworkSummaryCard(readModel: readModel, total: devices.length),
+      const SizedBox(height: AppSpacing.md),
+      if (errorMessage != null) ...[
+        _ErrorBanner(message: errorMessage!),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+      if (incomingTransferRequestBoundary.incomingRequests.isNotEmpty) ...[
+        _IncomingTransferRequestsCard(
+          requests: incomingTransferRequestBoundary.incomingRequests,
+          onRespond: ({required requestId, required approved}) {
+            return incomingTransferRequestBoundary.respondToTransferRequest(
+              requestId: requestId,
+              approved: approved,
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+      if (sharedDownloadBoundary.incomingSharedDownloadRequests.isNotEmpty) ...[
+        _IncomingSharedDownloadRequestsCard(
+          requests: sharedDownloadBoundary.incomingSharedDownloadRequests,
+          onRespond: ({required requestId, required approved}) {
+            return sharedDownloadBoundary.respondToIncomingSharedDownloadRequest(
+              requestId: requestId,
+              approved: approved,
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+      if (remoteShareAccessSessionBoundary.incomingRequests.isNotEmpty) ...[
+        _IncomingRemoteShareAccessRequestsCard(
+          requests: remoteShareAccessSessionBoundary.incomingRequests,
+          onRespond: ({required requestId, required approved}) {
+            return remoteShareAccessSessionBoundary.respondToIncomingRequest(
+              requestId: requestId,
+              approved: approved,
+            );
+          },
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+      if (outgoingTransferSendBoundary.isUploading ||
+          incomingTransferCompletionBoundary.isDownloading ||
+          transferCachePreparationBoundary.isPreparingSharedDownload ||
+          transferCachePreparationBoundary.isPreparingSharedUpload) ...[
+        _TransferProgressCard(
+          outgoingTransferSendBoundary: outgoingTransferSendBoundary,
+          incomingTransferCompletionBoundary:
+              incomingTransferCompletionBoundary,
+          transferCachePreparationBoundary: transferCachePreparationBoundary,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+      if (isManualRefreshInProgress) ...[
+        const LinearProgressIndicator(
+          minHeight: 3,
+          color: AppColors.brandPrimary,
+          backgroundColor: AppColors.mutedBorder,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+      ],
+    ];
+
+    final resolvedPadding = padding.resolve(Directionality.of(context));
+
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(
+            resolvedPadding.left,
+            resolvedPadding.top,
+            resolvedPadding.right,
+            devices.isEmpty ? 0 : resolvedPadding.bottom,
           ),
-        ],
-      ),
+          sliver: SliverList(
+            delegate: SliverChildListDelegate(<Widget>[
+              ...headerItems,
+              for (var index = 0; index < devices.length; index += 1) ...[
+                _DeviceTile(
+                  device: devices[index],
+                  selected: readModel.selectedDevice?.ip == devices[index].ip,
+                  onSelect: onSelectDeviceByIp,
+                  onOpenActionsMenu: onOpenDeviceActionsMenu,
+                ),
+                if (index != devices.length - 1)
+                  const SizedBox(height: AppSpacing.xs),
+              ],
+            ]),
+          ),
+        ),
+        if (devices.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                resolvedPadding.left,
+                0,
+                resolvedPadding.right,
+                resolvedPadding.bottom,
+              ),
+              child: _EmptyState(readModel: readModel, onRefresh: onRefresh),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -181,6 +200,8 @@ class _NetworkSummaryCard extends StatelessWidget {
                   Text(
                     readModel.localName,
                     style: Theme.of(context).textTheme.titleMedium,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
@@ -192,6 +213,8 @@ class _NetworkSummaryCard extends StatelessWidget {
                       },
                     ),
                     style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
                   const SizedBox(height: AppSpacing.xxs),
                   Text(
@@ -625,14 +648,15 @@ class _IncomingRemoteShareAccessRequestTile extends StatelessWidget {
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: AppSpacing.sm),
-          Row(
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
             children: [
               FilledButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
                 child: Text('common.send'.tr()),
               ),
-              const SizedBox(width: AppSpacing.sm),
               OutlinedButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: false),
@@ -692,14 +716,15 @@ class _IncomingTransferRequestTile extends StatelessWidget {
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: AppSpacing.sm),
-          Row(
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
             children: [
               FilledButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
                 child: Text('common.accept'.tr()),
               ),
-              const SizedBox(width: AppSpacing.sm),
               OutlinedButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: false),
@@ -774,14 +799,15 @@ class _IncomingSharedDownloadRequestTile extends StatelessWidget {
             ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: AppSpacing.sm),
-          Row(
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
             children: [
               FilledButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: true),
                 child: Text('common.send'.tr()),
               ),
-              const SizedBox(width: AppSpacing.sm),
               OutlinedButton(
                 onPressed: () =>
                     onRespond(requestId: request.requestId, approved: false),
@@ -866,17 +892,23 @@ class _DeviceTile extends StatelessWidget {
     };
     final subtitle = [
       device.ip,
-      if (device.macAddress != null) 'MAC ${device.macAddress}',
+      if (device.macAddress != null)
+        'discovery.device.mac_value'.tr(
+          namedArgs: <String, String>{'value': device.macAddress!},
+        ),
       if (device.operatingSystem != null && device.operatingSystem!.isNotEmpty)
-        'OS ${device.operatingSystem}',
+        'discovery.device.os_value'.tr(
+          namedArgs: <String, String>{'value': device.operatingSystem!},
+        ),
     ].join(' • ');
 
-    return Container(
-      decoration: BoxDecoration(
-        color: tileBackground,
+    return Material(
+      color: tileBackground,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: borderColor),
+        side: BorderSide(color: borderColor),
       ),
+      clipBehavior: Clip.antiAlias,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onLongPressStart: isDesktopPlatform
@@ -885,39 +917,86 @@ class _DeviceTile extends StatelessWidget {
         onSecondaryTapDown: isDesktopPlatform
             ? (details) => onOpenActionsMenu(device, details.globalPosition)
             : null,
-        child: ListTile(
-          minTileHeight: 56,
+        child: InkWell(
           onTap: () => onSelect(device.ip),
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md,
-            vertical: AppSpacing.xs,
-          ),
-          leading: Icon(iconData, color: iconColor),
-          title: Text(
-            device.displayName,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-          subtitle: Text(
-            subtitle,
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Tooltip(
-                message: device.isTrusted
-                    ? 'discovery.device.friend'.tr()
-                    : 'discovery.device.not_friend'.tr(),
-                child: Icon(
-                  device.isTrusted ? Icons.star : Icons.star_border,
-                  color: device.isTrusted
-                      ? AppColors.warning
-                      : AppColors.textSecondary,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.xs,
+              AppSpacing.sm,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.xxs),
+                  child: Icon(iconData, color: iconColor),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              _StatusChip(device: device, selected: selected),
-            ],
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        device.displayName,
+                        style: Theme.of(context).textTheme.titleMedium,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        subtitle,
+                        style: Theme.of(context).textTheme.bodySmall,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Wrap(
+                        spacing: AppSpacing.xs,
+                        runSpacing: AppSpacing.xxs,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Tooltip(
+                            message: device.isTrusted
+                                ? 'discovery.device.friend'.tr()
+                                : 'discovery.device.not_friend'.tr(),
+                            child: Icon(
+                              device.isTrusted ? Icons.star : Icons.star_border,
+                              size: 18,
+                              color: device.isTrusted
+                                  ? AppColors.warning
+                                  : AppColors.textSecondary,
+                            ),
+                          ),
+                          _StatusChip(device: device, selected: selected),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Builder(
+                  builder: (buttonContext) {
+                    return IconButton(
+                      tooltip: 'discovery.device.actions_tooltip'.tr(),
+                      visualDensity: VisualDensity.compact,
+                      icon: const Icon(
+                        Icons.more_vert_rounded,
+                        color: AppColors.textSecondary,
+                      ),
+                      onPressed: () {
+                        final box =
+                            buttonContext.findRenderObject() as RenderBox?;
+                        final position = box?.localToGlobal(
+                          Offset(box.size.width / 2, box.size.height),
+                        );
+                        unawaited(onOpenActionsMenu(device, position));
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),

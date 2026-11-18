@@ -180,7 +180,13 @@ class RemoteShareAccessSessionBoundary extends ChangeNotifier {
         'transferPort': event.transferPort,
       },
     );
-    if (_config.isTrustedSender(normalizedRequesterMac)) {
+    if (event.transferPort <= 0 || event.transferPort > 65535) {
+      return;
+    }
+    if (_config.isTrustedPeer(
+      ip: event.requesterIp,
+      normalizedMac: normalizedRequesterMac,
+    )) {
       _deps.writeDiagnostic(
         stage: 'share_access_request_auto_approved_for_friend',
         requestId: event.requestId,
@@ -240,7 +246,8 @@ class RemoteShareAccessSessionBoundary extends ChangeNotifier {
 
   void handleResponseEvent(ShareAccessResponseEvent event) {
     final pending = _pendingByRequestId[event.requestId];
-    if (pending == null) {
+    if (pending == null ||
+        event.responderIp.trim() != pending.ownerIp.trim()) {
       _deps.writeDiagnostic(
         stage: 'share_access_response_received',
         requestId: event.requestId,

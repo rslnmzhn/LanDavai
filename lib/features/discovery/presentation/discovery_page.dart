@@ -291,7 +291,10 @@ class _DiscoveryPageState extends State<DiscoveryPage>
                           },
                         )
                       : null,
-                  title: Text('app.devices_title'.tr()),
+                  title: Text(
+                    'app.devices_title'.tr(),
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   actions: [
                     if (!isLeftHanded)
                       Builder(
