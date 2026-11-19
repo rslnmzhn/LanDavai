@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../../app/theme/app_typography.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
@@ -608,9 +609,9 @@ class _VideoLinkServerCard extends StatelessWidget {
               dense: true,
               title: SelectableText(
                 activeUrl,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrains Mono'),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: AppTypography.monoFontFamily,
+                ),
               ),
               trailing: OutlinedButton.icon(
                 onPressed: onCopyLink,
