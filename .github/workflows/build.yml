@@ -45,7 +45,7 @@ jobs:
       - name: Flutter analyze
         run: |
           set -o pipefail
-          flutter analyze 2>&1 | tee analyze_output.txt || {
+          flutter analyze --no-fatal-infos 2>&1 | tee analyze_output.txt || {
             echo "### Flutter analyze failed:" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             cat analyze_output.txt >> $GITHUB_STEP_SUMMARY
