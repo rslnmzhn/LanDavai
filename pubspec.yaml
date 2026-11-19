@@ -45,6 +45,13 @@ flutter:
   assets:
     - assets/translations/
     - assets/tray/landa_tray.png
+  fonts:
+    - family: Manrope
+      fonts:
+        - asset: assets/fonts/Manrope-Variable.ttf
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Variable.ttf
 
 flutter_launcher_icons:
   android: true
