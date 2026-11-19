@@ -35,9 +35,9 @@ void main() {
 
       await service.openDownloadedAsset(asset: asset, file: file);
 
-      expect(commands, <(String, List<String>)>[
-        ('chmod', <String>['+x', file.path]),
-      ]);
+      expect(commands, hasLength(1));
+      expect(commands.single.$1, 'chmod');
+      expect(commands.single.$2, <String>['+x', file.path]);
       expect(opener.openedPaths, isEmpty);
       expect(opener.openedFolders, <String>[file.path]);
     },

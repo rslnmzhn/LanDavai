@@ -388,7 +388,11 @@ Future<void> _pumpNetworkTab(
   required Locale locale,
 }) async {
   final targetController = TextEditingController();
-  addTearDown(targetController.dispose);
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    targetController.dispose();
+  });
   await tester.pumpWidget(
     buildLocalizedTestApp(
       locale: locale,
@@ -406,9 +410,15 @@ Future<void> _pumpNetworkTab(
       ),
     ),
   );
+  for (var i = 0; i < 50 && find.byType(Scrollable).evaluate().isEmpty; i += 1) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+  }
   await tester.pumpAndSettle();
-  await tester.pump(const Duration(milliseconds: 50));
 
+  expect(find.byType(Scrollable), findsAtLeastNWidgets(1));
   await tester.drag(find.byType(Scrollable).first, const Offset(0, -1200));
   await tester.pumpAndSettle();
 }
