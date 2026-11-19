@@ -871,12 +871,13 @@ class _DeviceTile extends StatelessWidget {
         'OS ${device.operatingSystem}',
     ].join(' • ');
 
-    return Container(
-      decoration: BoxDecoration(
-        color: tileBackground,
+    return Material(
+      color: tileBackground,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: borderColor),
+        side: BorderSide(color: borderColor),
       ),
+      clipBehavior: Clip.antiAlias,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
         onLongPressStart: isDesktopPlatform
