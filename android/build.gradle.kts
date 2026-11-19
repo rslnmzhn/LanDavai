@@ -80,7 +80,11 @@ subprojects {
             finalizeDslAction != null -> {
                 finalizeDslAction.invoke(
                     androidComponents,
-                    org.gradle.api.Action<Any> { dsl -> ensureMinCompileSdk(dsl) },
+                    object : org.gradle.api.Action<Any> {
+                        override fun execute(dsl: Any) {
+                            ensureMinCompileSdk(dsl)
+                        }
+                    },
                 )
             }
             finalizeDslFn != null -> {
