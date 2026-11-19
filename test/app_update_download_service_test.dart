@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/app/update/data/app_update_download_service.dart';
 import 'package:landa/app/update/data/app_update_storage_service.dart';
 import 'package:landa/app/update/domain/app_update_models.dart';
+import 'package:path/path.dart' as p;
 
 void main() {
   late Directory tempDirectory;
@@ -92,6 +93,164 @@ void main() {
 
     final file = File('${tempDirectory.path}\\${asset.fileName}');
     expect(await file.exists(), isFalse);
+    expect(await File('${file.path}.part').exists(), isFalse);
+  });
+
+  test(
+    'follows 302 redirect, reports progress, and cleans up staging file',
+    () async {
+      final payload = utf8.encode('redirected release asset payload');
+      server.listen((request) async {
+        if (request.uri.path == '/releases/download/v0.2.4/asset.AppImage') {
+          request.response
+            ..statusCode = HttpStatus.found
+            ..headers.set(
+              HttpHeaders.locationHeader,
+              'http://${server.address.address}:${server.port}/cdn/asset.AppImage',
+            );
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/cdn/asset.AppImage') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..contentLength = payload.length
+            ..add(payload.sublist(0, 10))
+            ..add(payload.sublist(10));
+          await request.response.close();
+          return;
+        }
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      });
+
+      final service = AppUpdateDownloadService(
+        storageService: AppUpdateStorageService(
+          updateDirectoryResolver: () async => tempDirectory,
+        ),
+      );
+      final asset = AppUpdateAsset(
+        platform: 'linux',
+        arch: 'x86_64',
+        format: 'appimage',
+        primary: true,
+        fileName: 'landa-v0.2.4-linux-x86_64.AppImage',
+        size: payload.length,
+        sha256: sha256.convert(payload).toString().toUpperCase(),
+        downloadUrl:
+            'http://${server.address.address}:${server.port}/releases/download/v0.2.4/asset.AppImage',
+      );
+
+      final progressEvents = <(int, int?)>[];
+      final file = await service.downloadAsset(
+        asset,
+        onProgress: (received, total) {
+          progressEvents.add((received, total));
+        },
+      );
+
+      expect(await file.exists(), isTrue);
+      expect(await file.readAsBytes(), payload);
+      expect(await File('${file.path}.part').exists(), isFalse);
+      expect(progressEvents, isNotEmpty);
+      expect(progressEvents.last, (payload.length, payload.length));
+    },
+  );
+
+  test(
+    'cleans up partial file on failure and succeeds on subsequent retry',
+    () async {
+      final payload = utf8.encode('complete valid update payload');
+      var attempt = 0;
+      server.listen((request) async {
+        attempt += 1;
+        if (attempt == 1) {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..add(payload.sublist(0, 8));
+          await request.response.close();
+          return;
+        }
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..contentLength = payload.length
+          ..add(payload);
+        await request.response.close();
+      });
+
+      final service = AppUpdateDownloadService(
+        storageService: AppUpdateStorageService(
+          updateDirectoryResolver: () async => tempDirectory,
+        ),
+      );
+      final asset = AppUpdateAsset(
+        platform: 'windows',
+        arch: 'x86_64',
+        format: 'zip',
+        primary: true,
+        fileName: 'landa-v0.2.4-windows-x64.zip',
+        size: payload.length,
+        sha256: sha256.convert(payload).toString(),
+        downloadUrl:
+            'http://${server.address.address}:${server.port}/landa-v0.2.4-windows-x64.zip',
+      );
+
+      await expectLater(
+        () => service.downloadAsset(asset),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            contains('size mismatch'),
+          ),
+        ),
+      );
+
+      final targetPath = p.join(tempDirectory.path, asset.fileName);
+      expect(await File(targetPath).exists(), isFalse);
+      expect(await File('$targetPath.part').exists(), isFalse);
+
+      final retriedFile = await service.downloadAsset(asset);
+      expect(await retriedFile.exists(), isTrue);
+      expect(await retriedFile.readAsBytes(), payload);
+    },
+  );
+
+  test('rejects non-HTTPS non-loopback download URLs', () async {
+    final service = AppUpdateDownloadService(
+      storageService: AppUpdateStorageService(
+        updateDirectoryResolver: () async => tempDirectory,
+      ),
+    );
+    const asset = AppUpdateAsset(
+      platform: 'windows',
+      arch: 'x86_64',
+      format: 'zip',
+      primary: true,
+      fileName: 'landa-v0.2.4-windows-x64.zip',
+      size: 10,
+      sha256: 'abc',
+      downloadUrl: 'http://example.com/landa-v0.2.4-windows-x64.zip',
+    );
+
+    await expectLater(
+      () => service.downloadAsset(asset),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('AppUpdateStorageService sanitizes dot and dot-dot filenames', () async {
+    final storageService = AppUpdateStorageService(
+      updateDirectoryResolver: () async => tempDirectory,
+    );
+
+    final dotFile = await storageService.createTargetFile('.');
+    final dotDotFile = await storageService.createTargetFile('..');
+
+    expect(p.basename(dotFile.path), 'update.bin');
+    expect(p.basename(dotDotFile.path), 'update.bin');
+    expect(p.isWithin(tempDirectory.path, dotFile.path), isTrue);
+    expect(p.isWithin(tempDirectory.path, dotDotFile.path), isTrue);
   });
 }
 

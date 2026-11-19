@@ -1,3 +1,6 @@
+typedef AppUpdateDownloadProgressCallback =
+    void Function(int receivedBytes, int? totalBytes);
+
 enum AppUpdateCheckPhase { idle, checking, upToDate, updateAvailable, failed }
 
 enum AppUpdateApplyPhase { idle, applying, readyToInstall, failed }

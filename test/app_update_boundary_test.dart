@@ -15,6 +15,11 @@ void main() {
     })?
     assetSelector,
     Future<File> Function(AppUpdateAsset asset)? assetDownloader,
+    Future<File> Function(
+      AppUpdateAsset asset, {
+      AppUpdateDownloadProgressCallback? onProgress,
+    })?
+    assetDownloaderWithProgress,
     Future<void> Function({required AppUpdateAsset asset, required File file})?
     downloadedAssetInstaller,
   }) {
@@ -36,7 +41,11 @@ void main() {
             return release.assets.first;
           },
       assetDownloader:
-          assetDownloader ?? (asset) async => File('C:/temp/${asset.fileName}'),
+          assetDownloader ??
+          (assetDownloaderWithProgress == null
+              ? (asset) async => File('C:/temp/${asset.fileName}')
+              : null),
+      assetDownloaderWithProgress: assetDownloaderWithProgress,
       downloadedAssetInstaller:
           downloadedAssetInstaller ?? ({required asset, required file}) async {},
     );
@@ -58,6 +67,27 @@ void main() {
           size: 100,
           sha256: 'hash',
           downloadUrl: 'https://example.com/landa.zip',
+        ),
+      ],
+    );
+  }
+
+  AppUpdateRelease androidReleaseWithAsset(String version) {
+    return AppUpdateRelease(
+      version: version,
+      tag: 'v$version',
+      releasePageUrl:
+          'https://github.com/rslnmzhn/LanDavai/releases/tag/v$version',
+      assets: const <AppUpdateAsset>[
+        AppUpdateAsset(
+          platform: 'android',
+          arch: 'arm64-v8a',
+          format: 'apk',
+          primary: true,
+          fileName: 'landa-v1.1.0-android-arm64-v8a.apk',
+          size: 100,
+          sha256: 'hash',
+          downloadUrl: 'https://example.com/landa-v1.1.0-android-arm64-v8a.apk',
         ),
       ],
     );
@@ -221,5 +251,138 @@ void main() {
 
     expect(boundary.applyPhase, AppUpdateApplyPhase.failed);
     expect(boundary.applyMessage, contains('download failed'));
+    expect(boundary.canInstallDownloadedUpdate, isFalse);
   });
+
+  test('applyUpdate tracks download progress and resets after completion', () async {
+    final observedProgress = <double?>[];
+    final boundary = createBoundary(
+      currentVersionLoader: () async => '1.0.0',
+      latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
+      assetDownloaderWithProgress: (asset, {onProgress}) async {
+        onProgress?.call(0, 100);
+        onProgress?.call(50, 100);
+        onProgress?.call(100, 100);
+        return File('C:/temp/${asset.fileName}');
+      },
+    );
+    boundary.addListener(() {
+      if (boundary.isDownloading) {
+        observedProgress.add(boundary.downloadProgress);
+      }
+    });
+
+    await boundary.initialize();
+    await boundary.checkForUpdates();
+    await boundary.applyUpdate();
+
+    expect(observedProgress, containsAllInOrder(<double?>[0.0, 0.5, 1.0]));
+    expect(boundary.isApplying, isFalse);
+    expect(boundary.downloadProgress, isNull);
+    expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
+  });
+
+  test(
+    'Android APK install failure preserves downloaded file for retry without re-downloading',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('landa_android_retry_');
+      addTearDown(() async {
+        if (await temp.exists()) {
+          await temp.delete(recursive: true);
+        }
+      });
+      final apkFile = File('${temp.path}/landa-v1.1.0-android-arm64-v8a.apk');
+      var downloadCalls = 0;
+      var installCalls = 0;
+      final boundary = createBoundary(
+        currentVersionLoader: () async => '1.0.0',
+        latestReleaseLoader: () async => androidReleaseWithAsset('1.1.0'),
+        targetResolver: () async => const AppUpdateTarget(
+          platform: AppUpdateRuntimePlatform.android,
+          archPreferences: <String>['arm64-v8a'],
+        ),
+        assetDownloader: (asset) async {
+          downloadCalls += 1;
+          await apkFile.writeAsString('apk');
+          return apkFile;
+        },
+        downloadedAssetInstaller: ({required asset, required file}) async {
+          installCalls += 1;
+          if (installCalls == 1) {
+            throw StateError(
+              'Allow Landa to install unknown apps, then tap install again.',
+            );
+          }
+        },
+      );
+
+      await boundary.initialize();
+      await boundary.checkForUpdates();
+      await boundary.applyUpdate();
+
+      expect(downloadCalls, 1);
+      expect(installCalls, 1);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.failed);
+      expect(
+        boundary.applyMessage,
+        'Allow Landa to install unknown apps, then tap install again.',
+      );
+      expect(boundary.downloadedAssetPath, apkFile.path);
+      expect(boundary.canInstallDownloadedUpdate, isTrue);
+
+      await boundary.installDownloadedUpdate();
+
+      expect(downloadCalls, 1);
+      expect(installCalls, 2);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
+      expect(boundary.canInstallDownloadedUpdate, isTrue);
+    },
+  );
+
+  test(
+    'desktop install failure keeps downloaded file ready for retry without re-downloading',
+    () async {
+      final temp = await Directory.systemTemp.createTemp('landa_desktop_retry_');
+      addTearDown(() async {
+        if (await temp.exists()) {
+          await temp.delete(recursive: true);
+        }
+      });
+      final zipFile = File('${temp.path}/landa.zip');
+      var downloadCalls = 0;
+      var installCalls = 0;
+      final boundary = createBoundary(
+        currentVersionLoader: () async => '1.0.0',
+        latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
+        assetDownloader: (asset) async {
+          downloadCalls += 1;
+          await zipFile.writeAsString('zip');
+          return zipFile;
+        },
+        downloadedAssetInstaller: ({required asset, required file}) async {
+          installCalls += 1;
+          if (installCalls == 1) {
+            throw StateError('Opener failed');
+          }
+        },
+      );
+
+      await boundary.initialize();
+      await boundary.checkForUpdates();
+      await boundary.applyUpdate();
+      await boundary.installDownloadedUpdate();
+
+      expect(downloadCalls, 1);
+      expect(installCalls, 1);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.failed);
+      expect(boundary.applyMessage, 'Opener failed');
+      expect(boundary.canInstallDownloadedUpdate, isTrue);
+
+      await boundary.installDownloadedUpdate();
+
+      expect(downloadCalls, 1);
+      expect(installCalls, 2);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
+    },
+  );
 }

@@ -284,6 +284,7 @@ class DiscoveryCompositionFactory {
       targetResolver: deviceRuntimeUpdateTargetResolver.resolve,
       assetSelector: appUpdateAssetSelector.selectAsset,
       assetDownloader: appUpdateDownloadService.downloadAsset,
+      assetDownloaderWithProgress: appUpdateDownloadService.downloadAsset,
       downloadedAssetInstaller: appUpdateApplyService.openDownloadedAsset,
     );
     final remoteShareMediaProjectionBoundary =
