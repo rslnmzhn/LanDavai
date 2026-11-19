@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -252,6 +253,215 @@ void main() {
     expect(p.isWithin(tempDirectory.path, dotFile.path), isTrue);
     expect(p.isWithin(tempDirectory.path, dotDotFile.path), isTrue);
   });
+
+  test(
+    'exits with TimeoutException on stalled redirect body and succeeds on retry',
+    () async {
+      final payload = utf8.encode('recovered after stalled redirect');
+      final stalledResponses = <HttpResponse>[];
+      addTearDown(() async {
+        for (final response in stalledResponses) {
+          try {
+            await response.close().timeout(const Duration(milliseconds: 50));
+          } catch (_) {}
+        }
+      });
+
+      var attempt = 0;
+      server.listen((request) async {
+        if (request.uri.path == '/releases/download/v0.2.4/asset.zip') {
+          attempt += 1;
+          if (attempt == 1) {
+            request.response
+              ..bufferOutput = false
+              ..statusCode = HttpStatus.found
+              ..contentLength = 64
+              ..headers.set(
+                HttpHeaders.locationHeader,
+                'http://${server.address.address}:${server.port}/cdn/asset.zip',
+              )
+              ..add(const <int>[1]);
+            await request.response.flush();
+            stalledResponses.add(request.response);
+            return;
+          }
+          request.response
+            ..statusCode = HttpStatus.found
+            ..headers.set(
+              HttpHeaders.locationHeader,
+              'http://${server.address.address}:${server.port}/cdn/asset.zip',
+            );
+          await request.response.close();
+          return;
+        }
+        if (request.uri.path == '/cdn/asset.zip') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..contentLength = payload.length
+            ..add(payload);
+          await request.response.close();
+          return;
+        }
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      });
+
+      final service = AppUpdateDownloadService(
+        storageService: AppUpdateStorageService(
+          updateDirectoryResolver: () async => tempDirectory,
+        ),
+        chunkTimeout: const Duration(milliseconds: 80),
+      );
+      final asset = AppUpdateAsset(
+        platform: 'windows',
+        arch: 'x86_64',
+        format: 'zip',
+        primary: true,
+        fileName: 'landa-v0.2.4-windows-x64.zip',
+        size: payload.length,
+        sha256: sha256.convert(payload).toString(),
+        downloadUrl:
+            'http://${server.address.address}:${server.port}/releases/download/v0.2.4/asset.zip',
+      );
+
+      await expectLater(
+        () => service.downloadAsset(asset),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final retriedFile = await service.downloadAsset(asset);
+      expect(await retriedFile.exists(), isTrue);
+      expect(await retriedFile.readAsBytes(), payload);
+    },
+  );
+
+  test(
+    'exits with TimeoutException on stalled non-200 error body and succeeds on retry',
+    () async {
+      final payload = utf8.encode('recovered after stalled error body');
+      final stalledResponses = <HttpResponse>[];
+      addTearDown(() async {
+        for (final response in stalledResponses) {
+          try {
+            await response.close().timeout(const Duration(milliseconds: 50));
+          } catch (_) {}
+        }
+      });
+
+      var attempt = 0;
+      server.listen((request) async {
+        attempt += 1;
+        if (attempt == 1) {
+          request.response
+            ..bufferOutput = false
+            ..statusCode = HttpStatus.serviceUnavailable
+            ..contentLength = 64
+            ..add(const <int>[1]);
+          await request.response.flush();
+          stalledResponses.add(request.response);
+          return;
+        }
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..contentLength = payload.length
+          ..add(payload);
+        await request.response.close();
+      });
+
+      final service = AppUpdateDownloadService(
+        storageService: AppUpdateStorageService(
+          updateDirectoryResolver: () async => tempDirectory,
+        ),
+        chunkTimeout: const Duration(milliseconds: 80),
+      );
+      final asset = AppUpdateAsset(
+        platform: 'windows',
+        arch: 'x86_64',
+        format: 'zip',
+        primary: true,
+        fileName: 'landa-v0.2.4-windows-x64.zip',
+        size: payload.length,
+        sha256: sha256.convert(payload).toString(),
+        downloadUrl:
+            'http://${server.address.address}:${server.port}/landa-v0.2.4-windows-x64.zip',
+      );
+
+      await expectLater(
+        () => service.downloadAsset(asset),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final retriedFile = await service.downloadAsset(asset);
+      expect(await retriedFile.exists(), isTrue);
+      expect(await retriedFile.readAsBytes(), payload);
+    },
+  );
+
+  test(
+    'exits with TimeoutException on stalled 200 body, cleans up part file, and succeeds on retry',
+    () async {
+      final payload = utf8.encode('recovered after stalled 200 body');
+      final stalledResponses = <HttpResponse>[];
+      addTearDown(() async {
+        for (final response in stalledResponses) {
+          try {
+            await response.close().timeout(const Duration(milliseconds: 50));
+          } catch (_) {}
+        }
+      });
+
+      var attempt = 0;
+      server.listen((request) async {
+        attempt += 1;
+        if (attempt == 1) {
+          request.response
+            ..bufferOutput = false
+            ..statusCode = HttpStatus.ok
+            ..contentLength = payload.length
+            ..add(payload.sublist(0, 5));
+          await request.response.flush();
+          stalledResponses.add(request.response);
+          return;
+        }
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..contentLength = payload.length
+          ..add(payload);
+        await request.response.close();
+      });
+
+      final service = AppUpdateDownloadService(
+        storageService: AppUpdateStorageService(
+          updateDirectoryResolver: () async => tempDirectory,
+        ),
+        chunkTimeout: const Duration(milliseconds: 80),
+      );
+      final asset = AppUpdateAsset(
+        platform: 'windows',
+        arch: 'x86_64',
+        format: 'zip',
+        primary: true,
+        fileName: 'landa-v0.2.4-windows-x64.zip',
+        size: payload.length,
+        sha256: sha256.convert(payload).toString(),
+        downloadUrl:
+            'http://${server.address.address}:${server.port}/landa-v0.2.4-windows-x64.zip',
+      );
+
+      await expectLater(
+        () => service.downloadAsset(asset),
+        throwsA(isA<TimeoutException>()),
+      );
+
+      final targetPath = p.join(tempDirectory.path, asset.fileName);
+      expect(await File(targetPath).exists(), isFalse);
+      expect(await File('$targetPath.part').exists(), isFalse);
+
+      final retriedFile = await service.downloadAsset(asset);
+      expect(await retriedFile.exists(), isTrue);
+      expect(await retriedFile.readAsBytes(), payload);
+    },
+  );
 }
 
 class _FakeAppUpdateStorageService extends AppUpdateStorageService {

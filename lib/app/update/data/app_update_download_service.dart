@@ -64,7 +64,7 @@ class AppUpdateDownloadService {
           final location = candidateResponse.headers.value(
             HttpHeaders.locationHeader,
           );
-          await candidateResponse.drain<void>();
+          await candidateResponse.drain<void>().timeout(_chunkTimeout);
           if (location == null || location.trim().isEmpty) {
             throw HttpException(
               'Asset redirect missing Location header '
@@ -86,7 +86,7 @@ class AppUpdateDownloadService {
       }
 
       if (response.statusCode != HttpStatus.ok) {
-        await response.drain<void>();
+        await response.drain<void>().timeout(_chunkTimeout);
         throw HttpException(
           'Asset download failed with status ${response.statusCode}',
           uri: currentUri,

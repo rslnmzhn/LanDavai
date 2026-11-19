@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../app_update_config.dart';
 import '../domain/app_update_models.dart';
@@ -99,7 +100,7 @@ class GithubReleaseUpdateService {
         final response = await request.close().timeout(_requestTimeout);
         if (_isRedirectStatus(response.statusCode)) {
           final location = response.headers.value(HttpHeaders.locationHeader);
-          await response.drain<void>();
+          await response.drain<void>().timeout(_requestTimeout);
           if (location == null || location.trim().isEmpty) {
             throw HttpException(
               'GitHub redirect missing Location header (${response.statusCode})',
@@ -116,7 +117,7 @@ class GithubReleaseUpdateService {
           continue;
         }
         if (response.statusCode != HttpStatus.ok) {
-          await response.drain<void>();
+          await response.drain<void>().timeout(_requestTimeout);
           throw HttpException(
             'GitHub request failed with status ${response.statusCode}',
             uri: currentUri,

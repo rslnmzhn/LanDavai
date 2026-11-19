@@ -119,7 +119,7 @@ void main() {
         isLinuxOverride: false,
         androidApkInstaller: (path) async {
           installedPaths.add(path);
-          throw const PlatformException(
+          throw PlatformException(
             code: 'install_apk_failed',
             message: 'Allow Landa to install unknown apps, then tap install again.',
           );

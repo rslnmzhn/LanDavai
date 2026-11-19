@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -385,4 +386,121 @@ void main() {
       expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
     },
   );
+
+  test(
+    'installDownloadedUpdate reserves applying state before file.exists() and ignores overlapping install and check calls',
+    () async {
+      final existsCompleter = Completer<bool>();
+      final installCompleter = Completer<void>();
+      var releaseLoads = 0;
+      var existsCalls = 0;
+      var installCalls = 0;
+
+      final boundary = createBoundary(
+        currentVersionLoader: () async => '1.0.0',
+        latestReleaseLoader: () async {
+          releaseLoads += 1;
+          return releaseWithAsset('1.1.0');
+        },
+        assetDownloader: (asset) async => _DelayedExistsFile(
+          path: 'C:/temp/${asset.fileName}',
+          onExists: () {
+            existsCalls += 1;
+            return existsCompleter.future;
+          },
+        ),
+        downloadedAssetInstaller: ({required asset, required file}) async {
+          installCalls += 1;
+          await installCompleter.future;
+        },
+      );
+
+      await boundary.initialize();
+      await boundary.checkForUpdates();
+      await boundary.applyUpdate();
+      expect(releaseLoads, 1);
+
+      final firstInstall = boundary.installDownloadedUpdate();
+      expect(boundary.isApplying, isTrue);
+      expect(boundary.isInstalling, isTrue);
+      expect(existsCalls, 1);
+      expect(installCalls, 0);
+
+      final secondInstall = boundary.installDownloadedUpdate();
+      final overlappingCheck = boundary.checkForUpdates();
+      final overlappingApply = boundary.applyUpdate();
+
+      existsCompleter.complete(true);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(existsCalls, 1);
+      expect(installCalls, 1);
+      expect(releaseLoads, 1);
+      expect(boundary.selectedAsset?.fileName, 'landa.zip');
+      expect(boundary.downloadedAssetPath, 'C:/temp/landa.zip');
+
+      installCompleter.complete();
+      await Future.wait(<Future<void>>[
+        firstInstall,
+        secondInstall,
+        overlappingCheck,
+        overlappingApply,
+      ]);
+
+      expect(existsCalls, 1);
+      expect(installCalls, 1);
+      expect(releaseLoads, 1);
+      expect(boundary.isApplying, isFalse);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.readyToInstall);
+    },
+  );
+
+  test(
+    'installDownloadedUpdate handles file.exists() error inside guarded path',
+    () async {
+      final boundary = createBoundary(
+        currentVersionLoader: () async => '1.0.0',
+        latestReleaseLoader: () async => releaseWithAsset('1.1.0'),
+        assetDownloader: (asset) async => _DelayedExistsFile(
+          path: 'C:/temp/${asset.fileName}',
+          onExists: () async {
+            throw const FileSystemException(
+              'Permission denied',
+              'C:/temp/landa.zip',
+            );
+          },
+        ),
+      );
+
+      await boundary.initialize();
+      await boundary.checkForUpdates();
+      await boundary.applyUpdate();
+      await boundary.installDownloadedUpdate();
+
+      expect(boundary.isApplying, isFalse);
+      expect(boundary.applyPhase, AppUpdateApplyPhase.failed);
+      expect(boundary.applyMessage, contains('Permission denied'));
+      expect(boundary.canInstallDownloadedUpdate, isTrue);
+    },
+  );
+}
+
+class _DelayedExistsFile implements File {
+  _DelayedExistsFile({
+    required String path,
+    required Future<bool> Function() onExists,
+  }) : _path = path,
+       _onExists = onExists;
+
+  final String _path;
+  final Future<bool> Function() _onExists;
+
+  @override
+  String get path => _path;
+
+  @override
+  Future<bool> exists() => _onExists();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

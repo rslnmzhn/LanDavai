@@ -184,7 +184,8 @@ class AppUpdateBoundary extends ChangeNotifier {
   }
 
   Future<void> applyUpdate() async {
-    if (_applyPhase == AppUpdateApplyPhase.applying) {
+    if (_phase == AppUpdateCheckPhase.checking ||
+        _applyPhase == AppUpdateApplyPhase.applying) {
       return;
     }
     final release = _latestRelease;
@@ -233,7 +234,8 @@ class AppUpdateBoundary extends ChangeNotifier {
   }
 
   Future<void> installDownloadedUpdate() async {
-    if (_applyPhase == AppUpdateApplyPhase.applying) {
+    if (_phase == AppUpdateCheckPhase.checking ||
+        _applyPhase == AppUpdateApplyPhase.applying) {
       return;
     }
     final asset = _selectedAsset;
@@ -245,22 +247,20 @@ class AppUpdateBoundary extends ChangeNotifier {
       return;
     }
 
-    if (!await file.exists()) {
-      _downloadedAssetFile = null;
-      _applyPhase = AppUpdateApplyPhase.idle;
-      _applyMessage = fileNotFoundMessage;
-      _notifySafely();
-      return;
-    }
-
     _applyPhase = AppUpdateApplyPhase.applying;
     _applyMessage = null;
     _notifySafely();
 
     try {
-      await _downloadedAssetInstaller(asset: asset, file: file);
-      _applyPhase = AppUpdateApplyPhase.readyToInstall;
-      _applyMessage = file.path;
+      if (!await file.exists()) {
+        _downloadedAssetFile = null;
+        _applyPhase = AppUpdateApplyPhase.idle;
+        _applyMessage = fileNotFoundMessage;
+      } else {
+        await _downloadedAssetInstaller(asset: asset, file: file);
+        _applyPhase = AppUpdateApplyPhase.readyToInstall;
+        _applyMessage = file.path;
+      }
     } catch (error) {
       _applyPhase = AppUpdateApplyPhase.failed;
       _applyMessage = _formatError(error);

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:landa/app/update/application/app_update_boundary.dart';
 import 'package:landa/app/update/data/app_update_asset_selector.dart';
 import 'package:landa/app/update/data/github_release_update_service.dart';
 import 'package:landa/app/update/domain/app_update_models.dart';
@@ -384,6 +386,190 @@ void main() {
     await expectLater(
       service.fetchLatestStableRelease,
       throwsA(isA<FormatException>()),
+    );
+  });
+
+  test(
+    'exits checking on a stalled redirect body and allows retry',
+    () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final stalledResponses = <HttpResponse>[];
+      addTearDown(() async {
+        for (final response in stalledResponses) {
+          try {
+            await response.close().timeout(const Duration(milliseconds: 50));
+          } catch (_) {}
+        }
+        await server.close(force: true);
+      });
+
+      const version = '0.2.4';
+      const tag = 'v0.2.4';
+      const manifestName = 'landa-v$version-release-manifest.json';
+      const releaseApiPath = '/repos/rslnmzhn/LanDavai/releases/latest';
+      const manifestRedirectPath = '/releases/download/$tag/$manifestName';
+      const manifestCdnPath = '/cdn/$manifestName';
+      var manifestAttempts = 0;
+
+      server.listen((request) async {
+        if (request.uri.path == releaseApiPath) {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({
+                'tag_name': tag,
+                'html_url':
+                    'https://github.com/rslnmzhn/LanDavai/releases/tag/$tag',
+                'draft': false,
+                'prerelease': false,
+                'assets': [
+                  {
+                    'name': manifestName,
+                    'browser_download_url':
+                        'http://127.0.0.1:${server.port}$manifestRedirectPath',
+                  },
+                ],
+              }),
+            );
+          await request.response.close();
+          return;
+        }
+
+        if (request.uri.path == manifestRedirectPath) {
+          manifestAttempts += 1;
+          if (manifestAttempts == 1) {
+            request.response
+              ..bufferOutput = false
+              ..statusCode = HttpStatus.found
+              ..contentLength = 64
+              ..headers.set(
+                HttpHeaders.locationHeader,
+                'http://127.0.0.1:${server.port}$manifestCdnPath',
+              )
+              ..add(const <int>[1]);
+            await request.response.flush();
+            stalledResponses.add(request.response);
+            return;
+          }
+          request.response
+            ..statusCode = HttpStatus.found
+            ..headers.set(
+              HttpHeaders.locationHeader,
+              'http://127.0.0.1:${server.port}$manifestCdnPath',
+            );
+          await request.response.close();
+          return;
+        }
+
+        if (request.uri.path == manifestCdnPath) {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(
+              jsonEncode({
+                'schemaVersion': 1,
+                'release': {
+                  'channel': 'stable',
+                  'tag': tag,
+                  'version': version,
+                  'draft': false,
+                  'prerelease': false,
+                },
+                'assets': [
+                  {
+                    'platform': 'windows',
+                    'arch': 'x86_64',
+                    'format': 'zip',
+                    'primary': true,
+                    'fileName': 'landa-v$version-windows-x64.zip',
+                    'size': 600,
+                    'sha256': 'f' * 64,
+                    'downloadUrl':
+                        'https://github.com/rslnmzhn/LanDavai/releases/download/$tag/landa-v$version-windows-x64.zip',
+                  },
+                ],
+              }),
+            );
+          await request.response.close();
+          return;
+        }
+
+        request.response.statusCode = HttpStatus.notFound;
+        await request.response.close();
+      });
+
+      final service = GithubReleaseUpdateService(
+        owner: 'rslnmzhn',
+        repository: 'LanDavai',
+        latestReleaseUri: Uri.parse(
+          'http://127.0.0.1:${server.port}$releaseApiPath',
+        ),
+        requestTimeout: const Duration(milliseconds: 80),
+      );
+      final boundary = AppUpdateBoundary(
+        currentVersionLoader: () async => '0.2.3',
+        latestReleaseLoader: service.fetchLatestStableRelease,
+        targetResolver: () async => const AppUpdateTarget(
+          platform: AppUpdateRuntimePlatform.windows,
+          archPreferences: <String>['x86_64'],
+        ),
+        assetSelector: ({required release, required target}) =>
+            release.assets.first,
+        assetDownloader: (asset) async => throw UnimplementedError(),
+        downloadedAssetInstaller: ({required asset, required file}) async {},
+      );
+
+      await boundary.initialize();
+      await boundary.checkForUpdates();
+
+      expect(boundary.isChecking, isFalse);
+      expect(boundary.phase, AppUpdateCheckPhase.failed);
+      expect(boundary.lastError, isNotNull);
+
+      await boundary.checkForUpdates();
+
+      expect(boundary.isChecking, isFalse);
+      expect(boundary.phase, AppUpdateCheckPhase.updateAvailable);
+      expect(boundary.latestRelease?.version, version);
+    },
+  );
+
+  test('exits with TimeoutException on a stalled non-200 error body', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final stalledResponses = <HttpResponse>[];
+    addTearDown(() async {
+      for (final response in stalledResponses) {
+        try {
+          await response.close().timeout(const Duration(milliseconds: 50));
+        } catch (_) {}
+      }
+      await server.close(force: true);
+    });
+
+    const releaseApiPath = '/repos/rslnmzhn/LanDavai/releases/latest';
+    server.listen((request) async {
+      request.response
+        ..bufferOutput = false
+        ..statusCode = HttpStatus.internalServerError
+        ..contentLength = 64
+        ..add(const <int>[1]);
+      await request.response.flush();
+      stalledResponses.add(request.response);
+    });
+
+    final service = GithubReleaseUpdateService(
+      owner: 'rslnmzhn',
+      repository: 'LanDavai',
+      latestReleaseUri: Uri.parse(
+        'http://127.0.0.1:${server.port}$releaseApiPath',
+      ),
+      requestTimeout: const Duration(milliseconds: 80),
+    );
+
+    await expectLater(
+      service.fetchLatestStableRelease,
+      throwsA(isA<TimeoutException>()),
     );
   });
 }
