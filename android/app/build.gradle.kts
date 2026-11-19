@@ -1,4 +1,5 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     id("com.android.application")
@@ -56,10 +57,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
-    }
-
     signingConfigs {
         if (hasReleaseSigning) {
             create("release") {
@@ -83,12 +80,10 @@ android {
 
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
         }
 
         getByName("profile") {
-            applicationIdSuffix = ".profile"
             versionNameSuffix = "-profile"
         }
 
@@ -97,6 +92,21 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_17)
+    }
+}
+
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.applicationId.set("com.example.landa.debug")
+    }
+    onVariants(selector().withBuildType("profile")) { variant ->
+        variant.applicationId.set("com.example.landa.profile")
     }
 }
 
