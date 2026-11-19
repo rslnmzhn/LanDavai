@@ -45,6 +45,8 @@ flutter:
   assets:
     - assets/translations/
     - assets/tray/landa_tray.png
+    - assets/fonts/Manrope-OFL.txt
+    - assets/fonts/JetBrainsMono-OFL.txt
   fonts:
     - family: Manrope
       fonts:
