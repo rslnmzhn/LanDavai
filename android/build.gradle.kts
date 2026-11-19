@@ -32,6 +32,71 @@ subprojects {
             val sanitizedName = project.name.replace('-', '_')
             setNamespace?.invoke(androidExtension, "dev.landa.thirdparty.$sanitizedName")
         }
+
+        fun ensureMinCompileSdk(dslExtension: Any) {
+            val appAndroid = rootProject.findProject(":app")?.extensions?.findByName("android")
+            val appCompileSdk = appAndroid?.javaClass?.methods
+                ?.firstOrNull { it.name == "getCompileSdk" && it.parameterCount == 0 }
+                ?.invoke(appAndroid) as? Int
+            val targetCompileSdk = maxOf(appCompileSdk ?: 36, 34)
+
+            val getCompileSdk = dslExtension.javaClass.methods.firstOrNull {
+                it.name == "getCompileSdk" && it.parameterCount == 0
+            }
+            val currentCompileSdk = getCompileSdk?.invoke(dslExtension) as? Int
+            if (currentCompileSdk == null || currentCompileSdk < targetCompileSdk) {
+                val setCompileSdk = dslExtension.javaClass.methods.firstOrNull {
+                    it.name == "setCompileSdk" &&
+                        it.parameterCount == 1 &&
+                        (it.parameterTypes[0] == Int::class.javaObjectType ||
+                            it.parameterTypes[0] == Int::class.javaPrimitiveType)
+                }
+                if (setCompileSdk != null) {
+                    setCompileSdk.invoke(dslExtension, targetCompileSdk)
+                } else {
+                    val compileSdkVersionMethod = dslExtension.javaClass.methods.firstOrNull {
+                        it.name == "compileSdkVersion" &&
+                            it.parameterCount == 1 &&
+                            (it.parameterTypes[0] == Int::class.javaPrimitiveType ||
+                                it.parameterTypes[0] == Int::class.javaObjectType)
+                    }
+                    compileSdkVersionMethod?.invoke(dslExtension, targetCompileSdk)
+                }
+            }
+        }
+
+        val androidComponents = extensions.findByName("androidComponents")
+        val finalizeDslAction = androidComponents?.javaClass?.methods?.firstOrNull {
+            it.name == "finalizeDsl" &&
+                it.parameterCount == 1 &&
+                it.parameterTypes[0] == org.gradle.api.Action::class.java
+        }
+        val finalizeDslFn = androidComponents?.javaClass?.methods?.firstOrNull {
+            it.name == "finalizeDsl" &&
+                it.parameterCount == 1 &&
+                it.parameterTypes[0] == Function1::class.java
+        }
+        when {
+            finalizeDslAction != null -> {
+                finalizeDslAction.invoke(
+                    androidComponents,
+                    object : org.gradle.api.Action<Any> {
+                        override fun execute(dsl: Any) {
+                            ensureMinCompileSdk(dsl)
+                        }
+                    },
+                )
+            }
+            finalizeDslFn != null -> {
+                val callback: (Any) -> Unit = { dsl -> ensureMinCompileSdk(dsl) }
+                finalizeDslFn.invoke(androidComponents, callback)
+            }
+            else -> {
+                afterEvaluate {
+                    ensureMinCompileSdk(androidExtension)
+                }
+            }
+        }
     }
 }
 

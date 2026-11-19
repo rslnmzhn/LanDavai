@@ -39,7 +39,7 @@ class DiscoveryWideLayoutSurface extends StatelessWidget {
         if (isLeftHanded) ...[keyedSidePanel, divider],
         Expanded(
           key: mainPaneKey,
-          child: ColoredBox(
+          child: Material(
             color: Theme.of(context).scaffoldBackgroundColor,
             child: SafeArea(
               bottom: false,

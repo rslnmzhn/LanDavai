@@ -1265,11 +1265,17 @@ void main() {
         var entries = const <Map<String, Object?>>[];
         for (var index = 0; index < 100; index += 1) {
           entries = await _readDiagnosticEntries(diagnosticStore);
-          if (entries.any(
+          final hasSecondRunDeferred = entries.any(
             (entry) =>
                 entry['requestId'] == 'direct-whole-share-backfill-run-2' &&
                 entry['stage'] == 'sender_whole_share_hash_stage_deferred',
-          )) {
+          );
+          final hasFirstRunBackfillComplete = entries.any(
+            (entry) =>
+                entry['requestId'] == 'direct-whole-share-backfill-run-1' &&
+                entry['stage'] == 'sender_whole_share_hash_backfill_complete',
+          );
+          if (hasSecondRunDeferred && hasFirstRunBackfillComplete) {
             break;
           }
           await Future<void>.delayed(const Duration(milliseconds: 10));

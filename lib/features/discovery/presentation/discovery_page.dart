@@ -222,14 +222,14 @@ class _DiscoveryPageState extends State<DiscoveryPage>
         final isWideLayout = MediaQuery.sizeOf(context).width >= 900;
 
         final drawerSurface = Drawer(
-          child: ColoredBox(
+          child: Material(
             color: AppColors.surface,
             child: _buildSideMenuSurface(closeOnTap: true),
           ),
         );
         final panelSurface = SizedBox(
           width: 296,
-          child: ColoredBox(
+          child: Material(
             color: AppColors.surface,
             child: _buildSideMenuSurface(closeOnTap: false),
           ),

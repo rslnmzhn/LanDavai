@@ -376,7 +376,7 @@ class PreviewCacheOwner {
           final compressed = Uint8List.fromList(
             img.encodeJpg(resized, quality: 52),
           );
-          return materializePreviewArtifact(
+          return await materializePreviewArtifact(
             originalRelativePath: entry.relativePath,
             outputExtension: '.jpg',
             contentBytes: compressed,
@@ -402,7 +402,7 @@ class PreviewCacheOwner {
           final compressed = decoded == null
               ? bytes
               : Uint8List.fromList(img.encodeJpg(decoded, quality: 50));
-          return materializePreviewArtifact(
+          return await materializePreviewArtifact(
             originalRelativePath: entry.relativePath,
             outputExtension: '.jpg',
             contentBytes: compressed,
@@ -433,7 +433,7 @@ class PreviewCacheOwner {
         final previewText = bytes.length > maxBytes
             ? '$snippet\n\n--- Preview truncated ---'
             : snippet;
-        return materializePreviewArtifact(
+        return await materializePreviewArtifact(
           originalRelativePath: entry.relativePath,
           outputExtension: '.txt',
           contentBytes: utf8.encode(previewText),

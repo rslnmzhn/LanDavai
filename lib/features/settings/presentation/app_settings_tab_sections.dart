@@ -26,30 +26,35 @@ class AppSettingsSectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
+    return Material(
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.mutedBorder),
+        side: const BorderSide(color: AppColors.mutedBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          if (description != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              description!,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
-            ),
-          ],
-          const SizedBox(height: AppSpacing.sm),
-          ...children,
-        ],
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        width: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.titleMedium),
+              if (description != null) ...[
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  description!,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: AppColors.textSecondary),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.sm),
+              ...children,
+            ],
+          ),
+        ),
       ),
     );
   }
