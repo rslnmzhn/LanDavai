@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/features/discovery/data/discovery_network_interface_catalog.dart';
 import 'package:landa/features/discovery/data/lan_interface_filter.dart';
@@ -51,11 +49,27 @@ void main() {
     test('filters VPN and cellular interfaces on mobile', () async {
       final catalog = SystemDiscoveryNetworkInterfaceCatalog(
         isMobileOverride: true,
-        interfaceLister: () async => <NetworkInterface>[
-          _FakeNetworkInterface('wlan0', 1, <String>['192.168.1.42']),
-          _FakeNetworkInterface('tun0', 2, <String>['10.0.0.2']),
-          _FakeNetworkInterface('rmnet_data0', 3, <String>['100.64.12.5']),
-          _FakeNetworkInterface('wg0', 4, <String>['172.16.0.2']),
+        rawInterfaceLoader: () async => const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'wlan0',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.42'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'tun0',
+            index: 2,
+            ipv4Addresses: <String>['10.0.0.2'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'rmnet_data0',
+            index: 3,
+            ipv4Addresses: <String>['100.64.12.5'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'wg0',
+            index: 4,
+            ipv4Addresses: <String>['172.16.0.2'],
+          ),
         ],
       );
 
@@ -69,9 +83,17 @@ void main() {
     test('keeps overlay interfaces on desktop', () async {
       final catalog = SystemDiscoveryNetworkInterfaceCatalog(
         isMobileOverride: false,
-        interfaceLister: () async => <NetworkInterface>[
-          _FakeNetworkInterface('Ethernet', 1, <String>['192.168.1.10']),
-          _FakeNetworkInterface('Tailscale', 2, <String>['100.90.1.10']),
+        rawInterfaceLoader: () async => const <DiscoveryRawNetworkInterface>[
+          DiscoveryRawNetworkInterface(
+            name: 'Ethernet',
+            index: 1,
+            ipv4Addresses: <String>['192.168.1.10'],
+          ),
+          DiscoveryRawNetworkInterface(
+            name: 'Tailscale',
+            index: 2,
+            ipv4Addresses: <String>['100.90.1.10'],
+          ),
         ],
       );
 
@@ -166,18 +188,4 @@ void main() {
       },
     );
   });
-}
-
-class _FakeNetworkInterface implements NetworkInterface {
-  _FakeNetworkInterface(this.name, this.index, List<String> ips)
-    : addresses = ips.map(InternetAddress.new).toList(growable: false);
-
-  @override
-  final String name;
-
-  @override
-  final int index;
-
-  @override
-  final List<InternetAddress> addresses;
 }

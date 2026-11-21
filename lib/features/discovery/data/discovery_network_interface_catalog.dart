@@ -22,35 +22,30 @@ class SystemDiscoveryNetworkInterfaceCatalog
     implements DiscoveryNetworkInterfaceCatalog {
   SystemDiscoveryNetworkInterfaceCatalog({
     bool? isMobileOverride,
-    Future<List<NetworkInterface>> Function()? interfaceLister,
+    Future<List<DiscoveryRawNetworkInterface>> Function()? rawInterfaceLoader,
   }) : _isMobileOverride = isMobileOverride,
-       _interfaceLister = interfaceLister;
+       _rawInterfaceLoader = rawInterfaceLoader;
 
   final bool? _isMobileOverride;
-  final Future<List<NetworkInterface>> Function()? _interfaceLister;
+  final Future<List<DiscoveryRawNetworkInterface>> Function()?
+  _rawInterfaceLoader;
 
   bool get _isMobile =>
       _isMobileOverride ?? (Platform.isAndroid || Platform.isIOS);
 
   @override
   Future<List<DiscoveryRawNetworkInterface>> loadIpv4Interfaces() async {
-    final interfaces = await (_interfaceLister != null
-        ? _interfaceLister()
-        : NetworkInterface.list(
-            type: InternetAddressType.IPv4,
-            includeLoopback: false,
-            includeLinkLocal: false,
-          ));
+    final rawInterfaces = _rawInterfaceLoader != null
+        ? await _rawInterfaceLoader()
+        : await _loadSystemIpv4Interfaces();
 
     final snapshots = <DiscoveryRawNetworkInterface>[];
-    for (final interface in interfaces) {
+    for (final interface in rawInterfaces) {
       if (_isMobile && isNonLanInterfaceName(interface.name)) {
         continue;
       }
       final ipv4Addresses =
-          interface.addresses
-              .where((address) => address.type == InternetAddressType.IPv4)
-              .map((address) => address.address)
+          interface.ipv4Addresses
               .where((address) => _isValidIpv4(address))
               .toSet()
               .toList(growable: false)
@@ -75,6 +70,26 @@ class SystemDiscoveryNetworkInterfaceCatalog
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
     return snapshots;
+  }
+
+  Future<List<DiscoveryRawNetworkInterface>> _loadSystemIpv4Interfaces() async {
+    final interfaces = await NetworkInterface.list(
+      type: InternetAddressType.IPv4,
+      includeLoopback: false,
+      includeLinkLocal: false,
+    );
+    return interfaces
+        .map(
+          (interface) => DiscoveryRawNetworkInterface(
+            name: interface.name,
+            index: interface.index,
+            ipv4Addresses: interface.addresses
+                .where((address) => address.type == InternetAddressType.IPv4)
+                .map((address) => address.address)
+                .toList(growable: false),
+          ),
+        )
+        .toList(growable: false);
   }
 
   bool _isValidIpv4(String ip) {
