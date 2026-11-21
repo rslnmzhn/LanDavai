@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../../app/theme/app_typography.dart';
 import '../data/nearby_transfer_transport_adapter.dart';
 
 class NearbyTransferRemotePreviewDialog extends StatelessWidget {
@@ -66,7 +67,7 @@ class _PreviewBody extends StatelessWidget {
                 child: SelectableText(
                   preview.textContent ?? '',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    fontFamily: 'JetBrainsMono',
+                    fontFamily: AppTypography.monoFontFamily,
                     height: 1.4,
                   ),
                 ),

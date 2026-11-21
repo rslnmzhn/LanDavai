@@ -36,9 +36,12 @@ class SharedDownloadRequestDiagnosticDetails {
 class SharedDownloadRequestMapper {
   const SharedDownloadRequestMapper({
     required bool Function(String? normalizedMac) isTrustedSender,
-  }) : _isTrustedSender = isTrustedSender;
+    bool Function(String ip, String? normalizedMac)? isTrustedSenderIpAndMac,
+  }) : _isTrustedSender = isTrustedSender,
+       _isTrustedSenderIpAndMac = isTrustedSenderIpAndMac;
 
   final bool Function(String? normalizedMac) _isTrustedSender;
+  final bool Function(String ip, String? normalizedMac)? _isTrustedSenderIpAndMac;
 
   SharedDownloadRequestMapping map({
     required DownloadRequestEvent event,
@@ -48,8 +51,10 @@ class SharedDownloadRequestMapper {
       event.requesterMacAddress,
     );
     final isPreviewRequest = event.previewMode;
-    final isTrustedFriendRequester =
-        !isPreviewRequest && _isTrustedSender(normalizedRequesterMac);
+    final isAuthorized = _isTrustedSenderIpAndMac != null
+        ? _isTrustedSenderIpAndMac(event.requesterIp, normalizedRequesterMac)
+        : _isTrustedSender(normalizedRequesterMac);
+    final isTrustedFriendRequester = !isPreviewRequest && isAuthorized;
     return SharedDownloadRequestMapping(
       normalizedRequesterMac: normalizedRequesterMac,
       isPreviewRequest: isPreviewRequest,

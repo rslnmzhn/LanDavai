@@ -213,12 +213,19 @@ class ThumbnailCacheService implements SharedCacheThumbnailStore {
     }
   }
 
+  static String _sanitizeToken(String input) {
+    final sanitized = input.replaceAll(RegExp(r'[^a-zA-Z0-9_\-]'), '_');
+    return sanitized.isEmpty ? '_' : sanitized;
+  }
+
   Future<File> _resolveOwnerThumbnailFile({
     required String cacheId,
     required String thumbnailId,
   }) async {
     final root = await _resolveThumbnailRootDirectory();
-    return File(p.join(root.path, 'owner', cacheId, '$thumbnailId.jpg'));
+    final safeCacheId = _sanitizeToken(cacheId);
+    final safeThumbnailId = _sanitizeToken(thumbnailId);
+    return File(p.join(root.path, 'owner', safeCacheId, '$safeThumbnailId.jpg'));
   }
 
   Future<File> _resolveReceiverThumbnailFile({
@@ -227,14 +234,16 @@ class ThumbnailCacheService implements SharedCacheThumbnailStore {
     required String thumbnailId,
   }) async {
     final root = await _resolveThumbnailRootDirectory();
-    final normalizedOwner = ownerMacAddress.toLowerCase().replaceAll(':', '-');
+    final normalizedOwner = _sanitizeToken(ownerMacAddress.toLowerCase().replaceAll(':', '-'));
+    final safeCacheId = _sanitizeToken(cacheId);
+    final safeThumbnailId = _sanitizeToken(thumbnailId);
     return File(
       p.join(
         root.path,
         'receiver',
         normalizedOwner,
-        cacheId,
-        '$thumbnailId.jpg',
+        safeCacheId,
+        '$safeThumbnailId.jpg',
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../app/theme/app_spacing.dart';
+import '../../../app/theme/app_typography.dart';
 import '../application/nearby_transfer_session_store.dart';
 import '../data/nearby_transfer_transport_adapter.dart';
 
@@ -52,9 +53,9 @@ class _NearbyTransferConnectionConfirmViewState
           const SizedBox(height: AppSpacing.sm),
           Text(
             _store.verificationCode.join(),
-            style: Theme.of(
-              context,
-            ).textTheme.headlineSmall?.copyWith(fontFamily: 'JetBrainsMono'),
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontFamily: AppTypography.monoFontFamily,
+            ),
           ),
         ],
       );

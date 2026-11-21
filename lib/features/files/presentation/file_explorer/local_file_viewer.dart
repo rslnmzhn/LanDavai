@@ -15,6 +15,7 @@ import 'package:video_player/video_player.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../app/theme/app_radius.dart';
 import '../../../../app/theme/app_spacing.dart';
+import '../../../../app/theme/app_typography.dart';
 import '../../application/preview_cache_owner.dart';
 import 'file_explorer_models.dart';
 
@@ -999,7 +1000,7 @@ class _TextFileViewerState extends State<_TextFileViewer> {
               child: SelectableText(
                 _content,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontFamily: 'JetBrainsMono',
+                  fontFamily: AppTypography.monoFontFamily,
                   height: 1.45,
                 ),
               ),

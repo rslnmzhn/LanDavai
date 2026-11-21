@@ -78,32 +78,35 @@ class ExplorerEntityTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppRadius.md),
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        tileColor: AppColors.surface,
+        leading: ExplorerEntityLeading(
+          isDirectory: entry.isDirectory,
+          filePath: entry.filePath,
+          previewCacheOwner: previewCacheOwner,
+        ),
+        title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          entry.subtitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: onDelete == null
+            ? null
+            : IconButton(
+                tooltip: 'files.remove_from_sharing'.tr(),
+                onPressed: () async {
+                  await onDelete!();
+                },
+                icon: const Icon(Icons.delete_outline_rounded),
+              ),
+        onTap: onTap,
       ),
-      tileColor: AppColors.surface,
-      leading: ExplorerEntityLeading(
-        isDirectory: entry.isDirectory,
-        filePath: entry.filePath,
-        previewCacheOwner: previewCacheOwner,
-      ),
-      title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        entry.subtitle,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: onDelete == null
-          ? null
-          : IconButton(
-              tooltip: 'files.remove_from_sharing'.tr(),
-              onPressed: () async {
-                await onDelete!();
-              },
-              icon: const Icon(Icons.delete_outline_rounded),
-            ),
-      onTap: onTap,
     );
   }
 }

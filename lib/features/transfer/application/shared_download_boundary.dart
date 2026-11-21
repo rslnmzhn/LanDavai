@@ -47,6 +47,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
     required String Function() localNameProvider,
     required String Function() localDeviceMacProvider,
     required bool Function(String? normalizedMac) isTrustedSender,
+    bool Function(String ip, String? normalizedMac)? isTrustedSenderIpAndMac,
     required String? Function({
       required String ownerIp,
       required String cacheId,
@@ -177,6 +178,7 @@ class SharedDownloadBoundary extends ChangeNotifier {
        ),
        _requestMapper = SharedDownloadRequestMapper(
          isTrustedSender: isTrustedSender,
+         isTrustedSenderIpAndMac: isTrustedSenderIpAndMac,
        );
 
   final LanDiscoveryService _lanDiscoveryService;

@@ -343,6 +343,20 @@ class DiscoveryCompositionFactory {
       localDeviceMacProvider: () => controller.localDeviceMac,
       isTrustedSender: (normalizedMac) =>
           trustedLanPeerStore.isTrustedMac(normalizedMac),
+      isTrustedSenderIpAndMac: (ip, normalizedMac) {
+        if (!trustedLanPeerStore.isTrustedMac(normalizedMac)) {
+          return false;
+        }
+        final boundMac = deviceRegistry.macForIp(ip);
+        if (boundMac != null && boundMac.isNotEmpty && boundMac != normalizedMac) {
+          return false;
+        }
+        final knownIp = deviceRegistry.lastKnownIpForMac(normalizedMac);
+        if (knownIp != null && knownIp.isNotEmpty && knownIp != ip.trim()) {
+          return false;
+        }
+        return true;
+      },
       resolveRemoteOwnerMac:
           ({required String ownerIp, required String cacheId}) =>
               remoteShareBrowser.ownerMacForCache(

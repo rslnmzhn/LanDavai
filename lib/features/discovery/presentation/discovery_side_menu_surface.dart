@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../../../app/theme/app_colors.dart';
 import '../../../app/theme/app_radius.dart';
 import '../../../app/theme/app_spacing.dart';
+import '../../../app/theme/app_typography.dart';
 import '../../settings/domain/app_settings.dart';
 import '../../transfer/application/shared_cache_catalog.dart';
 import '../../transfer/application/shared_cache_index_store.dart';
@@ -539,82 +540,87 @@ class _VideoLinkServerCard extends StatelessWidget {
     final activeSession = videoLinkSessionBoundary.activeSession;
     final activeUrl = videoLinkSessionBoundary.watchUrl;
     final enabled = activeSession != null;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SwitchListTile.adaptive(
-          secondary: Icon(
-            enabled ? Icons.language_rounded : Icons.link_off_rounded,
-            color: enabled ? AppColors.success : AppColors.textMuted,
+    return Material(
+      type: MaterialType.transparency,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile.adaptive(
+            secondary: Icon(
+              enabled ? Icons.language_rounded : Icons.link_off_rounded,
+              color: enabled ? AppColors.success : AppColors.textMuted,
+            ),
+            value: enabled,
+            onChanged: onToggle,
+            title: Text('discovery.menu.video_server'.tr()),
           ),
-          value: enabled,
-          onChanged: onToggle,
-          title: Text('discovery.menu.video_server'.tr()),
-        ),
-        ListTile(
-          title: DropdownButtonFormField<String>(
-            initialValue: selectedVideoId,
-            isExpanded: true,
-            onTap: onOpenVideoList,
-            items: videos
-                .map(
-                  (file) => DropdownMenuItem<String>(
-                    value: file.id,
-                    child: Text(
-                      '${file.cacheDisplayName} • ${file.relativePath}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                    ),
-                  ),
-                )
-                .toList(growable: false),
-            selectedItemBuilder: (context) {
-              return videos
+          ListTile(
+            title: DropdownButtonFormField<String>(
+              initialValue: selectedVideoId,
+              isExpanded: true,
+              onTap: onOpenVideoList,
+              items: videos
                   .map(
-                    (file) => Text(
-                      '${file.cacheDisplayName} • ${file.relativePath}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
+                    (file) => DropdownMenuItem<String>(
+                      value: file.id,
+                      child: Text(
+                        '${file.cacheDisplayName} • ${file.relativePath}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                      ),
                     ),
                   )
-                  .toList(growable: false);
-            },
-            onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
-            decoration: InputDecoration(
-              isDense: true,
-              labelText: 'discovery.menu.video_picker_label'.tr(),
-            ),
-          ),
-        ),
-        if (isLoadingVideos)
-          const ListTile(title: LinearProgressIndicator(minHeight: 2)),
-        if (activeSession != null)
-          ListTile(
-            dense: true,
-            title: Text(
-              'discovery.menu.video_file_label'.tr(
-                namedArgs: <String, String>{'fileName': activeSession.fileName},
+                  .toList(growable: false),
+              selectedItemBuilder: (context) {
+                return videos
+                    .map(
+                      (file) => Text(
+                        '${file.cacheDisplayName} • ${file.relativePath}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        softWrap: false,
+                      ),
+                    )
+                    .toList(growable: false);
+              },
+              onChanged: videos.isEmpty ? null : onSelectedVideoChanged,
+              decoration: InputDecoration(
+                isDense: true,
+                labelText: 'discovery.menu.video_picker_label'.tr(),
               ),
             ),
           ),
-        if (activeUrl != null)
-          ListTile(
-            dense: true,
-            title: SelectableText(
-              activeUrl,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(fontFamily: 'JetBrainsMono'),
+          if (isLoadingVideos)
+            const ListTile(title: LinearProgressIndicator(minHeight: 2)),
+          if (activeSession != null)
+            ListTile(
+              dense: true,
+              title: Text(
+                'discovery.menu.video_file_label'.tr(
+                  namedArgs: <String, String>{
+                    'fileName': activeSession.fileName,
+                  },
+                ),
+              ),
             ),
-            trailing: OutlinedButton.icon(
-              onPressed: onCopyLink,
-              icon: const Icon(Icons.copy_rounded),
-              label: Text('common.copy'.tr()),
+          if (activeUrl != null)
+            ListTile(
+              dense: true,
+              title: SelectableText(
+                activeUrl,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontFamily: AppTypography.monoFontFamily,
+                ),
+              ),
+              trailing: OutlinedButton.icon(
+                onPressed: onCopyLink,
+                icon: const Icon(Icons.copy_rounded),
+                label: Text('common.copy'.tr()),
+              ),
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 }

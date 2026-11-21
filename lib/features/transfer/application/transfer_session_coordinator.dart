@@ -72,10 +72,8 @@ class TransferSessionCoordinator extends ChangeNotifier {
     required String Function() localNameProvider,
     required String Function() localDeviceMacProvider,
     required bool Function(String? normalizedMac) isTrustedSender,
-    required String? Function({
-      required String ownerIp,
-      required String cacheId,
-    })
+    bool Function(String ip, String? normalizedMac)? isTrustedSenderIpAndMac,
+    required String? Function({required String ownerIp, required String cacheId})
     resolveRemoteOwnerMac,
     Future<RemoteShareAccessProjectionLoadResult> Function({
       required String ownerIp,
@@ -164,6 +162,7 @@ class TransferSessionCoordinator extends ChangeNotifier {
       localNameProvider: localNameProvider,
       localDeviceMacProvider: localDeviceMacProvider,
       isTrustedSender: isTrustedSender,
+      isTrustedSenderIpAndMac: isTrustedSenderIpAndMac,
       resolveRemoteOwnerMac: resolveRemoteOwnerMac,
       publishNotice: _publishNotice,
       updateDownloadProgress:

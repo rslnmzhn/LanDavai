@@ -26,9 +26,9 @@ class DiscoveryDesktopLayoutSurface extends StatelessWidget {
     final sidePanelSurface = SizedBox(
       key: const Key('discovery-desktop-side-panel'),
       width: sidePanelWidth,
-      child: ColoredBox(color: AppColors.surface, child: sidePanel),
+      child: Material(color: AppColors.surface, child: sidePanel),
     );
-    final mainPane = ColoredBox(
+    final mainPane = Material(
       key: const Key('discovery-desktop-content-pane'),
       color: Theme.of(context).scaffoldBackgroundColor,
       child: Column(

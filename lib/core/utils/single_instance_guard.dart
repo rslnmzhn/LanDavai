@@ -84,7 +84,19 @@ class SingleInstanceGuard {
       return SingleInstanceGuardHandle.notEnforced();
     }
 
-    final directory = lockDirectory ?? Directory.systemTemp;
+    Directory directory;
+    if (lockDirectory != null) {
+      directory = lockDirectory;
+    } else if (Platform.isLinux &&
+        Platform.environment['XDG_RUNTIME_DIR'] != null &&
+        Platform.environment['XDG_RUNTIME_DIR']!.isNotEmpty) {
+      directory = Directory(Platform.environment['XDG_RUNTIME_DIR']!);
+    } else {
+      final user = Platform.environment['USER'] ??
+          Platform.environment['USERNAME'] ??
+          'default';
+      directory = Directory(p.join(Directory.systemTemp.path, 'landa_$user'));
+    }
     final file = File(p.join(directory.path, lockFileName));
     await file.parent.create(recursive: true);
     final lockKey = _normalizeLockKey(file.path);
