@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:landa/app/update/application/app_update_boundary.dart';
 import 'package:landa/app/update/domain/app_update_models.dart';
@@ -12,6 +13,10 @@ import 'package:path/path.dart' as p;
 import 'test_support/localized_test_app.dart';
 
 void main() {
+  setUp(() {
+    rootBundle.clear();
+  });
+
   testWidgets('settings network tab shows the update-available surface', (
     tester,
   ) async {
@@ -388,11 +393,7 @@ Future<void> _pumpNetworkTab(
   required Locale locale,
 }) async {
   final targetController = TextEditingController();
-  addTearDown(() async {
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    targetController.dispose();
-  });
+  addTearDown(targetController.dispose);
   await tester.pumpWidget(
     buildLocalizedTestApp(
       locale: locale,
