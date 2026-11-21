@@ -1,18 +1,19 @@
 allprojects {
     repositories {
-        // Aliyun mirrors come first: dl.google.com serves 404 for artifact
-        // downloads from restricted networks while general Google endpoints
-        // stay reachable. Original repos remain as fallback.
-        maven("https://maven.aliyun.com/repository/google")
-        maven("https://maven.aliyun.com/repository/public")
         google()
         mavenCentral()
+        // Aliyun mirrors as fallback when dl.google.com returns 404 in
+        // restricted networks.
+        maven("https://maven.aliyun.com/repository/google")
+        maven("https://maven.aliyun.com/repository/public")
     }
 }
 
 subprojects {
     buildscript {
         repositories {
+            google()
+            mavenCentral()
             maven("https://maven.aliyun.com/repository/google")
             maven("https://maven.aliyun.com/repository/public")
         }
