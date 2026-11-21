@@ -45,7 +45,10 @@ void main() {
     test('Happy Path: TransferPathPolicy sanitizes legitimate file paths correctly', () {
       const policy = TransferPathPolicy();
 
-      expect(policy.sanitizeRelativePath('photos/vacation/beach.jpg'), equals('photos/vacation/beach.jpg'));
+      expect(
+        policy.sanitizeRelativePath('photos/vacation/beach.jpg'),
+        equals(p.join('photos', 'vacation', 'beach.jpg')),
+      );
       expect(policy.sanitizeRelativePath('normal_document.pdf'), equals('normal_document.pdf'));
       expect(policy.sanitizeRelativePath(''), equals('file.bin'));
     });
