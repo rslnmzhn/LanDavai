@@ -1,27 +1,40 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import '../app_update_config.dart';
 import '../domain/app_update_models.dart';
 
 class GithubReleaseUpdateService {
+  static const int maxJsonResponseBytes = 4 * 1024 * 1024;
+  static const int maxRedirects = 5;
+  static const Duration defaultConnectionTimeout = Duration(seconds: 15);
+  static const Duration defaultRequestTimeout = Duration(seconds: 30);
+
   GithubReleaseUpdateService({
     required this.owner,
     required this.repository,
     HttpClient Function()? httpClientFactory,
     Uri? latestReleaseUri,
+    Duration connectionTimeout = defaultConnectionTimeout,
+    Duration requestTimeout = defaultRequestTimeout,
   }) : _httpClientFactory = httpClientFactory ?? HttpClient.new,
        _latestReleaseUri =
            latestReleaseUri ??
            Uri.https(
              'api.github.com',
              '/repos/$owner/$repository/releases/latest',
-           );
+           ),
+       _connectionTimeout = connectionTimeout,
+       _requestTimeout = requestTimeout;
 
   final String owner;
   final String repository;
   final HttpClient Function() _httpClientFactory;
   final Uri _latestReleaseUri;
+  final Duration _connectionTimeout;
+  final Duration _requestTimeout;
 
   Future<AppUpdateRelease> fetchLatestStableRelease() async {
     final releaseJson = await _readJson(_latestReleaseUri);
@@ -71,22 +84,82 @@ class GithubReleaseUpdateService {
 
   Future<Object?> _readJson(Uri uri) async {
     final client = _httpClientFactory();
+    client.connectionTimeout = _connectionTimeout;
     try {
-      final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      request.headers.set(HttpHeaders.userAgentHeader, 'LandaUpdateCheck/1.0');
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      if (response.statusCode != HttpStatus.ok) {
-        throw HttpException(
-          'GitHub request failed with status ${response.statusCode}',
-          uri: uri,
-        );
+      var currentUri = uri;
+      for (var redirectCount = 0; ; redirectCount += 1) {
+        if (!_isAllowedReleaseUri(currentUri)) {
+          throw FormatException(
+            'Refusing non-HTTPS release metadata URL: $currentUri',
+          );
+        }
+        final request = await client.getUrl(currentUri).timeout(_requestTimeout);
+        request.followRedirects = false;
+        request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+        request.headers.set(HttpHeaders.userAgentHeader, 'LandaUpdateCheck/1.0');
+        final response = await request.close().timeout(_requestTimeout);
+        if (_isRedirectStatus(response.statusCode)) {
+          final location = response.headers.value(HttpHeaders.locationHeader);
+          await response.drain<void>().timeout(_requestTimeout);
+          if (location == null || location.trim().isEmpty) {
+            throw HttpException(
+              'GitHub redirect missing Location header (${response.statusCode})',
+              uri: currentUri,
+            );
+          }
+          if (redirectCount >= maxRedirects) {
+            throw HttpException(
+              'Too many redirects while fetching release metadata',
+              uri: currentUri,
+            );
+          }
+          currentUri = currentUri.resolve(location.trim());
+          continue;
+        }
+        if (response.statusCode != HttpStatus.ok) {
+          await response.drain<void>().timeout(_requestTimeout);
+          throw HttpException(
+            'GitHub request failed with status ${response.statusCode}',
+            uri: currentUri,
+          );
+        }
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response.timeout(_requestTimeout)) {
+          if (builder.length + chunk.length > maxJsonResponseBytes) {
+            throw const FormatException(
+              'GitHub release metadata exceeds size limit.',
+            );
+          }
+          builder.add(chunk);
+        }
+        final body = utf8.decode(builder.takeBytes());
+        return jsonDecode(body);
       }
-      return jsonDecode(body);
     } finally {
       client.close(force: true);
     }
+  }
+
+  static bool _isRedirectStatus(int statusCode) {
+    return statusCode == HttpStatus.movedPermanently ||
+        statusCode == HttpStatus.found ||
+        statusCode == HttpStatus.seeOther ||
+        statusCode == HttpStatus.temporaryRedirect ||
+        statusCode == HttpStatus.permanentRedirect;
+  }
+
+  static bool _isAllowedReleaseUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme == 'https') {
+      return uri.host.trim().isNotEmpty;
+    }
+    if (scheme == 'http' &&
+        (uri.host == '127.0.0.1' ||
+            uri.host == 'localhost' ||
+            uri.host == '::1')) {
+      return true;
+    }
+    return false;
   }
 
   void _validateStableManifest({
@@ -131,15 +204,29 @@ class GithubReleaseUpdateService {
         .cast<Object?>()
         .map((value) {
           final map = _requireMap(value, 'release manifest asset');
+          final downloadUrl = _requireString(map, 'downloadUrl');
+          final parsedDownloadUri = Uri.tryParse(downloadUrl);
+          if (parsedDownloadUri == null ||
+              !_isAllowedReleaseUri(parsedDownloadUri)) {
+            throw FormatException(
+              'Refusing non-HTTPS release asset downloadUrl: $downloadUrl',
+            );
+          }
+          final size = _requireInt(map, 'size');
+          if (size < 0) {
+            throw const FormatException(
+              'Expected non-negative integer for size.',
+            );
+          }
           return AppUpdateAsset(
             platform: _requireString(map, 'platform'),
             arch: _requireString(map, 'arch'),
             format: _requireString(map, 'format'),
             primary: map['primary'] == true,
             fileName: _requireString(map, 'fileName'),
-            size: _requireInt(map, 'size'),
+            size: size,
             sha256: _requireString(map, 'sha256'),
-            downloadUrl: _requireString(map, 'downloadUrl'),
+            downloadUrl: downloadUrl,
           );
         })
         .toList(growable: false);

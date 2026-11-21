@@ -209,83 +209,126 @@ class AppSettingsNetworkTab extends StatelessWidget {
           ],
         ),
         const SizedBox(height: AppSpacing.md),
-        AppSettingsSectionCard(
-          title: 'settings.updates_title'.tr(),
-          description: 'settings.updates_description'.tr(),
-          children: [
-            Text(
-              appUpdateBoundary.currentVersion == null
-                  ? 'settings.updates_current_version_unknown'.tr()
-                  : 'settings.updates_current_version'.tr(
-                      namedArgs: {'version': appUpdateBoundary.currentVersion!},
-                    ),
-            ),
-            if (appUpdateBoundary.latestRelease != null) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'settings.updates_latest_version'.tr(
-                  namedArgs: {
-                    'version': appUpdateBoundary.latestRelease!.version,
-                  },
-                ),
-              ),
-            ],
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              _updateStatusLabel(appUpdateBoundary).tr(
-                namedArgs: appUpdateBoundary.latestRelease == null
-                    ? const <String, String>{}
-                    : {
-                        'version': appUpdateBoundary.latestRelease!.version,
-                        'path': appUpdateBoundary.applyMessage ?? '',
-                      },
-              ),
-            ),
-            if (appUpdateBoundary.selectedAsset != null) ...[
-              const SizedBox(height: AppSpacing.xs),
-              Text(
-                'settings.updates_asset'.tr(
-                  namedArgs: {
-                    'fileName': appUpdateBoundary.selectedAsset!.fileName,
-                  },
-                ),
-              ),
-            ],
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.sm,
+        AnimatedBuilder(
+          animation: appUpdateBoundary,
+          builder: (context, _) {
+            final errorDetail = _updateErrorDetail(appUpdateBoundary);
+            final totalBytes =
+                appUpdateBoundary.downloadTotalBytes ??
+                appUpdateBoundary.selectedAsset?.size;
+            final receivedBytes = appUpdateBoundary.downloadReceivedBytes;
+            return AppSettingsSectionCard(
+              title: 'settings.updates_title'.tr(),
+              description: 'settings.updates_description'.tr(),
               children: [
-                FilledButton(
-                  onPressed: appUpdateBoundary.isChecking
-                      ? null
-                      : () => unawaited(appUpdateBoundary.checkForUpdates()),
-                  child: Text(
-                    appUpdateBoundary.phase == AppUpdateCheckPhase.failed
-                        ? 'settings.updates_retry'.tr()
-                        : 'settings.updates_check'.tr(),
+                Text(
+                  appUpdateBoundary.currentVersion == null
+                      ? 'settings.updates_current_version_unknown'.tr()
+                      : 'settings.updates_current_version'.tr(
+                          namedArgs: {
+                            'version': appUpdateBoundary.currentVersion!,
+                          },
+                        ),
+                ),
+                if (appUpdateBoundary.latestRelease != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'settings.updates_latest_version'.tr(
+                      namedArgs: {
+                        'version': appUpdateBoundary.latestRelease!.version,
+                      },
+                    ),
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  _updateStatusLabel(appUpdateBoundary).tr(
+                    namedArgs: {
+                      if (appUpdateBoundary.latestRelease != null)
+                        'version': appUpdateBoundary.latestRelease!.version,
+                      'path': appUpdateBoundary.applyMessage ?? '',
+                    },
                   ),
                 ),
-                if (appUpdateBoundary.isUpdateAvailable &&
-                    !appUpdateBoundary.canInstallDownloadedUpdate)
-                  OutlinedButton(
-                    onPressed: appUpdateBoundary.isApplying
-                        ? null
-                        : () => unawaited(appUpdateBoundary.applyUpdate()),
-                    child: Text(_applyActionLabel(appUpdateBoundary).tr()),
+                if (appUpdateBoundary.isApplying) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  LinearProgressIndicator(
+                    value: appUpdateBoundary.downloadProgress,
                   ),
-                if (appUpdateBoundary.canInstallDownloadedUpdate)
-                  OutlinedButton(
-                    onPressed: appUpdateBoundary.isApplying
-                        ? null
-                        : () => unawaited(
-                            appUpdateBoundary.installDownloadedUpdate(),
-                          ),
-                    child: Text('settings.updates_install'.tr()),
+                  if (appUpdateBoundary.isDownloading &&
+                      (receivedBytes > 0 ||
+                          (totalBytes != null && totalBytes > 0))) ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      _formatDownloadProgressLabel(
+                        receivedBytes: receivedBytes,
+                        totalBytes: totalBytes,
+                      ),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+                if (errorDetail != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    errorDetail,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: AppColors.error),
                   ),
+                ],
+                if (appUpdateBoundary.selectedAsset != null) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'settings.updates_asset'.tr(
+                      namedArgs: {
+                        'fileName': appUpdateBoundary.selectedAsset!.fileName,
+                      },
+                    ),
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.sm),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    FilledButton(
+                      onPressed:
+                          (appUpdateBoundary.isChecking ||
+                              appUpdateBoundary.isApplying)
+                          ? null
+                          : () =>
+                                unawaited(appUpdateBoundary.checkForUpdates()),
+                      child: Text(
+                        appUpdateBoundary.phase == AppUpdateCheckPhase.failed
+                            ? 'settings.updates_retry'.tr()
+                            : 'settings.updates_check'.tr(),
+                      ),
+                    ),
+                    if (appUpdateBoundary.isUpdateAvailable &&
+                        !appUpdateBoundary.canInstallDownloadedUpdate)
+                      OutlinedButton(
+                        onPressed: appUpdateBoundary.isApplying
+                            ? null
+                            : () => unawaited(appUpdateBoundary.applyUpdate()),
+                        child: Text(_applyActionLabel(appUpdateBoundary).tr()),
+                      ),
+                    if (appUpdateBoundary.canInstallDownloadedUpdate)
+                      OutlinedButton(
+                        onPressed: appUpdateBoundary.isApplying
+                            ? null
+                            : () => unawaited(
+                                appUpdateBoundary.installDownloadedUpdate(),
+                              ),
+                        child: Text('settings.updates_install'.tr()),
+                      ),
+                  ],
+                ),
               ],
-            ),
-          ],
+            );
+          },
         ),
       ],
     );
@@ -637,6 +680,9 @@ class TextSettingField extends StatelessWidget {
 }
 
 String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
+  if (appUpdateBoundary.isInstalling) {
+    return 'settings.updates_apply_status_installing';
+  }
   if (appUpdateBoundary.isApplying) {
     return 'settings.updates_apply_status_applying';
   }
@@ -664,6 +710,9 @@ String _updateStatusLabel(AppUpdateBoundary appUpdateBoundary) {
 }
 
 String _applyActionLabel(AppUpdateBoundary appUpdateBoundary) {
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.failed) {
+    return 'settings.updates_retry_download';
+  }
   final asset = appUpdateBoundary.selectedAsset;
   if (asset == null) {
     return 'settings.updates_apply';
@@ -672,6 +721,66 @@ String _applyActionLabel(AppUpdateBoundary appUpdateBoundary) {
     return 'settings.updates_apply_android';
   }
   return 'settings.updates_apply_desktop';
+}
+
+String? _updateErrorDetail(AppUpdateBoundary appUpdateBoundary) {
+  if (appUpdateBoundary.applyPhase == AppUpdateApplyPhase.failed) {
+    final message = appUpdateBoundary.applyMessage?.trim();
+    if (message != null && message.isNotEmpty) {
+      return message;
+    }
+  }
+  if (appUpdateBoundary.phase == AppUpdateCheckPhase.failed) {
+    final error = appUpdateBoundary.lastError?.trim();
+    if (error != null && error.isNotEmpty) {
+      return error;
+    }
+  }
+  return null;
+}
+
+String _formatDownloadProgressLabel({
+  required int receivedBytes,
+  required int? totalBytes,
+}) {
+  final receivedLabel = _formatUpdateBytes(receivedBytes);
+  if (totalBytes != null && totalBytes > 0) {
+    final percent = ((receivedBytes * 100) ~/ totalBytes).clamp(0, 100);
+    return 'settings.updates_download_progress'.tr(
+      namedArgs: <String, String>{
+        'percent': '$percent',
+        'received': receivedLabel,
+        'total': _formatUpdateBytes(totalBytes),
+      },
+    );
+  }
+  return 'settings.updates_download_progress_indeterminate'.tr(
+    namedArgs: <String, String>{'received': receivedLabel},
+  );
+}
+
+String _formatUpdateBytes(int bytes) {
+  if (bytes < 1024) {
+    return 'common.format_size_b'.tr(
+      namedArgs: <String, String>{'value': '$bytes'},
+    );
+  }
+  final kb = bytes / 1024;
+  if (kb < 1024) {
+    return 'common.format_size_kb'.tr(
+      namedArgs: <String, String>{'value': kb.toStringAsFixed(1)},
+    );
+  }
+  final mb = kb / 1024;
+  if (mb < 1024) {
+    return 'common.format_size_mb'.tr(
+      namedArgs: <String, String>{'value': mb.toStringAsFixed(1)},
+    );
+  }
+  final gb = mb / 1024;
+  return 'common.format_size_gb'.tr(
+    namedArgs: <String, String>{'value': gb.toStringAsFixed(2)},
+  );
 }
 
 String _backgroundScanIntervalLabel(BackgroundScanIntervalOption option) {

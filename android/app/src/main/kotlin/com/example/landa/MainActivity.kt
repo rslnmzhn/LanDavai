@@ -975,7 +975,11 @@ class MainActivity : FlutterActivity() {
                 data = Uri.parse("package:$packageName")
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            startActivity(settingsIntent)
+            try {
+                startActivity(settingsIntent)
+            } catch (_: Throwable) {
+                // Ignore if settings screen cannot be opened directly; user still gets actionable message.
+            }
             throw IllegalStateException("Allow Landa to install unknown apps, then tap install again.")
         }
 
@@ -1053,14 +1057,10 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun fileUri(file: File): Uri {
-        return try {
-            FileProvider.getUriForFile(
-                this,
-                "${applicationContext.packageName}.fileprovider",
-                file,
-            )
-        } catch (_: Throwable) {
-            Uri.fromFile(file)
-        }
+        return FileProvider.getUriForFile(
+            this,
+            "${applicationContext.packageName}.fileprovider",
+            file,
+        )
     }
 }
