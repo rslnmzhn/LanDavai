@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'lan_interface_filter.dart';
+
 class DiscoveryRawNetworkInterface {
   const DiscoveryRawNetworkInterface({
     required this.name,
@@ -18,16 +20,33 @@ abstract class DiscoveryNetworkInterfaceCatalog {
 
 class SystemDiscoveryNetworkInterfaceCatalog
     implements DiscoveryNetworkInterfaceCatalog {
+  SystemDiscoveryNetworkInterfaceCatalog({
+    bool? isMobileOverride,
+    Future<List<NetworkInterface>> Function()? interfaceLister,
+  }) : _isMobileOverride = isMobileOverride,
+       _interfaceLister = interfaceLister;
+
+  final bool? _isMobileOverride;
+  final Future<List<NetworkInterface>> Function()? _interfaceLister;
+
+  bool get _isMobile =>
+      _isMobileOverride ?? (Platform.isAndroid || Platform.isIOS);
+
   @override
   Future<List<DiscoveryRawNetworkInterface>> loadIpv4Interfaces() async {
-    final interfaces = await NetworkInterface.list(
-      type: InternetAddressType.IPv4,
-      includeLoopback: false,
-      includeLinkLocal: false,
-    );
+    final interfaces = await (_interfaceLister != null
+        ? _interfaceLister()
+        : NetworkInterface.list(
+            type: InternetAddressType.IPv4,
+            includeLoopback: false,
+            includeLinkLocal: false,
+          ));
 
     final snapshots = <DiscoveryRawNetworkInterface>[];
     for (final interface in interfaces) {
+      if (_isMobile && isNonLanInterfaceName(interface.name)) {
+        continue;
+      }
       final ipv4Addresses =
           interface.addresses
               .where((address) => address.type == InternetAddressType.IPv4)

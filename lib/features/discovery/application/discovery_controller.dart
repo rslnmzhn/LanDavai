@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
 import '../../../core/utils/app_notification_service.dart';
+import '../../../core/utils/local_device_name_resolver.dart';
 import '../../../core/utils/path_opener.dart';
 import '../../history/application/download_history_boundary.dart';
 import '../../history/data/transfer_history_repository.dart';
@@ -115,6 +116,7 @@ class DiscoveryController extends ChangeNotifier {
     Duration presenceExpiryCheckInterval = const Duration(seconds: 2),
     Duration androidResumeRestartDelay = defaultAndroidResumeRestartDelay,
     bool Function()? isAndroidProvider,
+    Future<String> Function()? localDeviceNameLoader,
     DateTime Function()? nowProvider,
   }) : _lanDiscoveryService = lanDiscoveryService,
        _deviceRegistry = deviceRegistry,
@@ -135,6 +137,8 @@ class DiscoveryController extends ChangeNotifier {
        _presenceExpiryCheckInterval = presenceExpiryCheckInterval,
        _androidResumeRestartDelay = androidResumeRestartDelay,
        _isAndroid = isAndroidProvider ?? (() => Platform.isAndroid),
+       _localDeviceNameLoader =
+           localDeviceNameLoader ?? LocalDeviceNameResolver().resolve,
        _now = nowProvider ?? DateTime.now,
        _nearbyTransferAvailabilityStore =
            nearbyTransferAvailabilityStore ??
@@ -349,6 +353,7 @@ class DiscoveryController extends ChangeNotifier {
   final Duration _presenceExpiryCheckInterval;
   final Duration _androidResumeRestartDelay;
   final bool Function() _isAndroid;
+  final Future<String> Function() _localDeviceNameLoader;
   final DateTime Function() _now;
   final DiscoveryLifecycleTimers _lifecycleTimers = DiscoveryLifecycleTimers();
   late final DiscoveryPresenceExpiryPolicy _presenceExpiryPolicy;
@@ -387,7 +392,7 @@ class DiscoveryController extends ChangeNotifier {
 
   DiscoveryFlowState _state = DiscoveryFlowState.idle;
   String? _localIp;
-  final String _localName = Platform.localHostname;
+  String _localName = Platform.localHostname;
   String _localDeviceMac = '02:00:00:00:00:01';
   String _localPeerId = '';
   bool _ownerCacheMacRebindChecked = false;
@@ -486,6 +491,7 @@ class DiscoveryController extends ChangeNotifier {
     }
 
     _localPeerId = await _localPeerIdentityStore.loadOrCreateLocalPeerId();
+    await _resolveLocalDeviceName();
     await _discoveryNetworkScopeStore.refresh();
     _consumeNetworkScopeState();
     _resolveLocalDeviceMac();
@@ -1335,6 +1341,19 @@ class DiscoveryController extends ChangeNotifier {
     _activeDiscoveryLocalIps = <String>{};
     _activeDiscoveryConfiguredTargetIps = <String>{};
     await _ensureDiscoveryScopeApplied();
+  }
+
+  Future<void> _resolveLocalDeviceName() async {
+    try {
+      final resolved = (await _localDeviceNameLoader()).trim();
+      if (_isDisposed || resolved.isEmpty || resolved == _localName) {
+        return;
+      }
+      _localName = resolved;
+      notifyListeners();
+    } catch (error) {
+      _log('Failed to resolve local device name: $error');
+    }
   }
 
   void _resolveLocalDeviceMac() {

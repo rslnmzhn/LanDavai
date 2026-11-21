@@ -1,11 +1,24 @@
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
+import 'lan_interface_filter.dart';
+
 class NetworkHostScanner {
   static const List<int> _probePorts = <int>[445, 139, 22, 53, 80, 443];
   static const int _defaultParallelism = 48;
+  static const int _proxyArpPerSubnetMacThreshold = 8;
   static const Duration _probeTimeout = Duration(milliseconds: 220);
   static const Duration _arpPrimeDelay = Duration(milliseconds: 600);
+  static final RegExp _neighborFailureStatePattern = RegExp(
+    r'\b(?:FAILED|INCOMPLETE|NONE)\b',
+    caseSensitive: false,
+  );
+  static final RegExp _neighborInterfacePattern = RegExp(
+    r'\b(?:dev|on)\s+([^\s]+)',
+    caseSensitive: false,
+  );
 
   NetworkHostScanner({this.allowTcpFallback = false});
 
@@ -108,37 +121,85 @@ class NetworkHostScanner {
     }
   }
 
+  @visibleForTesting
+  Set<String> filterProxyArpNoiseForTest(
+    Set<String> hosts,
+    Map<String, String> hostMacs,
+  ) => _filterProxyArpNoise(hosts, hostMacs);
+
   Set<String> _filterProxyArpNoise(
     Set<String> hosts,
     Map<String, String> hostMacs,
   ) {
+    if (hosts.isEmpty) {
+      return hosts;
+    }
+
+    final ipsBySubnetAndMac = <String, List<String>>{};
+    for (final ip in hosts) {
+      final mac = hostMacs[ip];
+      final subnet = _subnet24Prefix(ip);
+      if (mac == null || subnet == null) {
+        continue;
+      }
+      ipsBySubnetAndMac.putIfAbsent('$subnet|$mac', () => <String>[]).add(ip);
+    }
+
+    final collapsedIps = <String>{};
+    final suppressedIps = <String>{};
+    for (final entry in ipsBySubnetAndMac.entries) {
+      final ips = entry.value;
+      if (ips.length < _proxyArpPerSubnetMacThreshold) {
+        continue;
+      }
+      ips.sort(_compareIp);
+      collapsedIps.add(ips.first);
+      suppressedIps.addAll(ips.skip(1));
+    }
+
+    var workingHosts = hosts;
+    if (suppressedIps.isNotEmpty) {
+      workingHosts = hosts
+          .where((ip) => !suppressedIps.contains(ip) || collapsedIps.contains(ip))
+          .toSet();
+      _log(
+        'Per-subnet proxy-ARP noise detected: collapsed '
+        '${suppressedIps.length} duplicate-MAC entries.',
+      );
+    }
+
     final countByMac = <String, int>{};
-    for (final mac in hostMacs.values) {
-      countByMac[mac] = (countByMac[mac] ?? 0) + 1;
+    for (final ip in workingHosts) {
+      final mac = hostMacs[ip];
+      if (mac != null) {
+        countByMac[mac] = (countByMac[mac] ?? 0) + 1;
+      }
     }
     if (countByMac.isEmpty) {
-      return hosts;
+      return workingHosts;
     }
 
     final sorted = countByMac.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
     final dominant = sorted.first;
-    final dominantShare = dominant.value / hosts.length;
+    final dominantShare = dominant.value / workingHosts.length;
     if (dominant.value < 20 || dominantShare < 0.70) {
-      return hosts;
+      return workingHosts;
     }
 
     final dominantMac = dominant.key;
     final dominantIps =
-        hosts.where((ip) => hostMacs[ip] == dominantMac).toList(growable: false)
+        workingHosts
+            .where((ip) => hostMacs[ip] == dominantMac)
+            .toList(growable: false)
           ..sort(_compareIp);
 
     if (dominantIps.isEmpty) {
-      return hosts;
+      return workingHosts;
     }
 
     final filtered = <String>{};
-    for (final ip in hosts) {
+    for (final ip in workingHosts) {
       if (hostMacs[ip] != dominantMac) {
         filtered.add(ip);
       }
@@ -147,10 +208,18 @@ class NetworkHostScanner {
     filtered.add(dominantIps.first);
     _log(
       'Proxy-ARP noise detected: dominantMac=$dominantMac '
-      'hosts=${dominant.value}/${hosts.length}. '
+      'hosts=${dominant.value}/${workingHosts.length}. '
       'Filtered to ${filtered.length} hosts.',
     );
     return filtered;
+  }
+
+  String? _subnet24Prefix(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4) {
+      return null;
+    }
+    return '${parts[0]}.${parts[1]}.${parts[2]}';
   }
 
   Future<Map<String, String>> _loadArpEntries() async {
@@ -206,6 +275,10 @@ class NetworkHostScanner {
     return <String, String>{};
   }
 
+  @visibleForTesting
+  Map<String, String> parseProcArpLinesForTest(List<String> lines) =>
+      _parseProcArpLines(lines);
+
   Future<Map<String, String>> _loadArpFromProc() async {
     try {
       final file = File('/proc/net/arp');
@@ -213,40 +286,56 @@ class NetworkHostScanner {
         return <String, String>{};
       }
       final lines = await file.readAsLines();
-      if (lines.length < 2) {
-        return <String, String>{};
-      }
-
-      final map = <String, String>{};
-      for (var i = 1; i < lines.length; i += 1) {
-        final line = lines[i].trim();
-        if (line.isEmpty) {
-          continue;
-        }
-        final parts = line.split(RegExp(r'\s+'));
-        if (parts.length < 4) {
-          continue;
-        }
-        final ip = parts[0];
-        final flags = parts[2];
-        final mac = _normalizeMac(parts[3]);
-        final valid = flags == '0x2' && mac != null;
-        if (!valid) {
-          continue;
-        }
-        if (!_isUsableHostIpv4(ip)) {
-          continue;
-        }
-        map[ip] = mac;
-      }
-      return map;
+      return _parseProcArpLines(lines);
     } catch (_) {
       return <String, String>{};
     }
   }
 
-  Map<String, String> _parseArpOutput(String output) {
-    if (Platform.isWindows) {
+  Map<String, String> _parseProcArpLines(List<String> lines) {
+    if (lines.length < 2) {
+      return <String, String>{};
+    }
+
+    final map = <String, String>{};
+    for (var i = 1; i < lines.length; i += 1) {
+      final line = lines[i].trim();
+      if (line.isEmpty) {
+        continue;
+      }
+      final parts = line.split(RegExp(r'\s+'));
+      if (parts.length < 4) {
+        continue;
+      }
+      if (parts.length >= 6 && isNonLanInterfaceName(parts[5])) {
+        continue;
+      }
+      final ip = parts[0];
+      final flags = parts[2];
+      final mac = _normalizeMac(parts[3]);
+      final valid = flags == '0x2' && mac != null;
+      if (!valid) {
+        continue;
+      }
+      if (!_isUsableHostIpv4(ip)) {
+        continue;
+      }
+      map[ip] = mac;
+    }
+    return map;
+  }
+
+  @visibleForTesting
+  Map<String, String> parseArpOutputForTest(
+    String output, {
+    bool? isWindowsOverride,
+  }) => _parseArpOutput(output, isWindowsOverride: isWindowsOverride);
+
+  Map<String, String> _parseArpOutput(
+    String output, {
+    bool? isWindowsOverride,
+  }) {
+    if (isWindowsOverride ?? Platform.isWindows) {
       return _parseWindowsArpOutput(output);
     }
 
@@ -258,12 +347,21 @@ class NetworkHostScanner {
       r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-fA-F:-]{11,17})\s+(\w+)',
     );
     final genericLike = RegExp(
-      r'(\d+\.\d+\.\d+\.\d+).{0,32}([0-9a-fA-F:-]{11,17})',
+      r'(\d+\.\d+\.\d+\.\d+)\b.{0,48}?\b([0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5})\b',
     );
 
     for (final line in lines) {
       final trimmed = line.trim();
       if (trimmed.isEmpty) {
+        continue;
+      }
+
+      if (_neighborFailureStatePattern.hasMatch(trimmed)) {
+        continue;
+      }
+
+      final ifaceMatch = _neighborInterfacePattern.firstMatch(trimmed);
+      if (ifaceMatch != null && isNonLanInterfaceName(ifaceMatch.group(1)!)) {
         continue;
       }
 
@@ -329,7 +427,13 @@ class NetworkHostScanner {
   String? _normalizeMac(String raw) {
     final lower = raw.toLowerCase().replaceAll('-', ':');
     final valid = RegExp(r'^[0-9a-f]{2}(:[0-9a-f]{2}){5}$').hasMatch(lower);
-    if (!valid || lower == '00:00:00:00:00:00') {
+    if (!valid ||
+        lower == '00:00:00:00:00:00' ||
+        lower == 'ff:ff:ff:ff:ff:ff') {
+      return null;
+    }
+    final firstOctet = int.tryParse(lower.substring(0, 2), radix: 16);
+    if (firstOctet == null || (firstOctet & 0x01) != 0) {
       return null;
     }
     return lower;

@@ -210,6 +210,24 @@ void main() {
     });
     expect(lanDiscoveryService.broadcastPresenceNowCalls, 1);
   });
+
+  test('start resolves local device name via localDeviceNameLoader', () async {
+    controller.dispose();
+    lanDiscoveryService = RecordingLanDiscoveryService();
+    controller = _buildController(
+      database: harness.database,
+      lanDiscoveryService: lanDiscoveryService,
+      networkHostScanner: networkHostScanner,
+      discoveryNetworkScopeStore: discoveryNetworkScopeStore,
+      configuredDiscoveryTargetsStore: configuredDiscoveryTargetsStore,
+      localDeviceNameLoader: () async => 'Pixel 8 Pro',
+    );
+
+    await controller.start();
+
+    expect(controller.localName, 'Pixel 8 Pro');
+    expect(lanDiscoveryService.startDeviceNames.single, 'Pixel 8 Pro');
+  });
 }
 
 DiscoveryController _buildController({
@@ -219,6 +237,7 @@ DiscoveryController _buildController({
   required DiscoveryNetworkScopeStore discoveryNetworkScopeStore,
   required ConfiguredDiscoveryTargetsStore configuredDiscoveryTargetsStore,
   bool Function()? isAndroidProvider,
+  Future<String> Function()? localDeviceNameLoader,
   Duration androidResumeRestartDelay =
       DiscoveryController.defaultAndroidResumeRestartDelay,
 }) {
@@ -290,11 +309,13 @@ DiscoveryController _buildController({
     previewCacheOwner: previewCacheOwner,
     pathOpener: PathOpener(),
     isAndroidProvider: isAndroidProvider,
+    localDeviceNameLoader: localDeviceNameLoader,
     androidResumeRestartDelay: androidResumeRestartDelay,
   );
 }
 
 class RecordingLanDiscoveryService extends LanDiscoveryService {
+  final List<String> startDeviceNames = <String>[];
   final List<Set<String>> startLocalSourceIps = <Set<String>>[];
   final List<Set<String>> startConfiguredTargetIps = <Set<String>>[];
   int startCalls = 0;
@@ -324,6 +345,7 @@ class RecordingLanDiscoveryService extends LanDiscoveryService {
     void Function(ClipboardCatalogEvent event)? onClipboardCatalog,
   }) async {
     startCalls += 1;
+    startDeviceNames.add(deviceName);
     startLocalSourceIps.add(Set<String>.from(localSourceIps));
     startConfiguredTargetIps.add(Set<String>.from(configuredTargetIps));
   }
